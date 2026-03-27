@@ -2,3 +2,14 @@ regex/cluster_to_site
 regex/host_to_tenant
 regex/vm_to_role
 regex/vm_to_tenant
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets – copy .env.example to .env and fill in credentials
+.env
+
+# Docker build artifacts
+*.tar
