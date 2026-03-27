@@ -1,11 +1,14 @@
 # Lenovo XClarity Administrator → NetBox collector mapping
 #
 # Required environment variables:
-#   XCLARITY_HOST     XClarity hostname or IP (no https://)
-#   XCLARITY_USER     XClarity username
-#   XCLARITY_PASS     XClarity password
-#   NETBOX_URL        NetBox base URL
-#   NETBOX_TOKEN      NetBox API token
+#   XCLARITY_HOST       XClarity hostname, IP, or full URL (e.g. xclarity.example.com
+#                       or https://xclarity.example.com).  The collector always
+#                       uses HTTPS on port 443 unless a different port is included
+#                       in the URL (e.g. https://xclarity.example.com:8443).
+#   XCLARITY_USER       XClarity username  (also accepted: XCLARITY_USERNAME)
+#   XCLARITY_PASS       XClarity password  (also accepted: XCLARITY_PASSWORD)
+#   NETBOX_URL          NetBox base URL
+#   NETBOX_TOKEN        NetBox API token
 #
 # Optional:
 #   XCLARITY_VERIFY_SSL       true | false  (default: true)
@@ -14,12 +17,17 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
+#
+# Note: XCLARITY_USER / XCLARITY_PASS are the preferred variable names for this
+# collector.  The legacy archive/xclarity-collector.py used XCLARITY_USERNAME /
+# XCLARITY_PASSWORD.  Both are supported here via fallback so that existing
+# deployments work without any .env changes.
 
 source "xclarity" {
   api_type   = "rest"
   url        = "env('XCLARITY_HOST')"
-  username   = "env('XCLARITY_USER')"
-  password   = "env('XCLARITY_PASS')"
+  username   = "env('XCLARITY_USER') or env('XCLARITY_USERNAME')"
+  password   = "env('XCLARITY_PASS') or env('XCLARITY_PASSWORD')"
   verify_ssl = "env('XCLARITY_VERIFY_SSL', 'true')"
   auth       = "basic"
 

@@ -65,6 +65,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any, Optional
+from urllib.parse import urlparse, urlunparse
 
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning  # type: ignore[import]
@@ -159,10 +160,22 @@ class RestSource(DataSource):
 
     @staticmethod
     def _normalise_url(url: str) -> str:
-        """Ensure the base URL has a scheme and no trailing slash."""
+        """Ensure the base URL has a scheme, an explicit port, and no trailing slash.
+
+        Including the port explicitly (e.g. ``https://host:443``) keeps the
+        behaviour identical to the legacy XClarityClient in the archive, which
+        always constructs ``https://{host}:{port}``.  Some embedded REST servers
+        (Lenovo XClarity Administrator is a known example) validate the ``Host``
+        request header and return HTTP 500 when the port is omitted.
+        """
         url = url.strip().rstrip("/")
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
+        parsed = urlparse(url)
+        if not parsed.port:
+            default_port = 443 if parsed.scheme == "https" else 80
+            netloc = f"{parsed.hostname}:{default_port}"
+            url = urlunparse((parsed.scheme, netloc, parsed.path or "", "", "", ""))
         return url
 
     def _get(self, path: str) -> Any:
