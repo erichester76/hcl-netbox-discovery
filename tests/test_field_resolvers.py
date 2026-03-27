@@ -343,3 +343,16 @@ class TestResolverErrorHandling:
         assert r.evaluate("True") is True
         assert r.evaluate("False") is False
         assert r.evaluate("None") is None
+
+    def test_quoted_string_literal_returns_string(self):
+        r = _make_resolver({})
+        # Properly-quoted Python string literals evaluate to their string value
+        assert r.evaluate("'VMware vSphere'") == "VMware vSphere"
+        assert r.evaluate("'Hypervisor Host'") == "Hypervisor Host"
+        assert r.evaluate("'Azure VM'") == "Azure VM"
+
+    def test_unquoted_multiword_string_returns_none(self):
+        r = _make_resolver({})
+        # Bare strings with spaces are not valid Python — eval fails and returns None
+        assert r.evaluate("VMware vSphere") is None
+        assert r.evaluate("Hypervisor Host") is None

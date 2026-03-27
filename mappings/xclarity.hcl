@@ -101,7 +101,7 @@ object "node" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "Physical Server" }
+    args     = { name = "'Physical Server'" }
     optional = false
   }
 
@@ -254,7 +254,7 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "Lenovo" }
+    args     = { name = "'Lenovo'" }
     optional = false
   }
 
@@ -269,7 +269,7 @@ object "chassis" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "Blade Chassis" }
+    args     = { name = "'Blade Chassis'" }
     optional = false
   }
 

@@ -48,7 +48,7 @@ object "cluster" {
 
   prerequisite "cluster_type" {
     method   = "ensure_cluster_type"
-    args     = { name = "VMware vSphere" }
+    args     = { name = "'VMware vSphere'" }
     optional = false
   }
 
@@ -108,7 +108,7 @@ object "host" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "Hypervisor Host" }
+    args     = { name = "'Hypervisor Host'" }
     optional = false
   }
 
