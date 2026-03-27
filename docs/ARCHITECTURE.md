@@ -16,7 +16,13 @@ The engine reads the HCL file, connects to both systems, and orchestrates the fu
 
 ```
 netbox-collector/
-├── pynetbox2.py                   # NetBox client library (unchanged)
+├── lib/
+│   └── pynetbox2.py               # NetBox client library (unchanged)
+├── archive/
+│   ├── README.md                  # Explains the archived scripts
+│   ├── vmware-collector.py        # Original monolithic VMware collector
+│   ├── xclarity-collector.py      # Original monolithic XClarity collector
+│   └── cache-warmer.py            # Original standalone cache pre-warmer
 ├── collector/
 │   ├── __init__.py
 │   ├── engine.py                  # Top-level orchestrator
@@ -41,7 +47,7 @@ netbox-collector/
 
 ## Component Roles
 
-### `pynetbox2.py`
+### `lib/pynetbox2.py`
 
 Production-ready NetBox client with:
 
