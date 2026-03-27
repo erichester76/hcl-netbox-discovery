@@ -109,6 +109,12 @@ class CatalystCenterSource(DataSource):
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
 
+        if not config.username or not config.password:
+            raise RuntimeError(
+                "Catalyst Center authentication requires both username and password. "
+                "Ensure CATC_USER and CATC_PASS environment variables are set."
+            )
+
         logger.info("Connecting to Catalyst Center: %s", url)
         self._client = api.DNACenterAPI(
             base_url=url,
