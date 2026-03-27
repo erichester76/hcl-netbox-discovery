@@ -2,3 +2,8 @@ regex/cluster_to_site
 regex/host_to_tenant
 regex/vm_to_role
 regex/vm_to_tenant
+
+# Environment variable files – never commit secrets
+.env
+.env.local
+.env.*.local
