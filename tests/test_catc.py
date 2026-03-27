@@ -151,6 +151,18 @@ class TestCatalystConnect:
             with pytest.raises((RuntimeError, ImportError)):
                 src.connect(catc_config)
 
+    @pytest.mark.parametrize("username,password", [
+        ("", "secret"),
+        ("admin", ""),
+        ("", ""),
+    ])
+    def test_connect_raises_if_credentials_missing(self, catc_config, username, password):
+        catc_config.username = username
+        catc_config.password = password
+        src = CatalystCenterSource()
+        with pytest.raises(RuntimeError, match="CATC_USER"):
+            src.connect(catc_config)
+
 
 # ---------------------------------------------------------------------------
 # get_objects()
