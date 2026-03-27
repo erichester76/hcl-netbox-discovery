@@ -1,0 +1,5 @@
+ - ['(?i)^CU-.+', 'Clemson Information Technology Center']
+ - ['(?i)^.*DR-.+', 'University of California San Diego']
+ - ['(?i)^Poole-.+', 'Poole Agricultural Center']
+ - ['(?i)^Proto-.+', 'Clemson Information Technology Center']
+ - ['.*-.*','Unknown']
