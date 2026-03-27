@@ -55,6 +55,15 @@ to_gb(bytes_value)
 to_mb(kb_value)
     int(kb_value / 1024).
 
+str(value)
+    Convert *value* to a string (empty string for None).
+
+int(value, default=0)
+    Safely convert *value* to an integer, returning *default* on error.
+
+regex_replace(value, pattern, replacement)
+    Apply ``re.sub(pattern, replacement, str(value))``.
+
 prereq(name)
     Look up a resolved prerequisite by name.  Use dot notation to access
     attributes on multi-value prerequisites, e.g. prereq("placement.site_id").
@@ -297,6 +306,28 @@ class Resolver:
             except (TypeError, ValueError):
                 return None
 
+        # ---- type conversion helpers ----
+        def str_val(value: Any) -> str:
+            """Convert *value* to a string (empty string for None)."""
+            return str(value) if value is not None else ""
+
+        def int_val(value: Any, default: int = 0) -> int:
+            """Safely convert *value* to an integer, returning *default* on error."""
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        # ---- regex helpers ----
+        def regex_replace(value: Any, pattern: str, replacement: str) -> str:
+            """Apply a regex substitution to *value*.
+
+            Equivalent to ``re.sub(pattern, replacement, str(value))``.
+            """
+            if value is None:
+                return ""
+            return _re.sub(pattern, replacement, str(value))
+
         # ---- prereq() ----
         def prereq(name: str) -> Any:
             parts = name.split(".", 1)
@@ -322,6 +353,7 @@ class Resolver:
             "source": source,
             "env": env,
             "regex_file": regex_file,
+            "regex_replace": regex_replace,
             "map_value": map_value,
             "when": when,
             "coalesce": coalesce,
@@ -332,6 +364,8 @@ class Resolver:
             "join": join,
             "to_gb": to_gb,
             "to_mb": to_mb,
+            "str": str_val,
+            "int": int_val,
             "prereq": prereq,
             "collector": collector_ns,
             # Safe literals

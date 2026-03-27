@@ -7,3 +7,10 @@ redis
 ldap3
 netboxlabs-diode-sdk
 python-hcl2>=4.3.0
+# Cisco Catalyst Center
+dnacentersdk>=2.6.0
+# Microsoft Azure
+azure-identity>=1.15.0
+azure-mgmt-compute>=30.0.0
+azure-mgmt-network>=25.0.0
+azure-mgmt-subscription>=3.1.1

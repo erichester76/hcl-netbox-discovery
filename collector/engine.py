@@ -61,12 +61,18 @@ def _build_nb_client(cfg_nb: Any) -> Any:
 
 def _get_source_adapter(api_type: str) -> Any:
     """Instantiate the correct DataSource sub-class for *api_type*."""
+    from .sources.azure import AzureSource
+    from .sources.catc import CatalystCenterSource
+    from .sources.ldap import LDAPSource
     from .sources.rest import RestSource
     from .sources.vmware import VMwareSource
 
     registry = {
         "vmware": VMwareSource,
-        "rest": RestSource,
+        "rest":   RestSource,
+        "catc":   CatalystCenterSource,
+        "ldap":   LDAPSource,
+        "azure":  AzureSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:

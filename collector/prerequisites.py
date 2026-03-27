@@ -278,6 +278,18 @@ class PrerequisiteRunner:
 
         return result
 
+    def _ensure_tenant(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name") or "Unknown"
+        slug = slugify(name)
+        payload: dict[str, Any] = {"name": name, "slug": slug}
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_tenant name=%s", name)
+            return None
+        obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+        return extract_id(obj)
+
     def _lookup_tenant(self, args: dict, dry_run: bool) -> Optional[int]:
         """Read-only tenant lookup by name.  Never creates the tenant."""
         name = args.get("name")
