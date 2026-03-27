@@ -48,7 +48,7 @@ object "cluster" {
 
   prerequisite "cluster_type" {
     method   = "ensure_cluster_type"
-    args     = { name = "'VMware vSphere'" }
+    args     = { name = "'VMWare'" }
     optional = false
   }
 
@@ -120,7 +120,10 @@ object "host" {
 
   prerequisite "platform" {
     method   = "ensure_platform"
-    args     = { name = "coalesce(source('config.product.fullName'), 'Unknown')" }
+    args     = {
+       name = "coalesce(source('config.product.fullName'), 'Unknown')"
+       manufacturer = "coalesce(source('config.product.fullName'), 'Unknown').split[0]"
+    }
     optional = true
   }
 
