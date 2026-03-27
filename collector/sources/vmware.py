@@ -23,7 +23,6 @@ wrapper when ``fetch_tags`` is enabled in the source config.
 from __future__ import annotations
 
 import logging
-import ssl
 from typing import Any, Optional
 
 from .base import DataSource
@@ -38,7 +37,6 @@ class VMwareSource(DataSource):
         self._api_client: Optional[Any] = None
         self._rest_session: Optional[Any] = None
         self._config: Optional[Any] = None
-        self._ssl_ctx = ssl._create_unverified_context()
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -55,13 +53,30 @@ class VMwareSource(DataSource):
             ) from exc
 
         self._config = config
+
+        if not config.username:
+            logger.warning("VMware: username is empty – authentication will likely fail")
+        if not config.password:
+            logger.warning("VMware: password is empty – authentication will likely fail")
+
         logger.info("Connecting to vCenter: %s", config.url)
-        self._api_client = SmartConnect(
-            host=config.url,
-            user=config.username,
-            pwd=config.password,
-            sslContext=self._ssl_ctx,
-        )
+
+        import urllib3
+
+        connect_kwargs: dict = {
+            "host": config.url,
+            "user": config.username,
+            "pwd": config.password,
+        }
+        if not config.verify_ssl:
+            # pyVmomi 8.x: disableSslCertValidation is the correct way to skip
+            # certificate verification.  Passing only an unverified sslContext
+            # without this flag causes pyVmomi to still attempt thumbprint
+            # validation, which can result in vim.fault.InvalidLogin.
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            connect_kwargs["disableSslCertValidation"] = True
+
+        self._api_client = SmartConnect(**connect_kwargs)
         logger.info("Connected to vCenter: %s", config.url)
 
         # Optionally establish a REST session for tag fetching

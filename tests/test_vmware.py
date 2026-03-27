@@ -65,11 +65,33 @@ class TestVMwareConnect:
         _fake_pyvim_connect.SmartConnect = fake_sc
         src = VMwareSource()
         src.connect(vmware_config)
+        # vmware_config has verify_ssl=False, so disableSslCertValidation=True
+        # should be passed instead of sslContext (pyVmomi 8.x compatibility).
         fake_sc.assert_called_once_with(
             host=vmware_config.url,
             user=vmware_config.username,
             pwd=vmware_config.password,
-            sslContext=src._ssl_ctx,
+            disableSslCertValidation=True,
+        )
+
+    def test_connect_calls_SmartConnect_verify_ssl_true(self):
+        """When verify_ssl=True, disableSslCertValidation must NOT be passed."""
+        from collector.config import SourceConfig
+        config = SourceConfig(
+            api_type="vmware",
+            url="vcenter.example.com",
+            username="admin",
+            password="secret",
+            verify_ssl=True,
+        )
+        fake_sc = MagicMock(return_value=MagicMock())
+        _fake_pyvim_connect.SmartConnect = fake_sc
+        src = VMwareSource()
+        src.connect(config)
+        fake_sc.assert_called_once_with(
+            host=config.url,
+            user=config.username,
+            pwd=config.password,
         )
 
     def test_connect_raises_if_pyvmomi_missing(self, vmware_config):
