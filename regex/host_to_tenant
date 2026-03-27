@@ -1,0 +1,7 @@
+# host_to_tenant — map host names to tenant names
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+#
+# Examples:
+#   ^research-.*,Research
+#   ^admin-.*,IT Operations

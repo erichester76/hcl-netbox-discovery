@@ -6,3 +6,4 @@ pyyaml==6.0.2
 redis
 ldap3
 netboxlabs-diode-sdk
+python-hcl2>=4.3.0
