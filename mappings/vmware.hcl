@@ -1,0 +1,286 @@
+# VMware vCenter → NetBox collector mapping
+#
+# Required environment variables:
+#   VCENTER_URL       vCenter hostname or IP (no https://)
+#   VCENTER_USER      vCenter username
+#   VCENTER_PASS      vCenter password
+#   NETBOX_URL        NetBox base URL
+#   NETBOX_TOKEN      NetBox API token
+#
+# Optional:
+#   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL      Redis URL or SQLite path
+#   DRY_RUN               Set to "true" to log payloads without writing
+
+source "vmware" {
+  api_type  = "vmware"
+  url       = "env('VCENTER_URL')"
+  username  = "env('VCENTER_USER')"
+  password  = "env('VCENTER_PASS')"
+  verify_ssl = false
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers      = 8
+  dry_run          = "env('DRY_RUN', 'false')"
+  sync_tag         = "vmware-sync"
+  regex_dir        = "./regex"
+  sync_interfaces  = true
+  sync_vms         = true
+}
+
+# ---------------------------------------------------------------------------
+# Clusters
+# ---------------------------------------------------------------------------
+
+object "cluster" {
+  source_collection = "clusters"
+  netbox_resource   = "virtualization.clusters"
+  lookup_by         = ["name"]
+
+  prerequisite "cluster_type" {
+    method   = "ensure_cluster_type"
+    args     = { name = "VMware vSphere" }
+    optional = false
+  }
+
+  prerequisite "cluster_group" {
+    method   = "ensure_cluster_group"
+    args     = { name = "coalesce(source('parent.parent.name'), 'Unknown')" }
+    optional = true
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "regex_file(source('name'), 'cluster_to_site')" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "type" {
+    value = "prereq('cluster_type')"
+  }
+
+  field "group" {
+    value = "prereq('cluster_group')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Hypervisor Hosts
+# ---------------------------------------------------------------------------
+
+object "host" {
+  source_collection = "hosts"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["name"]
+  max_workers       = 8
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "source('hardware.systemInfo.vendor')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "source('hardware.systemInfo.model')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "Hypervisor Host" }
+    optional = false
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "regex_file(source('parent.name'), 'cluster_to_site')" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = { name = "coalesce(source('config.product.fullName'), 'Unknown')" }
+    optional = true
+  }
+
+  field "name" {
+    value = "replace(source('name'), '.clemson.edu', '')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "status" {
+    value = "when(source('runtime.connectionState') == 'connected', 'active', 'offline')"
+  }
+
+  field "serial" {
+    value = "source('summary.hardware.otherIdentifyingInfo[SerialNumberTag].identifierValue')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['vmware-sync']"
+  }
+
+  # Physical NICs
+  interface {
+    source_items = "config.network.pnic"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('device')"
+    }
+
+    field "mac_address" {
+      value = "upper(source('mac'))"
+    }
+
+    field "type" {
+      value = "map_value(source('linkSpeed.speedMb'), {1000: '1000base-t', 10000: '10gbase-x-sfpp', 25000: '25gbase-x-sfp28', 40000: '40gbase-x-qsfpp', 100000: '100gbase-x-qsfp28'}, '1000base-t')"
+    }
+
+    field "description" {
+      value = "join(' ', [source('driver'), source('driverVersion')])"
+    }
+  }
+
+  # Management / VMkernel vNICs
+  interface {
+    source_items = "config.network.vnic"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('device')"
+    }
+
+    field "mac_address" {
+      value = "upper(source('spec.mac'))"
+    }
+
+    field "type" {
+      value = "'virtual'"
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Virtual Machines
+# ---------------------------------------------------------------------------
+
+object "vm" {
+  source_collection = "vms"
+  netbox_resource   = "virtualization.virtual_machines"
+  lookup_by         = ["name"]
+  max_workers       = 8
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = { name = "coalesce(source('guest.guestFullName'), 'Unknown')" }
+    optional = true
+  }
+
+  field "name" {
+    value = "truncate(replace(source('name'), '.clemson.edu', ''), 64)"
+  }
+
+  field "status" {
+    value = "when(source('runtime.powerState') == 'poweredOn', 'active', 'offline')"
+  }
+
+  field "vcpus" {
+    value = "source('config.hardware.numCPU')"
+  }
+
+  field "memory" {
+    value = "source('config.hardware.memoryMB')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['vmware-sync']"
+  }
+
+  # VM Network Interfaces
+  interface {
+    source_items = "guest.net"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('network')"
+    }
+
+    field "mac_address" {
+      value = "upper(source('macAddress'))"
+    }
+
+    field "type" {
+      value = "'virtual'"
+    }
+
+    ip_address {
+      source_items = "ipConfig.ipAddress"
+      primary_if   = "first"
+
+      field "address" {
+        value = "join('/', [source('ipAddress'), str(source('prefixLength'))])"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+  }
+
+  # Virtual Disks
+  disk {
+    source_items = "config.hardware.device[*]"
+    enabled_if   = "collector.sync_vms"
+
+    field "name" {
+      value = "source('deviceInfo.label')"
+    }
+
+    field "size" {
+      value = "to_mb(source('capacityInKB'))"
+    }
+  }
+}

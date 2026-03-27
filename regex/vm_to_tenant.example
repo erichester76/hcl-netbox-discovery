@@ -1,0 +1,7 @@
+# vm_to_tenant — map VM names to tenant names
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+#
+# Examples:
+#   ^abc-xyz.*,Research Group ABC
+#   ^svc-.*,IT Operations

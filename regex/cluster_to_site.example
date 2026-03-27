@@ -1,0 +1,9 @@
+# cluster_to_site — map cluster/host names to NetBox site names
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+#
+# Examples:
+#   ^cluster-dc1.*,DataCenter-1
+#   ^(prod|staging)-atl.*,Atlanta
+#
+# If no pattern matches, the original value is returned unchanged.

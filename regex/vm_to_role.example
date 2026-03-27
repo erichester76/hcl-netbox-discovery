@@ -1,0 +1,8 @@
+# vm_to_role — map VM names to NetBox device roles
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+#
+# Examples:
+#   ^web-.*,Web Server
+#   ^db-.*,Database Server
+#   ^app-.*,Application Server
