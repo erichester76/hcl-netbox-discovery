@@ -48,14 +48,9 @@ services:
       CATC_VERIFY_SSL: ${CATC_VERIFY_SSL:-true}
 
       # Lenovo XClarity
-      # Both the preferred names (XCLARITY_USER / XCLARITY_PASS) and the legacy
-      # archive names (XCLARITY_USERNAME / XCLARITY_PASSWORD) are forwarded so
-      # that existing .env files work without changes.
       XCLARITY_HOST:       ${XCLARITY_HOST:-}
       XCLARITY_USER:       ${XCLARITY_USER:-}
       XCLARITY_PASS:       ${XCLARITY_PASS:-}
-      XCLARITY_USERNAME:   ${XCLARITY_USERNAME:-}
-      XCLARITY_PASSWORD:   ${XCLARITY_PASSWORD:-}
       XCLARITY_VERIFY_SSL: ${XCLARITY_VERIFY_SSL:-true}
 
       # Microsoft Azure
