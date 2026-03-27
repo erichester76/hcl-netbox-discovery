@@ -16,11 +16,41 @@
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
 
 source "xclarity" {
-  api_type   = "xclarity"
+  api_type   = "rest"
   url        = "env('XCLARITY_HOST')"
   username   = "env('XCLARITY_USER')"
   password   = "env('XCLARITY_PASS')"
   verify_ssl = "env('XCLARITY_VERIFY_SSL', 'true')"
+  auth       = "basic"
+
+  # Each collection maps a name (used in object.source_collection) to a REST
+  # endpoint.  detail_endpoint causes the adapter to merge per-item detail
+  # data so that field expressions like source("memoryModules") work without
+  # any extra configuration.
+
+  collection "nodes" {
+    endpoint        = "/nodes"
+    list_key        = "nodeList"
+    detail_endpoint = "/nodes/{uuid}"
+    detail_id_field = "uuid"
+  }
+
+  collection "chassis" {
+    endpoint        = "/chassis"
+    list_key        = "chassisList"
+    detail_endpoint = "/chassis/{uuid}"
+    detail_id_field = "uuid"
+  }
+
+  collection "switches" {
+    endpoint = "/switches"
+    list_key = "switchList"
+  }
+
+  collection "storage" {
+    endpoint = "/storage"
+    list_key = "storageList"
+  }
 }
 
 netbox {

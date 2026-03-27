@@ -84,6 +84,21 @@ def _float(value: Any, default: float = 0.0) -> float:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class CollectionConfig:
+    """Describes one REST collection inside a ``source {}`` block.
+
+    Used by the generic ``RestSource`` adapter to map collection names to API
+    endpoints without any per-source Python code.
+    """
+
+    name: str
+    endpoint: str
+    list_key: str = ""
+    detail_endpoint: str = ""
+    detail_id_field: str = "uuid"
+
+
+@dataclass
 class SourceConfig:
     api_type: str
     url: str
@@ -91,6 +106,7 @@ class SourceConfig:
     password: str = ""
     verify_ssl: bool = True
     extra: dict = field(default_factory=dict)
+    collections: dict = field(default_factory=dict)  # name → CollectionConfig
 
 
 @dataclass
@@ -307,6 +323,20 @@ def load_config(mapping_path: str) -> CollectorConfig:
     if not source_list:
         raise ValueError("HCL file is missing a 'source' block")
     source_label, source_body = _labeled_list(source_list)[0]
+
+    # Parse optional collection {} labeled sub-blocks (used by RestSource)
+    _SOURCE_SCALAR_KEYS = {"api_type", "url", "username", "password", "verify_ssl", "auth", "auth_header"}
+    raw_collections = source_body.get("collection", [])
+    collections: dict[str, CollectionConfig] = {}
+    for col_label, col_body in _labeled_list(raw_collections):
+        collections[col_label] = CollectionConfig(
+            name=col_label,
+            endpoint=col_body.get("endpoint", ""),
+            list_key=col_body.get("list_key", ""),
+            detail_endpoint=col_body.get("detail_endpoint", ""),
+            detail_id_field=col_body.get("detail_id_field", "uuid"),
+        )
+
     source_cfg = SourceConfig(
         api_type=_eval_config_str(source_body.get("api_type", source_label)),
         url=_eval_config_str(source_body.get("url", "")),
@@ -318,8 +348,9 @@ def load_config(mapping_path: str) -> CollectorConfig:
         extra={
             k: _eval_config_str(v)
             for k, v in source_body.items()
-            if k not in ("api_type", "url", "username", "password", "verify_ssl")
+            if k not in _SOURCE_SCALAR_KEYS and k != "collection"
         },
+        collections=collections,
     )
 
     # --- netbox ---

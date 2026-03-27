@@ -61,12 +61,12 @@ def _build_nb_client(cfg_nb: Any) -> Any:
 
 def _get_source_adapter(api_type: str) -> Any:
     """Instantiate the correct DataSource sub-class for *api_type*."""
+    from .sources.rest import RestSource
     from .sources.vmware import VMwareSource
-    from .sources.xclarity import XClaritySource
 
     registry = {
         "vmware": VMwareSource,
-        "xclarity": XClaritySource,
+        "rest": RestSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:

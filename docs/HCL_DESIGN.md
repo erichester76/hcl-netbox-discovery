@@ -30,32 +30,68 @@ object   "NAME"  { … }   # one NetBox resource type (repeatable)
 
 Declares how to connect to the data source.
 
+### VMware (pyVmomi SDK)
+
 ```hcl
-source "vmware" {
-  api_type   = "vmware"             # must match a sources/*.py adapter
+source "vcenter" {
+  api_type   = "vmware"
   url        = env("VCENTER_URL")
   username   = env("VCENTER_USER")
   password   = env("VCENTER_PASS")
 }
 ```
 
+### REST-based sources (no Python required)
+
+Any HTTP/REST API uses `api_type = "rest"` with `collection {}` sub-blocks that
+map collection names to endpoints.  No Python code is needed.
+
 ```hcl
 source "xclarity" {
-  api_type   = "xclarity"
-  url        = env("XCLARITY_URL")
+  api_type   = "rest"
+  url        = env("XCLARITY_HOST")
   username   = env("XCLARITY_USER")
   password   = env("XCLARITY_PASS")
   verify_ssl = env("XCLARITY_VERIFY_SSL", "true")
+  auth       = "basic"
+
+  collection "nodes" {
+    endpoint        = "/nodes"
+    list_key        = "nodeList"
+    detail_endpoint = "/nodes/{uuid}"
+    detail_id_field = "uuid"
+  }
+
+  collection "switches" {
+    endpoint = "/switches"
+    list_key = "switchList"
+  }
 }
 ```
 
+### `source` scalar attributes
+
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Selects the source adapter (`vmware`, `xclarity`, …) |
+| `api_type` | yes | Selects the source adapter: `vmware` or `rest` |
 | `url` | yes | Base URL / hostname of the source system |
-| `username` | yes | Credential |
-| `password` | yes | Credential |
-| `verify_ssl` | no | Skip TLS verification (default: `"true"`) |
+| `username` | no | Credential (required for `basic` auth) |
+| `password` | no | Credential / token value |
+| `verify_ssl` | no | TLS certificate verification (default: `"true"`) |
+| `auth` | no | Auth scheme for `rest` adapter: `basic` \| `bearer` \| `header` (default: `"basic"`) |
+| `auth_header` | no | Header name when `auth = "header"` (default: `"X-Api-Key"`) |
+
+### `collection {}` sub-block (REST adapter only)
+
+One block per logical collection.  The block label becomes the collection name
+referenced in `object.source_collection`.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `endpoint` | yes | REST path for the list request, e.g. `/nodes` |
+| `list_key` | no | Key to extract the item list from a dict response |
+| `detail_endpoint` | no | Per-item detail path template, e.g. `/nodes/{uuid}`.  Each item is enriched by merging the detail response on top. |
+| `detail_id_field` | no | Field in the list item used to fill the `{…}` placeholder (default: `"uuid"`) |
 
 ---
 

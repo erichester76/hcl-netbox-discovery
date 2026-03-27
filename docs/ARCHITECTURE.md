@@ -33,15 +33,45 @@ netbox-collector/
 │   ├── parallel.py                # Shared ThreadPoolExecutor wrapper
 │   └── sources/
 │       ├── base.py                # Abstract DataSource interface
-│       ├── vmware.py              # pyVmomi adapter
-│       └── xclarity.py           # XClarity REST adapter
+│       ├── rest.py                # Generic REST adapter — no Python needed per source
+│       └── vmware.py              # pyVmomi adapter (SDK requires Python; fixed built-in)
 ├── mappings/
 │   ├── vmware.hcl                 # VMware collector definition
-│   └── xclarity.hcl               # XClarity collector definition
+│   └── xclarity.hcl               # XClarity collector definition (uses rest adapter)
 ├── regex/                         # Pattern files consumed by regex_file() expressions
 ├── main.py                        # CLI entry point
 └── requirements.txt
 ```
+
+---
+
+## Adding a New REST-Based Collector (No Python Required)
+
+Any HTTP/REST source can be supported by creating a single `.hcl` file.
+No Python code is needed.
+
+1. Add `collection {}` sub-blocks to the `source` block describing each API endpoint.
+2. Set `api_type = "rest"` and choose an `auth` scheme (`basic`, `bearer`, or `header`).
+3. Write `object {}` blocks as normal — `source_collection` refers to the collection label.
+
+```hcl
+source "my_api" {
+  api_type = "rest"
+  url      = env("MY_API_URL")
+  username = env("MY_API_USER")
+  password = env("MY_API_PASS")
+  auth     = "basic"
+
+  collection "servers" {
+    endpoint = "/api/v1/servers"
+    list_key = "items"           # optional: key inside the JSON response
+  }
+}
+```
+
+For `vmware`, a dedicated `sources/vmware.py` is still required because pyVmomi
+uses a proprietary SOAP/VMOMI protocol rather than plain HTTP REST.  It is a
+fixed, internal component — no changes are needed to add new VMware deployments.
 
 ---
 
@@ -185,18 +215,29 @@ Returns raw pyVmomi managed objects. The field resolver's `source()` function ha
 
 ---
 
-### `collector/sources/xclarity.py`
+### `collector/sources/rest.py`
 
-Thin REST wrapper around the XClarity Controller API. Implements `get_objects` for:
+Generic HTTP/REST adapter.  **No Python code is required per source** — all
+configuration comes from `collection {}` sub-blocks in the HCL `source` block.
 
-| `collection` | XClarity endpoint |
+Supported auth schemes (configured via `auth` in the source block):
+
+| `auth` value | Mechanism |
 |---|---|
-| `"nodes"` | `GET /nodes` |
-| `"chassis"` | `GET /chassis` |
-| `"switches"` | `GET /switches` |
-| `"storage"` | `GET /storage` |
+| `basic` (default) | HTTP Basic auth (`username` / `password`) |
+| `bearer` | `Authorization: Bearer <password>` header |
+| `header` | Arbitrary header; name set via `auth_header`, value via `password` |
 
-Returns plain Python dicts. The field resolver's `source()` function handles `dict.get` traversal on them.
+Each `collection {}` block may specify:
+
+| Attribute | Description |
+|---|---|
+| `endpoint` | REST path for the list request, e.g. `/nodes` |
+| `list_key` | Optional key to extract the list from a dict response |
+| `detail_endpoint` | Optional per-item detail path template, e.g. `/nodes/{uuid}` |
+| `detail_id_field` | Field from the list item used to fill the `{…}` placeholder (default: `uuid`) |
+
+When `detail_endpoint` is set the adapter fetches each item's detail and deep-merges it, so field expressions like `source("memoryModules")` work without any extra HCL.
 
 ---
 
