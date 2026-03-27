@@ -122,7 +122,7 @@ object "host" {
     method   = "ensure_platform"
     args     = {
        name = "coalesce(source('config.product.fullName'), 'Unknown')"
-       manufacturer = "coalesce(source('config.product.fullName'), 'Unknown').split[0]"
+       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }

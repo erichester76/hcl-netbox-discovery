@@ -1,0 +1,105 @@
+"""Tests for tag formatting fixes in the Engine (engine.py).
+
+Covers:
+- _eval_field normalises plain-string tags to {"name": tag} dicts (Fix 1a)
+- _inject_sync_tag uses {"name": sync_tag} dicts (Fix 1b)
+- _inject_sync_tag de-duplicates correctly when tags already contain the tag (Fix 1c)
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from collector.engine import Engine
+from collector.config import FieldConfig
+
+
+# ---------------------------------------------------------------------------
+# _inject_sync_tag
+# ---------------------------------------------------------------------------
+
+
+class TestInjectSyncTag:
+    def test_adds_tag_as_dict(self):
+        payload: dict = {}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        assert payload["tags"] == [{"name": "vmware-sync"}]
+
+    def test_does_not_duplicate_existing_dict_tag(self):
+        payload = {"tags": [{"name": "vmware-sync"}]}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        assert payload["tags"] == [{"name": "vmware-sync"}]
+
+    def test_does_not_duplicate_when_existing_string_tag_matches(self):
+        # Defensive: pre-existing tags list already has the plain-string form
+        payload = {"tags": ["vmware-sync"]}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        # Should NOT add a second entry
+        assert len(payload["tags"]) == 1
+
+    def test_appends_to_existing_different_tags(self):
+        payload = {"tags": [{"name": "manual"}]}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        assert {"name": "vmware-sync"} in payload["tags"]
+        assert {"name": "manual"} in payload["tags"]
+
+    def test_noop_when_sync_tag_is_empty(self):
+        payload: dict = {}
+        Engine._inject_sync_tag(payload, "")
+        assert "tags" not in payload
+
+    def test_non_list_tags_replaced_with_single_dict(self):
+        payload = {"tags": "not-a-list"}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        assert payload["tags"] == [{"name": "vmware-sync"}]
+
+
+# ---------------------------------------------------------------------------
+# _eval_field – tags type
+# ---------------------------------------------------------------------------
+
+
+class TestEvalFieldTags:
+    """Unit-test the tags branch of Engine._eval_field."""
+
+    def _make_field_cfg(self, value: str) -> FieldConfig:
+        return FieldConfig(name="tags", value=value, type="tags")
+
+    def _make_resolver(self, raw_value):
+        resolver = MagicMock()
+        resolver.evaluate.return_value = raw_value
+        return resolver
+
+    def _eval(self, raw_value):
+        engine = Engine()
+        field_cfg = self._make_field_cfg("['vmware-sync']")
+        resolver = self._make_resolver(raw_value)
+        ctx = MagicMock()
+        return engine._eval_field(field_cfg, resolver, ctx)
+
+    def test_string_tags_normalised_to_dicts(self):
+        result = self._eval(["vmware-sync"])
+        assert result == [{"name": "vmware-sync"}]
+
+    def test_dict_tags_passed_through_unchanged(self):
+        result = self._eval([{"name": "vmware-sync"}])
+        assert result == [{"name": "vmware-sync"}]
+
+    def test_mixed_tags_all_normalised(self):
+        result = self._eval(["tag-a", {"name": "tag-b"}])
+        assert {"name": "tag-a"} in result
+        assert {"name": "tag-b"} in result
+
+    def test_empty_list_returns_empty(self):
+        result = self._eval([])
+        assert result == []
+
+    def test_none_raw_returns_empty(self):
+        result = self._eval(None)
+        assert result == []
+
+    def test_single_string_tag_wrapped_in_list(self):
+        result = self._eval("vmware-sync")
+        assert result == [{"name": "vmware-sync"}]

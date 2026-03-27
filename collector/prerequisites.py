@@ -177,7 +177,19 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_platform name=%s", name)
             return None
-        obj = self.nb.upsert("dcim.platforms", payload, lookup_fields=["slug"])
+        try:
+            obj = self.nb.upsert("dcim.platforms", payload, lookup_fields=["slug"])
+        except Exception as exc:
+            # Race condition: another thread may have created the platform between
+            # the GET check and our POST — fall back to a plain GET by slug.
+            if "unique" in str(exc).lower():
+                logger.debug("ensure_platform collision for %r — falling back to GET", name)
+                try:
+                    obj = self.nb.get("dcim.platforms", slug=slug)
+                except Exception:
+                    return None
+            else:
+                raise
         return extract_id(obj)
 
     def _ensure_cluster_type(self, args: dict, dry_run: bool) -> Optional[int]:
