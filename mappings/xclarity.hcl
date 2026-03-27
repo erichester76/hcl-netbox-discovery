@@ -1,11 +1,14 @@
 # Lenovo XClarity Administrator → NetBox collector mapping
 #
 # Required environment variables:
-#   XCLARITY_HOST     XClarity hostname or IP (no https://)
-#   XCLARITY_USER     XClarity username
-#   XCLARITY_PASS     XClarity password
-#   NETBOX_URL        NetBox base URL
-#   NETBOX_TOKEN      NetBox API token
+#   XCLARITY_HOST       XClarity hostname, IP, or full URL (e.g. xclarity.example.com
+#                       or https://xclarity.example.com).  The collector always
+#                       uses HTTPS on port 443 unless a different port is included
+#                       in the URL (e.g. https://xclarity.example.com:8443).
+#   XCLARITY_USER       XClarity username
+#   XCLARITY_PASS       XClarity password
+#   NETBOX_URL          NetBox base URL
+#   NETBOX_TOKEN        NetBox API token
 #
 # Optional:
 #   XCLARITY_VERIFY_SSL       true | false  (default: true)

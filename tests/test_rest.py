@@ -43,19 +43,25 @@ def _make_session(json_responses: dict) -> MagicMock:
 
 class TestNormaliseUrl:
     def test_adds_https_scheme(self):
-        assert RestSource._normalise_url("api.example.com") == "https://api.example.com"
+        assert RestSource._normalise_url("api.example.com") == "https://api.example.com:443"
 
     def test_preserves_http_scheme(self):
-        assert RestSource._normalise_url("http://api.example.com") == "http://api.example.com"
+        assert RestSource._normalise_url("http://api.example.com") == "http://api.example.com:80"
 
     def test_strips_trailing_slash(self):
-        assert RestSource._normalise_url("https://api.example.com/") == "https://api.example.com"
+        assert RestSource._normalise_url("https://api.example.com/") == "https://api.example.com:443"
 
     def test_strips_multiple_trailing_slashes(self):
-        assert RestSource._normalise_url("https://api.example.com///") == "https://api.example.com"
+        assert RestSource._normalise_url("https://api.example.com///") == "https://api.example.com:443"
 
     def test_strips_whitespace(self):
-        assert RestSource._normalise_url("  https://api.example.com  ") == "https://api.example.com"
+        assert RestSource._normalise_url("  https://api.example.com  ") == "https://api.example.com:443"
+
+    def test_preserves_non_default_port(self):
+        assert RestSource._normalise_url("https://api.example.com:8443") == "https://api.example.com:8443"
+
+    def test_preserves_non_default_http_port(self):
+        assert RestSource._normalise_url("http://api.example.com:8080") == "http://api.example.com:8080"
 
 
 # ---------------------------------------------------------------------------
