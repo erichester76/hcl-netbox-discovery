@@ -17,6 +17,12 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
+#
+# XClarity location mapping:
+#   location.location      → NetBox site
+#   location.room          → NetBox location (area within site)
+#   location.rack          → NetBox rack
+#   location.lowestRackUnit → rack position (front face, U number)
 
 source "xclarity" {
   api_type   = "rest"
@@ -85,16 +91,16 @@ object "node" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(source('machineType'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('productName'), source('machineType'), 'Unknown')"
+      model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "coalesce(source('partNumber'), '')"
+      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -105,14 +111,24 @@ object "node" {
     optional = false
   }
 
-  prerequisite "site" {
-    method   = "ensure_site"
-    args     = { name = "coalesce(source('location.lowestRackUnit'), 'Unknown')" }
+  # Resolves site → location (room) → rack → rack position in one step.
+  # location.location  = data-centre / site name
+  # location.room      = room or area within the site
+  # location.rack      = rack label
+  # location.lowestRackUnit = lowest occupied rack unit (position)
+  prerequisite "placement" {
+    method   = "resolve_placement"
+    args     = {
+      site     = "coalesce('location.location', 'dataCenter')"
+      location = "source('location.room')"
+      rack     = "source('location.rack')"
+      position = "source('location.lowestRackUnit')"
+    }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('hostname'), source('uuid'), 'Unknown')"
+    value = "coalesce('name', 'hostname', 'uuid')"
   }
 
   field "device_type" {
@@ -124,7 +140,27 @@ object "node" {
   }
 
   field "serial" {
-    value = "source('serialNumber')"
+    value = "str(source('serialNumber'))"
+  }
+
+  field "site" {
+    value = "prereq('placement.site_id')"
+  }
+
+  field "location" {
+    value = "prereq('placement.location_id')"
+  }
+
+  field "rack" {
+    value = "prereq('placement.rack_id')"
+  }
+
+  field "position" {
+    value = "prereq('placement.rack_position')"
+  }
+
+  field "face" {
+    value = "when(prereq('placement.rack_id') != None, 'front', None)"
   }
 
   field "status" {
@@ -136,13 +172,15 @@ object "node" {
     value = "['xclarity-sync']"
   }
 
-  # Network interfaces
+  # Network interfaces — sourced from onboard controller ports reported by
+  # XClarity.  portSpeed is in Gbps (integer).  10 G maps to 10gbase-t
+  # (BaseT copper) which is standard for Lenovo onboard NICs.
   interface {
     source_items = "adapterSettings.onboardControllers[*].ports"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "coalesce(source('portName'), source('physicalPortIndex'))"
+      value = "coalesce('portName', 'physicalPortIndex')"
     }
 
     field "mac_address" {
@@ -150,7 +188,7 @@ object "node" {
     }
 
     field "type" {
-      value = "map_value(source('portSpeed'), {1: '1000base-t', 10: '10gbase-x-sfpp', 25: '25gbase-x-sfp28', 40: '40gbase-x-qsfpp', 100: '100gbase-x-qsfp28'}, 'other')"
+      value = "map_value(source('portSpeed'), {1: '1000base-t', 10: '10gbase-t', 25: '25gbase-x-sfp28', 40: '40gbase-x-qsfpp', 100: '100gbase-x-qsfp28'}, 'other')"
     }
   }
 
@@ -162,19 +200,19 @@ object "node" {
     dedupe_by    = "source('socket')"
 
     field "name" {
-      value = "coalesce(source('socket'), source('productName'), 'CPU')"
+      value = "coalesce('socket', 'productName', 'description')"
     }
 
     field "part_id" {
-      value = "coalesce(source('displayName'), source('partNumber'), '')"
+      value = "coalesce('displayName', 'partNumber')"
     }
 
     field "serial" {
-      value = "coalesce(source('serialNumber'), '')"
+      value = "str(source('serialNumber'))"
     }
 
     field "description" {
-      value = "join(', ', [source('model'), str(source('speed'))])"
+      value = "join(', ', [coalesce('productVersion', 'model'), str(source('speed'))])"
     }
   }
 
@@ -183,62 +221,68 @@ object "node" {
     source_items = "memoryModules"
     role         = "Memory"
     enabled_if   = "collector.sync_inventory"
-    dedupe_by    = "source('description')"
+    dedupe_by    = "coalesce('displayName', 'productName', 'description')"
 
     field "name" {
-      value = "coalesce(source('description'), source('partNumber'), 'DIMM')"
+      value = "coalesce('displayName', 'productName', 'description')"
     }
 
     field "part_id" {
-      value = "coalesce(source('partNumber'), '')"
+      value = "str(source('partNumber'))"
     }
 
     field "serial" {
-      value = "coalesce(source('serialNumber'), '')"
+      value = "str(source('serialNumber'))"
+    }
+
+    field "description" {
+      value = "join(', ', [str(source('capacity')), coalesce('memoryType', 'type'), str(source('speed'))])"
     }
   }
 
-  # Hard Drives
+  # Hard Drives — raidSettings is the top-level array on the node detail
+  # response; each controller entry has a diskDrives list.  capacity is in
+  # bytes and is converted to GB with to_gb().
   inventory_item {
-    source_items = "storageSettings.raidSettings[*].diskDrives"
+    source_items = "raidSettings[*].diskDrives"
     role         = "Hard disk"
     enabled_if   = "collector.sync_inventory"
     dedupe_by    = "source('serialNumber')"
 
     field "name" {
-      value = "coalesce(source('description'), source('partNumber'), 'Disk')"
+      value = "coalesce('name', 'productName', 'description')"
     }
 
     field "part_id" {
-      value = "coalesce(source('partNumber'), '')"
+      value = "str(source('partNumber'))"
     }
 
     field "serial" {
-      value = "coalesce(source('serialNumber'), '')"
+      value = "str(source('serialNumber'))"
     }
 
     field "description" {
-      value = "join(' ', [source('diskType'), str(to_gb(source('capacity')))])"
+      value = "join(' ', [coalesce('mediaType', 'diskType'), str(to_gb(source('capacity')))])"
     }
   }
 
   # Power Supplies
   inventory_item {
-    source_items = "powerSupplySettings.powerSupplies"
+    source_items = "powerSupplies"
     role         = "Power supply"
     enabled_if   = "collector.sync_inventory"
     dedupe_by    = "source('serialNumber')"
 
     field "name" {
-      value = "coalesce(source('description'), source('partNumber'), 'PSU')"
+      value = "coalesce('name', 'productName', 'description')"
     }
 
     field "part_id" {
-      value = "coalesce(source('partNumber'), '')"
+      value = "str(source('partNumber'))"
     }
 
     field "serial" {
-      value = "coalesce(source('serialNumber'), '')"
+      value = "str(source('serialNumber'))"
     }
   }
 }
@@ -254,15 +298,16 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "'Lenovo'" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('productName'), source('machineType'), 'Unknown Chassis')"
+      model        = "coalesce('productName', 'machineType')"
       manufacturer = "prereq('manufacturer')"
+      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -273,8 +318,19 @@ object "chassis" {
     optional = false
   }
 
+  prerequisite "placement" {
+    method   = "resolve_placement"
+    args     = {
+      site     = "coalesce('location.location', 'dataCenter')"
+      location = "source('location.room')"
+      rack     = "source('location.rack')"
+      position = "source('location.lowestRackUnit')"
+    }
+    optional = true
+  }
+
   field "name" {
-    value = "coalesce(source('name'), source('uuid'), 'Unknown')"
+    value = "coalesce('name', 'hostname', 'uuid')"
   }
 
   field "device_type" {
@@ -286,7 +342,221 @@ object "chassis" {
   }
 
   field "serial" {
-    value = "source('serialNumber')"
+    value = "str(source('serialNumber'))"
+  }
+
+  field "site" {
+    value = "prereq('placement.site_id')"
+  }
+
+  field "location" {
+    value = "prereq('placement.location_id')"
+  }
+
+  field "rack" {
+    value = "prereq('placement.rack_id')"
+  }
+
+  field "position" {
+    value = "prereq('placement.rack_position')"
+  }
+
+  field "face" {
+    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['xclarity-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Switches
+# ---------------------------------------------------------------------------
+
+object "switch" {
+  source_collection = "switches"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["serial"]
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce('productName', 'machineType', 'model')"
+      manufacturer = "prereq('manufacturer')"
+      part_number  = "source('partNumber')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "'Switch'" }
+    optional = false
+  }
+
+  prerequisite "placement" {
+    method   = "resolve_placement"
+    args     = {
+      site     = "coalesce('location.location', 'dataCenter')"
+      location = "source('location.room')"
+      rack     = "source('location.rack')"
+      position = "source('location.lowestRackUnit')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce('name', 'hostname', 'uuid')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "serial" {
+    value = "str(source('serialNumber'))"
+  }
+
+  field "site" {
+    value = "prereq('placement.site_id')"
+  }
+
+  field "location" {
+    value = "prereq('placement.location_id')"
+  }
+
+  field "rack" {
+    value = "prereq('placement.rack_id')"
+  }
+
+  field "position" {
+    value = "prereq('placement.rack_position')"
+  }
+
+  field "face" {
+    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['xclarity-sync']"
+  }
+
+  # Switch ports
+  interface {
+    source_items = "portList"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "coalesce('portName', 'name')"
+    }
+
+    field "mac_address" {
+      value = "upper(coalesce('macAddress', 'mac'))"
+    }
+
+    field "type" {
+      value = "map_value(source('portSpeed'), {1: '1000base-t', 10: '10gbase-t', 25: '25gbase-x-sfp28', 40: '40gbase-x-qsfpp', 100: '100gbase-x-qsfp28'}, 'other')"
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+
+object "storage" {
+  source_collection = "storage"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["serial"]
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce('productName', 'machineType', 'model')"
+      manufacturer = "prereq('manufacturer')"
+      part_number  = "source('partNumber')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "'Storage'" }
+    optional = false
+  }
+
+  prerequisite "placement" {
+    method   = "resolve_placement"
+    args     = {
+      site     = "coalesce('location.location', 'dataCenter')"
+      location = "source('location.room')"
+      rack     = "source('location.rack')"
+      position = "source('location.lowestRackUnit')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce('name', 'hostname', 'uuid')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "serial" {
+    value = "str(source('serialNumber'))"
+  }
+
+  field "site" {
+    value = "prereq('placement.site_id')"
+  }
+
+  field "location" {
+    value = "prereq('placement.location_id')"
+  }
+
+  field "rack" {
+    value = "prereq('placement.rack_id')"
+  }
+
+  field "position" {
+    value = "prereq('placement.rack_position')"
+  }
+
+  field "face" {
+    value = "when(prereq('placement.rack_id') != None, 'front', None)"
   }
 
   field "status" {
