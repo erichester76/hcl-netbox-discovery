@@ -2,3 +2,37 @@ regex/cluster_to_site
 regex/host_to_tenant
 regex/vm_to_role
 regex/vm_to_tenant
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.tox/
+
+# pre-commit cache
+.pre-commit-cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
