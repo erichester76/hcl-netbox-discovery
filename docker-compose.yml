@@ -1,0 +1,87 @@
+services:
+  # ---------------------------------------------------------------------------
+  # collector – runs all *.hcl mappings found in ./mappings by default.
+  #
+  # Pass --mapping to target a single mapping file, e.g.:
+  #   docker compose run --rm collector --mapping mappings/vmware.hcl
+  #
+  # Set DRY_RUN=true (in .env or environment) to log payloads without writing.
+  # ---------------------------------------------------------------------------
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VER: "3.12"
+    image: clemson-netbox-discovery:latest
+    restart: "no"
+
+    # Mount local directories so you can edit mappings/regex without rebuilding
+    volumes:
+      - ./mappings:/app/mappings:ro
+      - ./regex:/app/regex:ro
+
+    env_file:
+      # Copy .env.example to .env and fill in your credentials.
+      # The file is listed in .gitignore so secrets are never committed.
+      - path: .env
+        required: false
+
+    environment:
+      # Common – override here or in .env
+      NETBOX_URL:            ${NETBOX_URL:-}
+      NETBOX_TOKEN:          ${NETBOX_TOKEN:-}
+      NETBOX_CACHE_BACKEND:  ${NETBOX_CACHE_BACKEND:-none}
+      NETBOX_CACHE_URL:      ${NETBOX_CACHE_URL:-}
+      DRY_RUN:               ${DRY_RUN:-false}
+      LOG_LEVEL:             ${LOG_LEVEL:-INFO}
+
+      # VMware
+      VCENTER_URL:   ${VCENTER_URL:-}
+      VCENTER_USER:  ${VCENTER_USER:-}
+      VCENTER_PASS:  ${VCENTER_PASS:-}
+
+      # Cisco Catalyst Center (CATC)
+      CATC_HOST:       ${CATC_HOST:-}
+      CATC_USER:       ${CATC_USER:-}
+      CATC_PASS:       ${CATC_PASS:-}
+      CATC_VERIFY_SSL: ${CATC_VERIFY_SSL:-true}
+
+      # Lenovo XClarity
+      XCLARITY_HOST:       ${XCLARITY_HOST:-}
+      XCLARITY_USER:       ${XCLARITY_USER:-}
+      XCLARITY_PASS:       ${XCLARITY_PASS:-}
+      XCLARITY_VERIFY_SSL: ${XCLARITY_VERIFY_SSL:-true}
+
+      # Microsoft Azure
+      AZURE_TENANT_ID:      ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID:      ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET:  ${AZURE_CLIENT_SECRET:-}
+      AZURE_AUTH_METHOD:    ${AZURE_AUTH_METHOD:-default}
+
+      # LDAP
+      LDAP_SERVER:       ${LDAP_SERVER:-}
+      LDAP_USER:         ${LDAP_USER:-}
+      LDAP_PASS:         ${LDAP_PASS:-}
+      LDAP_SEARCH_BASE:  ${LDAP_SEARCH_BASE:-}
+
+      # Collector flags
+      COLLECTOR_SYNC_INTERFACES: ${COLLECTOR_SYNC_INTERFACES:-true}
+      COLLECTOR_SYNC_INVENTORY:  ${COLLECTOR_SYNC_INVENTORY:-true}
+      COLLECTOR_SYNC_DISKS:      ${COLLECTOR_SYNC_DISKS:-true}
+
+  # ---------------------------------------------------------------------------
+  # redis – optional cache backend.
+  # Enable by setting NETBOX_CACHE_BACKEND=redis and
+  # NETBOX_CACHE_URL=redis://redis:6379/0 in your .env file.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles:
+      - cache
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
