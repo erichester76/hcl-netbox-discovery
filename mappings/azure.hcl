@@ -112,7 +112,7 @@ object "vm" {
   # Cluster per Azure region
   prerequisite "cluster_type" {
     method   = "ensure_cluster_type"
-    args     = { name = "Azure" }
+    args     = { name = "'Azure'" }
     optional = false
   }
 
@@ -135,7 +135,7 @@ object "vm" {
   # Role
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "Azure VM" }
+    args     = { name = "'Azure VM'" }
     optional = false
   }
 
