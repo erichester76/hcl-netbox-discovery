@@ -1179,5 +1179,5 @@ class Engine:
                                     "name": str(pi_name),
                                     "type": str(pi_type),
                                 },
-                                ["device", "module", "name"],
+                                ["device", "name"],
                             )
