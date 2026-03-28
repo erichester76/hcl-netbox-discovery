@@ -147,6 +147,12 @@ class VMwareSource(DataSource):
         hosts = list(view.view)
         view.Destroy()
         logger.debug("VMware: fetched %d hosts", len(hosts))
+
+        # Enrich each host's vNIC objects with VLAN info so that HCL
+        # expressions can reference source('_vlans') on a vnic item.
+        for host in hosts:
+            self._enrich_host_vnics(host)
+
         return hosts
 
     def _get_vms(self) -> list:
@@ -165,11 +171,130 @@ class VMwareSource(DataSource):
             for vm in vms:
                 vm._rest_tags = tags_by_moid.get(getattr(vm, "_moId", None), {})
 
+        # Enrich each VM's guest NIC objects with VLAN info so that HCL
+        # expressions can reference source('_vlans') on a guest.net item.
+        for vm in vms:
+            self._enrich_vm_interfaces(vm)
+
         return vms
 
     # ------------------------------------------------------------------
     # REST session helpers
     # ------------------------------------------------------------------
+
+    def _build_portgroup_vlan_map(self, host: Any) -> dict:
+        """Return a ``{portgroup_key_or_name: {"id": vid, "name": name}}`` dict.
+
+        Gathers VLAN data from both DVS distributed port-groups (via
+        ``host.network``) and standard vSwitch port-groups (via
+        ``host.config.network.portgroup``).  Only VLANs with a valid 802.1Q
+        VLAN ID (1–4094) are included.
+        """
+        try:
+            from pyVmomi import vim  # type: ignore[import]
+        except ImportError:
+            return {}
+
+        pg_to_vlan: dict = {}
+
+        # --- DVS distributed port-groups ---
+        try:
+            for network in getattr(host, "network", []):
+                if isinstance(network, vim.dvs.DistributedVirtualPortgroup):
+                    try:
+                        vlan_id = network.config.defaultPortConfig.vlan.vlanId
+                    except Exception:
+                        vlan_id = None
+                    if isinstance(vlan_id, int) and 0 < vlan_id <= 4094:
+                        info = {"id": vlan_id, "name": network.name}
+                        pg_to_vlan[network.key] = info
+                        pg_to_vlan[network.name] = info
+        except Exception as exc:
+            logger.debug("Could not read DVS portgroup info for host: %s", exc)
+
+        # --- Standard vSwitch port-groups ---
+        try:
+            for pg in getattr(
+                getattr(getattr(host, "config", None), "network", None), "portgroup", []
+            ):
+                vlan_id = getattr(getattr(pg, "spec", None), "vlanId", None)
+                pg_name = getattr(getattr(pg, "spec", None), "name", None)
+                if pg_name and isinstance(vlan_id, int) and 0 < vlan_id <= 4094:
+                    pg_to_vlan[pg_name] = {"id": vlan_id, "name": pg_name}
+        except Exception as exc:
+            logger.debug("Could not read standard vSwitch portgroups for host: %s", exc)
+
+        return pg_to_vlan
+
+    def _enrich_host_vnics(self, host: Any) -> None:
+        """Attach a ``_vlans`` list to each VMkernel NIC on *host*.
+
+        Each element of ``_vlans`` is a ``{"id": <vid>, "name": <name>}`` dict.
+        When the vNIC portgroup has no VLAN (or the VLAN ID is 0) the list is
+        empty.  This lets HCL ``tagged_vlan`` blocks reference
+        ``source_items = "_vlans"`` on the vNIC item.
+        """
+        pg_to_vlan = self._build_portgroup_vlan_map(host)
+
+        try:
+            for vnic in getattr(
+                getattr(getattr(host, "config", None), "network", None), "vnic", []
+            ):
+                vlan_info = None
+
+                # DVS portgroup key takes priority
+                dvp = getattr(getattr(vnic, "spec", None), "distributedVirtualPort", None)
+                if dvp is not None:
+                    pg_key = getattr(dvp, "portgroupKey", None)
+                    if pg_key:
+                        vlan_info = pg_to_vlan.get(pg_key)
+
+                # Fall back to standard portgroup name
+                if vlan_info is None:
+                    pg_name = getattr(getattr(vnic, "spec", None), "portgroup", None)
+                    if pg_name:
+                        vlan_info = pg_to_vlan.get(pg_name)
+
+                vnic._vlans = [vlan_info] if vlan_info else []
+        except Exception as exc:
+            logger.debug("Could not enrich vNIC VLAN info for host: %s", exc)
+
+    def _enrich_vm_interfaces(self, vm: Any) -> None:
+        """Attach a ``_vlans`` list to each ``guest.net`` NIC entry on *vm*.
+
+        Mirrors :meth:`_enrich_host_vnics`: each element of ``_vlans`` is a
+        ``{"id": <vid>, "name": <name>}`` dict so HCL ``tagged_vlan`` blocks
+        can reference ``source_items = "_vlans"`` on a VM guest NIC item.
+        """
+        try:
+            from pyVmomi import vim  # type: ignore[import]
+        except ImportError:
+            return
+
+        # Build portgroup-name → VLAN info from the VM's attached networks
+        network_to_vlan: dict = {}
+        try:
+            for network in getattr(vm, "network", []):
+                if isinstance(network, vim.dvs.DistributedVirtualPortgroup):
+                    try:
+                        vlan_id = network.config.defaultPortConfig.vlan.vlanId
+                    except Exception:
+                        vlan_id = None
+                    if isinstance(vlan_id, int) and 0 < vlan_id <= 4094:
+                        info = {"id": vlan_id, "name": network.name}
+                        network_to_vlan[network.name] = info
+                        network_to_vlan[network.key] = info
+        except Exception as exc:
+            logger.debug("Could not read VM network info: %s", exc)
+
+        # Enrich each GuestNicInfo with the resolved VLAN info
+        try:
+            for net in getattr(getattr(vm, "guest", None), "net", []):
+                network_name = getattr(net, "network", None)
+                vlan_info = network_to_vlan.get(network_name) if network_name else None
+                net._vlans = [vlan_info] if vlan_info else []
+        except Exception as exc:
+            logger.debug("Could not enrich VM interface VLAN info: %s", exc)
 
     def _connect_rest(self, config: Any) -> Any:
         """Authenticate to the vSphere REST API and return the session."""

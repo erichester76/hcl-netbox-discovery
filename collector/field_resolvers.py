@@ -68,6 +68,10 @@ int(value, default=0)
 regex_replace(value, pattern, replacement)
     Apply ``re.sub(pattern, replacement, str(value))``.
 
+mask_to_prefix(mask)
+    Convert a dotted-decimal IPv4 subnet mask (e.g. ``'255.255.255.0'``) to its
+    CIDR prefix length integer (e.g. ``24``).  Returns ``None`` on any error.
+
 prereq(name)
     Look up a resolved prerequisite by name.  Use dot notation to access
     attributes on multi-value prerequisites, e.g. prereq("placement.site_id").
@@ -337,6 +341,21 @@ class Resolver:
                 return ""
             return _re.sub(pattern, replacement, str(value))
 
+        # ---- network helpers ----
+        def mask_to_prefix(mask: Any) -> Optional[int]:
+            """Convert a dotted-decimal IPv4 subnet mask to a CIDR prefix length.
+
+            For example ``'255.255.255.0'`` → ``24``.  Returns ``None`` when
+            *mask* is ``None`` or cannot be parsed.
+            """
+            if mask is None:
+                return None
+            import ipaddress as _ipaddress
+            try:
+                return _ipaddress.IPv4Network(f"0.0.0.0/{mask}").prefixlen
+            except Exception:
+                return None
+
         # ---- prereq() ----
         def prereq(name: str) -> Any:
             parts = name.split(".", 1)
@@ -363,6 +382,7 @@ class Resolver:
             "env": env,
             "regex_file": regex_file,
             "regex_replace": regex_replace,
+            "mask_to_prefix": mask_to_prefix,
             "map_value": map_value,
             "when": when,
             "coalesce": coalesce,

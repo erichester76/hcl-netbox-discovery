@@ -154,11 +154,19 @@ class IpAddressConfig:
 
 
 @dataclass
+class TaggedVlanConfig:
+    source_items: str = ""
+    enabled_if: Optional[str] = None
+    fields: list[FieldConfig] = field(default_factory=list)
+
+
+@dataclass
 class InterfaceConfig:
     source_items: str = ""
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
     ip_addresses: list[IpAddressConfig] = field(default_factory=list)
+    tagged_vlans: list[TaggedVlanConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -249,6 +257,17 @@ def _parse_ip_addresses(raw: list) -> list[IpAddressConfig]:
     return configs
 
 
+def _parse_tagged_vlans(raw: list) -> list[TaggedVlanConfig]:
+    configs = []
+    for body in _unlabeled_list(raw):
+        configs.append(TaggedVlanConfig(
+            source_items=body.get("source_items", ""),
+            enabled_if=body.get("enabled_if"),
+            fields=_parse_fields(body.get("field", [])),
+        ))
+    return configs
+
+
 def _parse_interfaces(raw: list) -> list[InterfaceConfig]:
     configs = []
     for body in _unlabeled_list(raw):
@@ -257,6 +276,7 @@ def _parse_interfaces(raw: list) -> list[InterfaceConfig]:
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
             ip_addresses=_parse_ip_addresses(body.get("ip_address", [])),
+            tagged_vlans=_parse_tagged_vlans(body.get("tagged_vlan", [])),
         ))
     return configs
 
