@@ -412,7 +412,7 @@ source "xclarity" {
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Adapter to use: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp` |
+| `api_type` | yes | Adapter to use: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, `tenable` |
 | `url` | yes | Base URL / hostname |
 | `username` | no | Username (required for `basic` auth) |
 | `password` | no | Password / API token |
@@ -736,8 +736,8 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/vmware.hcl.example` | VMware vCenter | Clusters, hypervisor hosts, VMs, interfaces, IPs, virtual disks |
 | `mappings/xclarity.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
 | `mappings/xclarity-modules.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
-| `mappings/azure.hcl.example` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks |
-| `mappings/catc.hcl.example` | Cisco Catalyst Center | Network devices |
+| `mappings/azure.hcl.example` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks, appliances, standalone NICs |
+| `mappings/catc.hcl.example` | Cisco Catalyst Center | Network devices, interfaces, management IPs |
 | `mappings/nexus.hcl.example` | Cisco Nexus Dashboard (NDFC) | Fabric switches, interfaces |
 | `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
 | `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
@@ -747,6 +747,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/jnsu.hcl.example` | LDAP / Novell eDirectory (jnsu schema) | DHCP lease IP addresses |
 | `mappings/active-directory-computers.hcl.example` | Active Directory (LDAP) | Computer accounts → NetBox devices |
 | `mappings/active-directory-users.hcl.example` | Active Directory (LDAP) | User accounts → NetBox contacts |
+| `mappings/tenable.hcl.example` | Tenable One / Nessus | Assets, vulnerabilities, findings → NetBox IP addresses / virtual machines |
 
 > **xclarity.hcl.example vs xclarity-modules.hcl.example** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl.example` uses `dcim.inventory_items` while `xclarity-modules.hcl.example` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl.example` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
 
@@ -905,7 +906,8 @@ hcl-netbox-discovery/
 │   ├── ldap.hcl.example
 │   ├── jnsu.hcl.example
 │   ├── active-directory-computers.hcl.example
-│   └── active-directory-users.hcl.example
+│   ├── active-directory-users.hcl.example
+│   └── tenable.hcl.example
 │
 ├── regex/                         # Pattern files for field transformations
 │   ├── cluster_to_site.example

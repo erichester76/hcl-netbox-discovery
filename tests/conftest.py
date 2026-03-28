@@ -52,6 +52,7 @@ def catc_config():
         username="admin",
         password="secret",
         verify_ssl=False,
+        extra={"fetch_interfaces": "false"},
     )
 
 
@@ -130,6 +131,38 @@ def prometheus_config():
         password="",
         verify_ssl=False,
         extra={"fetch_interfaces": "true"},
+    )
+
+
+@pytest.fixture()
+def tenable_config():
+    return SourceConfig(
+        api_type="tenable",
+        url="https://cloud.tenable.com",
+        username="tenable-access-key",
+        password="tenable-secret-key",
+        verify_ssl=False,
+        extra={
+            "platform":              "tenable",
+            "date_range":            "30",
+            "include_asset_details": "false",
+        },
+    )
+
+
+@pytest.fixture()
+def nessus_config():
+    return SourceConfig(
+        api_type="tenable",
+        url="https://nessus.example.com:8834",
+        username="admin",
+        password="secret",
+        verify_ssl=False,
+        extra={
+            "platform":              "nessus",
+            "date_range":            "7",
+            "include_asset_details": "false",
+        },
     )
 
 

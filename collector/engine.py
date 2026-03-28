@@ -78,19 +78,20 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.prometheus import PrometheusSource
     from .sources.rest import RestSource
     from .sources.snmp import SNMPSource
+    from .sources.tenable import TenableSource
     from .sources.vmware import VMwareSource
 
     registry = {
-        "vmware": VMwareSource,
-        "rest":   RestSource,
-        "catc":   CatalystCenterSource,
-        "ldap":   LDAPSource,
-        "azure":  AzureSource,
-        "snmp":   SNMPSource,
-        "nexus":  NexusDashboardSource,
-        "f5":     F5Source,
-        "nexus":       NexusDashboardSource,
-        "prometheus":  PrometheusSource,
+        "vmware":     VMwareSource,
+        "rest":       RestSource,
+        "catc":       CatalystCenterSource,
+        "ldap":       LDAPSource,
+        "azure":      AzureSource,
+        "snmp":       SNMPSource,
+        "nexus":      NexusDashboardSource,
+        "f5":         F5Source,
+        "prometheus": PrometheusSource,
+        "tenable":    TenableSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:

@@ -1129,6 +1129,37 @@ class TestProcessModulesPowerInput:
                     "manufacturer": "Lenovo",
                     "slot": "1",
                     "outputWatts": 900,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type_profile ("Power supply")
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        nb.update.return_value = MagicMock(id=40)
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        pp_payload = power_port_calls[0][0][1]
+        assert pp_payload["device"] == 99
+        assert pp_payload["module"] == 50
+        assert pp_payload["name"] == "Power Input 1"
+        assert pp_payload["type"] == "iec-60320-c14"
+
     def test_attribute_fields_evaluated_and_passed_to_ensure_module_type(self):
         """Attribute sub-blocks are evaluated per source item and forwarded to
         _ensure_module_type as the ``attributes`` dict, which then applies them
@@ -1151,28 +1182,47 @@ class TestProcessModulesPowerInput:
         nb = ctx.nb
         nb.upsert.side_effect = [
             MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=99),  # ensure_module_type_profile
             MagicMock(id=10),  # ensure_module_bay_template
             MagicMock(id=20),  # ensure_module_bay
-            MagicMock(id=30),  # ensure_module_type_profile ("Power supply")
-            MagicMock(id=40),  # ensure_module_type
-            MagicMock(id=50),  # upsert module
-            MagicMock(id=60),  # upsert power_port
+            MagicMock(id=30),  # ensure_module_type
+            MagicMock(id=40),  # upsert module
         ]
-        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
-        obj_cfg = self._make_psu_obj_cfg()
+        nb.update.return_value = MagicMock(id=30)
 
+        mod_cfg = ModuleConfig(
+            source_items="processors",
+            profile="CPU",
+            fields=[
+                FieldConfig(name="bay_name", value="source('socket')"),
+                FieldConfig(name="model", value="source('displayName')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+                FieldConfig(name="manufacturer", value="source('manufacturer')"),
+            ],
+            attributes=[
+                FieldConfig(name="cores", value="source('cores')"),
+                FieldConfig(name="speed", value="source('speed')"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
         engine._process_modules(obj_cfg, parent_nb_obj, ctx)
 
-        power_port_calls = [
-            c for c in nb.upsert.call_args_list
-            if c[0][0] == "dcim.power_ports"
+        # nb.update should have been called for attributes on the module type
+        update_calls = nb.update.call_args_list
+        module_type_attr_calls = [
+            c for c in update_calls
+            if c[0][0] == "dcim.module_types"
         ]
-        assert len(power_port_calls) == 1
-        pp_payload = power_port_calls[0][0][1]
-        assert pp_payload["device"] == 99
-        assert pp_payload["module"] == 50
-        assert pp_payload["name"] == "Power Input 1"
-        assert pp_payload["type"] == "iec-60320-c14"
+        assert len(module_type_attr_calls) == 1
+        attrs_payload = module_type_attr_calls[0][0][2]["attributes"]
+        assert attrs_payload["cores"] == 16
+        assert attrs_payload["speed"] == 2.5
 
     def test_high_wattage_psu_gets_c20_port(self):
         engine = self._make_engine()
@@ -1285,6 +1335,22 @@ class TestProcessModulesPowerInput:
 
     def test_no_power_input_config_means_no_power_port(self):
         """Modules without power_input config do not create power ports."""
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "cores": 16,
+                    "speed": 2.5,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
         # Calls: ensure_manufacturer, ensure_module_type_profile (upsert),
         #        ensure_module_bay_template, ensure_module_bay,
         #        ensure_module_type (upsert), dcim.modules (upsert)
@@ -1307,10 +1373,6 @@ class TestProcessModulesPowerInput:
                 FieldConfig(name="serial", value="str(source('serialNumber'))"),
                 FieldConfig(name="manufacturer", value="source('manufacturer')"),
             ],
-            attributes=[
-                FieldConfig(name="cores", value="source('cores')"),
-                FieldConfig(name="speed", value="source('speed')"),
-            ],
         )
         obj_cfg = ObjectConfig(
             name="node",
@@ -1321,16 +1383,11 @@ class TestProcessModulesPowerInput:
         parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
         engine._process_modules(obj_cfg, parent_nb_obj, ctx)
 
-        # nb.update should have been called for attributes on the module type
-        update_calls = nb.update.call_args_list
-        module_type_attr_calls = [
-            c for c in update_calls
-            if c[0][0] == "dcim.module_types"
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
         ]
-        assert len(module_type_attr_calls) == 1
-        attrs_payload = module_type_attr_calls[0][0][2]["attributes"]
-        assert attrs_payload["cores"] == 16
-        assert attrs_payload["speed"] == 2.5
+        assert len(power_port_calls) == 0
 
     def test_none_attribute_values_not_forwarded(self):
         """Attribute fields that evaluate to None are not included in the
@@ -1364,10 +1421,9 @@ class TestProcessModulesPowerInput:
             fields=[
                 FieldConfig(name="bay_name", value="source('socket')"),
                 FieldConfig(name="model", value="source('displayName')"),
-            ],
-            power_input=None,
                 FieldConfig(name="serial", value="str(source('serialNumber'))"),
             ],
+            power_input=None,
             attributes=[
                 FieldConfig(name="cores", value="source('cores')"),
             ],

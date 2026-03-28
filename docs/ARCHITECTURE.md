@@ -41,7 +41,8 @@ hcl-netbox-discovery/
 │       ├── nexus.py               # Cisco Nexus Dashboard Fabric Controller adapter
 │       ├── f5.py                  # F5 BIG-IP iControl REST adapter
 │       ├── prometheus.py          # Prometheus node-exporter adapter
-│       └── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
+│       ├── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
+│       └── tenable.py             # Tenable One / Nessus adapter
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example
@@ -56,7 +57,8 @@ hcl-netbox-discovery/
 │   ├── ldap.hcl.example
 │   ├── jnsu.hcl.example
 │   ├── active-directory-computers.hcl.example
-│   └── active-directory-users.hcl.example
+│   ├── active-directory-users.hcl.example
+│   └── tenable.hcl.example
 ├── regex/                         # Pattern files consumed by regex_file() expressions
 ├── main.py                        # CLI entry point
 └── requirements.txt
@@ -89,7 +91,7 @@ source "my_api" {
 }
 ```
 
-For `vmware`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, and `snmp` sources,
+For `vmware`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, and `tenable` sources,
 dedicated adapters in `sources/` are required because they use proprietary SDKs or
 protocols rather than plain HTTP REST.  These are fixed, internal components — no
 changes are needed to add new deployments of these source types.
@@ -248,9 +250,9 @@ Returns raw pyVmomi managed objects. The field resolver's `source()` function ha
 
 Uses the Azure SDK (`azure-identity`, `azure-mgmt-compute`, `azure-mgmt-network`, `azure-mgmt-subscription`) to enumerate resources across one or more Azure subscriptions.
 
-Supports `api_type = "azure"` with `AZURE_AUTH_METHOD` selecting between `"default"` (DefaultAzureCredential) and `"service_principal"`.
+Supports `api_type = "azure"` with `AZURE_AUTH_METHOD` selecting between `"default"` (DefaultAzureCredential) and `"service_principal"`. Subscription scope can be limited with `subscription_ids` (comma-separated) in the source `extra` block.
 
-Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"`, `"prefixes"`.
+Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"`, `"prefixes"`, `"appliances"`, `"standalone_nics"`. VM records include `image_reference` and `custom_fields` (instance_type, image_reference). Shared Gallery images are resolved to their definition metadata.
 
 ---
 
@@ -264,9 +266,9 @@ Because Active Directory exposes its data over the standard LDAP protocol, `api_
 
 ### `collector/sources/catc.py`
 
-Cisco Catalyst Center (DNA Center) adapter using `dnacentersdk`. Authenticates via username/password and wraps the Device Inventory API.
+Cisco Catalyst Center (DNA Center) adapter using `dnacentersdk`. Authenticates with user credentials and wraps the Device Inventory API.
 
-Implements `get_objects` for collection `"devices"`.
+Implements `get_objects` for collection `"devices"`. When `fetch_interfaces = "true"` is set in the source block, per-device interface lists are fetched and embedded so the `interface {}` HCL block can sync them. Records include `management_ip_address` and the `dnac_device_type` mapped to a NetBox device-type slug.
 
 ---
 
@@ -280,7 +282,7 @@ Implements `get_objects` for collection `"switches"`.
 
 ### `collector/sources/f5.py`
 
-F5 BIG-IP iControl REST adapter. Authenticates via username/password and fetches device identity from `sys/hardware` (with fallback to `identified-devices`), software version from `sys/version`, and management IP from `sys/management-ip`. Optionally fetches physical interfaces and self-IPs.
+F5 BIG-IP iControl REST adapter. Authenticates with user credentials and fetches device identity from `sys/hardware` (with fallback to `identified-devices`), software version from `sys/version`, and management IP from `sys/management-ip`. Optionally fetches physical interfaces and self-IPs.
 
 Implements `get_objects` for collection `"devices"`.
 
@@ -305,6 +307,26 @@ Implements `get_objects` for collection `"devices"` (with nested `"interfaces"` 
 Included example mappings:
 - `juniper-snmp.hcl.example` — Juniper routers (Juniper enterprise OIDs, model/version via regex, interface type mapping)
 - `linux-snmp.hcl.example` — Linux servers running `net-snmp` (kernel version extraction, standard interface types)
+
+---
+
+### `collector/sources/tenable.py`
+
+Tenable One (cloud) and Nessus (on-premise) adapter. Supports `api_type = "tenable"`.
+
+Authentication:
+- **Tenable.io / Tenable One**: `X-ApiKeys` header using `username` (access key) and `password` (secret key).
+- **Nessus**: POST `/session` token via `username`/`password` (set `extra.platform = "nessus"`).
+
+Implements `get_objects` for collections:
+
+| Collection | Description |
+|---|---|
+| `"assets"` | Network assets / hosts from Tenable |
+| `"vulnerabilities"` | Vulnerability records |
+| `"findings"` | Per-asset vulnerability lists (requires `extra.include_asset_details = "true"`) |
+
+The `extra.date_range` key (default `30`) limits results to the last N days. Use `extra.verify_ssl = "false"` for self-signed Nessus certs.
 
 ---
 
@@ -356,7 +378,7 @@ HCL file
    ▼
 config.py ──► CollectorConfig
    │
-   ├──► sources/<adapter>.py (vmware, azure, ldap, catc, nexus, f5, prometheus, snmp, rest)
+   ├──► sources/<adapter>.py (vmware, azure, ldap, catc, nexus, f5, prometheus, snmp, tenable, rest)
    │        └── get_objects("collection") → [raw_obj, …]
    │
    └──► engine.py

@@ -9,6 +9,10 @@
 #
 # Optional:
 #   CATC_VERIFY_SSL           true | false  (default: true)
+#   CATC_FETCH_INTERFACES     true | false  (default: false)
+#                             When true, interfaces are fetched per-device and
+#                             embedded in each device record so that the
+#                             interface {} block below can sync them to NetBox.
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
 #   DRY_RUN                   Set to "true" to log payloads without writing
@@ -16,11 +20,12 @@
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
 
 source "catc" {
-  api_type   = "catc"
-  url        = "env('CATC_HOST')"
-  username   = "env('CATC_USER')"
-  password   = "env('CATC_PASS')"
-  verify_ssl = "env('CATC_VERIFY_SSL', 'true')"
+  api_type          = "catc"
+  url               = "env('CATC_HOST')"
+  username          = "env('CATC_USER')"
+  password          = "env('CATC_PASS')"
+  verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
+  fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'false')"
 }
 
 netbox {
@@ -117,8 +122,45 @@ object "device" {
     value = "source('status')"
   }
 
+  field "primary_ip4" {
+    value = "when(source('ip_address') != '', source('ip_address'), None)"
+  }
+
   field "tags" {
     type  = "tags"
     value = "['catc-sync']"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Network Interfaces
+  #
+  # Interface sync requires CATC_FETCH_INTERFACES=true so the adapter fetches
+  # and embeds interface data inside each device record.  Set
+  # COLLECTOR_SYNC_INTERFACES=false to skip this step entirely.
+  # ---------------------------------------------------------------------------
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "description" {
+      value = "coalesce(source('description'), '')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
   }
 }
