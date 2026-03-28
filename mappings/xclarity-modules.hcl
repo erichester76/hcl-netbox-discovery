@@ -384,6 +384,11 @@ object "node" {
       value = "source('manufacturer')"
     }
 
+    power_input {
+      name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+      type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"  
+    }
+    
     attribute "hot_swappable" {
       value = "coalesce('hotSwappable', 'isHotSwappable')"
     }
