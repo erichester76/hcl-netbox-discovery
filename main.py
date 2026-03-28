@@ -13,8 +13,9 @@ Options
                         to run multiple mappings in sequence.
   --dry-run             Log payloads without writing anything to NetBox.
                         Overrides the dry_run setting in the mapping file.
-  --log-level LEVEL     Logging verbosity: DEBUG, INFO, WARNING, ERROR
-                        (default: INFO).
+  --log-level LEVEL     Logging verbosity: DEBUG, INFO, WARNING, ERROR.
+                        Defaults to the LOG_LEVEL environment variable, or
+                        INFO if that is not set.
 """
 
 from __future__ import annotations
@@ -46,14 +47,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=os.environ.get("LOG_LEVEL", "INFO").upper(),
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Logging verbosity (default: INFO).",
+        help=(
+            "Logging verbosity (default: LOG_LEVEL env var, or INFO). "
+            "Choices: DEBUG, INFO, WARNING, ERROR."
+        ),
     )
     return parser.parse_args(argv)
 
 
-def _setup_logging(level: str) -> None:
+def _setup_logging(level: str | None = None) -> None:
+    if level is None:
+        level = os.environ.get("LOG_LEVEL", "INFO")
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s [%(threadName)s] [%(levelname)s] [%(name)s] %(message)s",
