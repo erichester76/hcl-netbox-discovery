@@ -28,7 +28,10 @@ if "dnacentersdk" not in sys.modules:
 from collector.sources.catc import (  # noqa: E402
     CatalystCenterSource,
     _hierarchy_part,
+    _mask_to_prefix,
+    _normalize_iface_type,
     _normalize_model,
+    _parse_speed_mbps,
     _safe_get,
 )
 
@@ -350,3 +353,400 @@ class TestCatalystClose:
         src._client = MagicMock()
         src.close()
         assert src._client is None
+
+
+# ---------------------------------------------------------------------------
+# _normalize_iface_type()
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeIfaceType:
+    @pytest.mark.parametrize(
+        "raw_type, expected",
+        [
+            ("Physical",     "1000base-t"),
+            ("Management",   "1000base-t"),
+            ("Virtual",      "virtual"),
+            ("SVI",          "virtual"),
+            ("Loopback",     "virtual"),
+            ("Port-Channel", "lag"),
+            ("Tunnel",       "virtual"),
+            ("NVE",          "virtual"),
+            ("Unknown",      "other"),
+            ("",             "other"),
+        ],
+    )
+    def test_normalize_iface_type(self, raw_type, expected):
+        assert _normalize_iface_type(raw_type) == expected
+
+
+# ---------------------------------------------------------------------------
+# _parse_speed_mbps()
+# ---------------------------------------------------------------------------
+
+
+class TestParseSpeedMbps:
+    @pytest.mark.parametrize(
+        "speed_str, expected",
+        [
+            ("1000000000", 1000),     # 1 Gbps in bps
+            ("100000000",  100),      # 100 Mbps in bps
+            ("10000000",   10),       # 10 Mbps in bps
+            ("1 Gbps",     1000),
+            ("10Gbps",     10000),
+            ("100 Mbps",   100),
+            ("1000M",      1000),
+            ("0",          None),
+            ("",           None),
+            ("unknown",    None),
+        ],
+    )
+    def test_parse_speed(self, speed_str, expected):
+        assert _parse_speed_mbps(speed_str) == expected
+
+
+# ---------------------------------------------------------------------------
+# _mask_to_prefix()
+# ---------------------------------------------------------------------------
+
+
+class TestMaskToPrefix:
+    @pytest.mark.parametrize(
+        "mask, expected",
+        [
+            ("255.255.255.0",   24),
+            ("255.255.0.0",     16),
+            ("255.0.0.0",        8),
+            ("255.255.255.255", 32),
+            ("0.0.0.0",          0),
+            ("",               None),
+            ("not-a-mask",     None),
+            ("255.255.255",    None),  # only 3 octets
+        ],
+    )
+    def test_mask_to_prefix(self, mask, expected):
+        assert _mask_to_prefix(mask) == expected
+
+
+# ---------------------------------------------------------------------------
+# connect() — fetch_interfaces option
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystConnectFetchInterfaces:
+    def test_fetch_interfaces_false_by_default(self, catc_config):
+        catc_config.extra = {}
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+        assert src._fetch_interfaces is False
+
+    def test_fetch_interfaces_enabled_via_extra(self, catc_config):
+        catc_config.extra = {"fetch_interfaces": "true"}
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+        assert src._fetch_interfaces is True
+
+    def test_fetch_interfaces_false_explicit(self, catc_config):
+        catc_config.extra = {"fetch_interfaces": "false"}
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+        assert src._fetch_interfaces is False
+
+
+# ---------------------------------------------------------------------------
+# _enrich_device() — management IP and device ID
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystEnrichDeviceExtended:
+    def test_management_ip_included(self):
+        src = CatalystCenterSource()
+        device = SimpleNamespace(
+            hostname="sw-01",
+            platformId="C9300",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6",
+            serialNumber="SN001",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        result = src._enrich_device(device, "Global/US/SE/CU")
+        assert result["ip_address"] == "10.0.0.1"
+        assert result["managementIpAddress"] == "10.0.0.1"
+
+    def test_device_id_included(self):
+        src = CatalystCenterSource()
+        device = SimpleNamespace(
+            hostname="sw-01",
+            platformId="C9300",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6",
+            serialNumber="SN001",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="abc-123-uuid",
+        )
+        result = src._enrich_device(device, "Global/US/SE/CU")
+        assert result["deviceId"] == "abc-123-uuid"
+
+    def test_missing_management_ip_returns_empty_string(self):
+        src = CatalystCenterSource()
+        device = SimpleNamespace(
+            hostname="sw-01",
+            platformId="C9300",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6",
+            serialNumber="SN001",
+            reachabilityStatus="Reachable",
+            family="Switches",
+        )
+        result = src._enrich_device(device, "Global/US/SE/CU")
+        assert result["ip_address"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _enrich_interface()
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystEnrichInterface:
+    def _make_src(self) -> CatalystCenterSource:
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        return src
+
+    def test_physical_interface_enriched(self):
+        src = self._make_src()
+        iface = {
+            "portName":      "GigabitEthernet1/0/1",
+            "interfaceType": "Physical",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "Uplink to core",
+            "macAddress":    "aa:bb:cc:dd:ee:ff",
+            "ipv4Address":   "10.0.0.1",
+            "ipv4Mask":      "255.255.255.0",
+            "speed":         "1000000000",
+        }
+        result = src._enrich_interface(iface)
+        assert result["name"] == "GigabitEthernet1/0/1"
+        assert result["type"] == "1000base-t"
+        assert result["enabled"] is True
+        assert result["description"] == "Uplink to core"
+        assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
+        assert result["ip_address"] == "10.0.0.1/24"
+        assert result["speed"] == 1000
+
+    def test_loopback_interface_type(self):
+        src = self._make_src()
+        iface = {
+            "portName":      "Loopback0",
+            "interfaceType": "Loopback",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "",
+            "macAddress":    "",
+            "ipv4Address":   "192.168.1.1",
+            "ipv4Mask":      "255.255.255.255",
+            "speed":         "",
+        }
+        result = src._enrich_interface(iface)
+        assert result["type"] == "virtual"
+        assert result["ip_address"] == "192.168.1.1/32"
+        assert result["speed"] is None
+
+    def test_admin_down_interface(self):
+        src = self._make_src()
+        iface = {
+            "portName":      "GigabitEthernet1/0/2",
+            "interfaceType": "Physical",
+            "adminStatus":   "DOWN",
+            "operStatus":    "down",
+            "description":   "",
+            "macAddress":    "",
+            "ipv4Address":   "",
+            "ipv4Mask":      "",
+            "speed":         "1000000000",
+        }
+        result = src._enrich_interface(iface)
+        assert result["enabled"] is False
+        assert result["ip_address"] == ""
+
+    def test_interface_without_ip(self):
+        src = self._make_src()
+        iface = {
+            "portName":      "GigabitEthernet1/0/3",
+            "interfaceType": "Physical",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "",
+            "macAddress":    "11:22:33:44:55:66",
+            "ipv4Address":   "",
+            "ipv4Mask":      "",
+            "speed":         "100000000",
+        }
+        result = src._enrich_interface(iface)
+        assert result["ip_address"] == ""
+        assert result["mac_address"] == "11:22:33:44:55:66"
+
+    def test_unknown_interface_type_defaults_to_other(self):
+        src = self._make_src()
+        iface = {
+            "portName":      "Wlan0",
+            "interfaceType": "Wireless",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "",
+            "macAddress":    "",
+            "ipv4Address":   "",
+            "ipv4Mask":      "",
+            "speed":         "",
+        }
+        result = src._enrich_interface(iface)
+        assert result["type"] == "other"
+
+
+# ---------------------------------------------------------------------------
+# _fetch_device_interfaces()
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystFetchDeviceInterfaces:
+    def _connected_source(self) -> CatalystCenterSource:
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        return src
+
+    def test_returns_enriched_interfaces(self):
+        src = self._connected_source()
+        raw_iface = {
+            "portName":      "GigabitEthernet1/0/1",
+            "interfaceType": "Physical",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "",
+            "macAddress":    "aa:bb:cc:dd:ee:ff",
+            "ipv4Address":   "",
+            "ipv4Mask":      "",
+            "speed":         "1000000000",
+        }
+        src._client.devices.get_interface_info_by_id.return_value = SimpleNamespace(
+            response=[raw_iface]
+        )
+
+        result = src._fetch_device_interfaces("device-uuid-1")
+        assert len(result) == 1
+        assert result[0]["name"] == "GigabitEthernet1/0/1"
+
+    def test_returns_empty_list_on_api_error(self):
+        src = self._connected_source()
+        src._client.devices.get_interface_info_by_id.side_effect = Exception("API error")
+
+        result = src._fetch_device_interfaces("device-uuid-1")
+        assert result == []
+
+    def test_returns_empty_list_when_response_not_list(self):
+        src = self._connected_source()
+        src._client.devices.get_interface_info_by_id.return_value = SimpleNamespace(
+            response=None
+        )
+
+        result = src._fetch_device_interfaces("device-uuid-1")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# get_objects() with fetch_interfaces enabled
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystGetObjectsWithInterfaces:
+    def test_interfaces_fetched_when_enabled(self):
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        src._fetch_interfaces = True
+
+        site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        raw_iface = {
+            "portName":      "GigabitEthernet1/0/1",
+            "interfaceType": "Physical",
+            "adminStatus":   "UP",
+            "operStatus":    "up",
+            "description":   "Uplink",
+            "macAddress":    "aa:bb:cc:dd:ee:ff",
+            "ipv4Address":   "",
+            "ipv4Mask":      "",
+            "speed":         "1000000000",
+        }
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+        src._client.devices.get_interface_info_by_id.return_value = SimpleNamespace(
+            response=[raw_iface]
+        )
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert "interfaces" in result[0]
+        assert len(result[0]["interfaces"]) == 1
+        assert result[0]["interfaces"][0]["name"] == "GigabitEthernet1/0/1"
+
+    def test_interfaces_not_fetched_when_disabled(self):
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        src._fetch_interfaces = False
+
+        site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert "interfaces" not in result[0]
+        src._client.devices.get_interface_info_by_id.assert_not_called()
