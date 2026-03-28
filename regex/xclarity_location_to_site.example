@@ -1,0 +1,9 @@
+# xclarity_location_to_site — map XClarity location.location values to NetBox site names
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+# The first matching pattern wins; the original value is returned unchanged if nothing matches.
+#
+# Examples:
+#   ^DataCenter1$,DC1
+#   ^DataCenter2$,DC2
+#   (?i)^main.*,Main Campus
