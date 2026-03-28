@@ -8,7 +8,7 @@ FROM python:${PYTHON_VER}-slim AS builder
 WORKDIR /app
 
 # Install build-time OS packages needed by some Python deps (e.g. ldap3, cryptography)
-RUN export http_proxy=http://proxy.app.clemson.edu:8080 && apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libldap2-dev \
         libsasl2-dev \
@@ -16,7 +16,7 @@ RUN export http_proxy=http://proxy.app.clemson.edu:8080 && apt-get update && apt
 
 COPY requirements.txt .
 
-RUN export https_proxy=http://proxy.app.clemson.edu:8080 && python -m venv /opt/venv \
+RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
@@ -26,7 +26,7 @@ RUN export https_proxy=http://proxy.app.clemson.edu:8080 && python -m venv /opt/
 FROM python:${PYTHON_VER}-slim
 
 # Runtime LDAP libraries required by ldap3
-RUN export http_proxy=http://proxy.app.clemson.edu:8080 && apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         libldap2 \
         libsasl2-2 \
     && rm -rf /var/lib/apt/lists/*
