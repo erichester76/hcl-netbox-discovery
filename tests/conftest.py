@@ -64,9 +64,9 @@ def ldap_config():
         password="secret",
         verify_ssl=True,
         extra={
-            "search_base": "ou=dhcp,dc=example,dc=com",
-            "search_filter": "(DirXMLjnsuDHCPAddress=*)",
-            "skip_aps": "true",
+            "search_base": "ou=people,dc=example,dc=com",
+            "search_filter": "(objectClass=inetOrgPerson)",
+            "attributes": "cn,mail,telephoneNumber",
         },
     )
 
@@ -118,6 +118,18 @@ def rest_config():
                 list_key="switchList",
             ),
         },
+    )
+
+
+@pytest.fixture()
+def prometheus_config():
+    return SourceConfig(
+        api_type="prometheus",
+        url="http://prometheus.example.com:9090",
+        username="",
+        password="",
+        verify_ssl=False,
+        extra={"fetch_interfaces": "true"},
     )
 
 

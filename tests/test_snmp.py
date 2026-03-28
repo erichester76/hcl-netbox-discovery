@@ -19,7 +19,6 @@ from collector.sources.snmp import (
     _ip_suffix,
     _mac_bytes_to_str,
     _netmask_to_prefixlen,
-    _parse_juniper_descr,
     _rows_by_index,
 )
 
@@ -131,84 +130,27 @@ class TestMacBytesToStr:
 
 
 class TestIfTypeToNetbox:
-    def test_juniper_ge_interface(self):
-        assert _if_type_to_netbox(6, "ge-0/0/0") == "1000base-t"
+    def test_ethernet_defaults_to_other(self):
+        # ifType 6 = ethernetCsmacd; name-based refinement is done in HCL
+        assert _if_type_to_netbox(6) == "other"
 
-    def test_juniper_xe_interface(self):
-        assert _if_type_to_netbox(6, "xe-0/0/0") == "10gbase-x-sfpp"
+    def test_loopback_virtual(self):
+        assert _if_type_to_netbox(24) == "virtual"
 
-    def test_juniper_et_interface(self):
-        assert _if_type_to_netbox(6, "et-0/0/0") == "100gbase-x-cfp"
+    def test_prop_virtual(self):
+        assert _if_type_to_netbox(53) == "virtual"
 
-    def test_juniper_ae_lag(self):
-        assert _if_type_to_netbox(6, "ae0") == "lag"
-
-    def test_juniper_reth_lag(self):
-        assert _if_type_to_netbox(6, "reth0") == "lag"
-
-    def test_juniper_loopback(self):
-        assert _if_type_to_netbox(24, "lo0") == "virtual"
-
-    def test_juniper_irb(self):
-        assert _if_type_to_netbox(53, "irb.10") == "virtual"
-
-    def test_juniper_fxp_mgmt(self):
-        assert _if_type_to_netbox(6, "fxp0") == "1000base-t"
-
-    def test_generic_lag_via_iftype(self):
-        # No matching name prefix — falls back to ifType 161
-        assert _if_type_to_netbox(161, "bond0") == "lag"
+    def test_lag_via_iftype(self):
+        assert _if_type_to_netbox(161) == "lag"
 
     def test_generic_virtual_via_iftype(self):
-        assert _if_type_to_netbox(24, "loopback0") == "virtual"
+        assert _if_type_to_netbox(24) == "virtual"
 
     def test_unknown_defaults_to_other(self):
-        assert _if_type_to_netbox(999, "unknownif") == "other"
+        assert _if_type_to_netbox(999) == "other"
 
-    def test_case_insensitive_name(self):
-        assert _if_type_to_netbox(6, "GE-0/0/0") == "1000base-t"
-
-
-# ---------------------------------------------------------------------------
-# _parse_juniper_descr()
-# ---------------------------------------------------------------------------
-
-
-class TestParseJuniperDescr:
-    def test_mx240(self):
-        descr = (
-            "Juniper Networks, Inc. mx240 internet router, "
-            "kernel JUNOS 18.1R3-S9.6 #0 SMP"
-        )
-        model, ver = _parse_juniper_descr(descr)
-        assert model == "mx240"
-        assert ver == "18.1R3-S9.6"
-
-    def test_ex4300(self):
-        descr = (
-            "Juniper Networks, Inc. ex4300-48t Ethernet Switch, "
-            "kernel JUNOS 20.4R3.8"
-        )
-        model, ver = _parse_juniper_descr(descr)
-        assert model == "ex4300-48t"
-        assert ver == "20.4R3.8"
-
-    def test_srx300(self):
-        descr = (
-            "Juniper Networks, Inc. srx300 internet router, "
-            "kernel JUNOS 21.2R3-S2.5"
-        )
-        model, ver = _parse_juniper_descr(descr)
-        assert model == "srx300"
-        assert ver == "21.2R3-S2.5"
-
-    def test_non_juniper_returns_empty(self):
-        model, ver = _parse_juniper_descr("Cisco IOS Software, Version 15.6")
-        assert model == ""
-        assert ver == ""
-
-    def test_empty_string(self):
-        assert _parse_juniper_descr("") == ("", "")
+    def test_tunnel_virtual(self):
+        assert _if_type_to_netbox(131) == "virtual"
 
 
 # ---------------------------------------------------------------------------
@@ -415,19 +357,21 @@ SAMPLE_DEVICE = {
     "host": "10.0.0.1",
     "name": "router-mx240",
     "description": "Juniper Networks, Inc. mx240 internet router, kernel JUNOS 20.4R3",
+    "sys_object_id": "1.3.6.1.4.1.2636.1.1.1.2.57",
     "location": "DC-1",
     "contact": "noc@example.com",
-    "serial": "AB1234",
-    "model": "mx240",
-    "os_version": "20.4R3",
-    "platform": "Junos 20.4R3",
-    "manufacturer": "Juniper Networks",
+    "serial": "",
+    "model": "",
+    "os_version": "",
+    "platform": "",
+    "manufacturer": "",
     "interfaces": [
         {
             "index": 1,
             "name": "ge-0/0/0",
             "label": "uplink",
-            "type": "1000base-t",
+            "if_type": 6,
+            "type": "other",
             "mac_address": "AA:BB:CC:DD:EE:01",
             "admin_status": "up",
             "oper_status": "up",
@@ -473,16 +417,21 @@ class TestCollectAllHosts:
 
 
 class TestCollectHost:
-    def _make_source_with_mocks(self, snmp_config, sys_info, jnx_info=None, ifaces=None, ips=None):
+    def _make_source_with_mocks(
+        self, snmp_config, sys_info, extra_oids_result=None, ifaces=None, ips=None
+    ):
+        """Build a connected SNMPSource whose low-level methods return preset data."""
         src = SNMPSource()
         with patch("pysnmp.hlapi.v3arch.asyncio"):
             src.connect(snmp_config)
         src._hosts = ["10.0.0.1"]
 
+        # Build a combined OID → value lookup so the mock can serve both
+        # the system-info GET and any extra_oids GET.
+        all_oid_data = {**sys_info, **(extra_oids_result or {})}
+
         async def _mock_get_multi(host, oids):
-            if "1.3.6.1.4.1.2636.3.1.2.0" in oids:
-                return jnx_info or {}
-            return sys_info
+            return {oid: all_oid_data.get(oid, "") for oid in oids}
 
         async def _mock_collect_interfaces(host):
             return ifaces or []
@@ -495,44 +444,98 @@ class TestCollectHost:
         src._collect_ip_addresses = _mock_collect_ip_addresses
         return src
 
-    def test_juniper_device_identified(self, snmp_config):
+    def test_generic_device_fields_populated(self, snmp_config):
+        """Device dict always contains sys_object_id and standard fields."""
         sys_info = {
-            "1.3.6.1.2.1.1.1.0": (
-                "Juniper Networks, Inc. mx240 internet router, kernel JUNOS 20.4R3"
-            ),
-            "1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.2636.1.1.1.2.57",  # Juniper OID
-            "1.3.6.1.2.1.1.4.0": "noc@example.com",
-            "1.3.6.1.2.1.1.5.0": "router-01",
-            "1.3.6.1.2.1.1.6.0": "DC-1",
-        }
-        jnx_info = {
-            "1.3.6.1.4.1.2636.3.1.2.0": "Juniper MX240",
-            "1.3.6.1.4.1.2636.3.1.3.0": "AB1234",
-        }
-        src = self._make_source_with_mocks(snmp_config, sys_info, jnx_info)
-        result = asyncio.run(src._collect_host("10.0.0.1"))
-
-        assert result is not None
-        assert result["manufacturer"] == "Juniper Networks"
-        assert result["serial"] == "AB1234"
-        assert result["os_version"] == "20.4R3"
-        assert result["name"] == "router-01"
-        assert result["location"] == "DC-1"
-
-    def test_non_juniper_device(self, snmp_config):
-        sys_info = {
-            "1.3.6.1.2.1.1.1.0": "Cisco IOS Software",
+            "1.3.6.1.2.1.1.1.0": "Cisco IOS Software, Version 15.6",
             "1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.9.1.1",  # Cisco OID
-            "1.3.6.1.2.1.1.4.0": "",
+            "1.3.6.1.2.1.1.4.0": "noc@example.com",
             "1.3.6.1.2.1.1.5.0": "cisco-router",
-            "1.3.6.1.2.1.1.6.0": "",
+            "1.3.6.1.2.1.1.6.0": "DC-1",
         }
         src = self._make_source_with_mocks(snmp_config, sys_info)
         result = asyncio.run(src._collect_host("10.0.0.1"))
 
         assert result is not None
+        assert result["name"] == "cisco-router"
+        assert result["sys_object_id"] == "1.3.6.1.4.1.9.1.1"
+        assert result["description"] == "Cisco IOS Software, Version 15.6"
+        assert result["location"] == "DC-1"
+        # Generic source leaves vendor fields empty
         assert result["manufacturer"] == ""
         assert result["serial"] == ""
+        assert result["model"] == ""
+        assert result["os_version"] == ""
+        assert result["platform"] == ""
+
+    def test_extra_oids_fetched_and_added_to_device(self, snmp_config):
+        """Fields declared in extra_oids are fetched and added to the device dict."""
+        snmp_config.extra["extra_oids"] = {
+            "jnx_serial": "1.3.6.1.4.1.2636.3.1.3.0",
+            "jnx_model":  "1.3.6.1.4.1.2636.3.1.2.0",
+        }
+        sys_info = {
+            "1.3.6.1.2.1.1.1.0": (
+                "Juniper Networks, Inc. mx240 internet router, kernel JUNOS 20.4R3"
+            ),
+            "1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.2636.1.1.1.2.57",
+            "1.3.6.1.2.1.1.4.0": "noc@example.com",
+            "1.3.6.1.2.1.1.5.0": "router-01",
+            "1.3.6.1.2.1.1.6.0": "DC-1",
+        }
+        extra_oids_result = {
+            "1.3.6.1.4.1.2636.3.1.3.0": "AB1234",
+            "1.3.6.1.4.1.2636.3.1.2.0": "MX240",
+        }
+        src = self._make_source_with_mocks(snmp_config, sys_info, extra_oids_result)
+        result = asyncio.run(src._collect_host("10.0.0.1"))
+
+        assert result is not None
+        assert result["jnx_serial"] == "AB1234"
+        assert result["jnx_model"] == "MX240"
+        assert result["sys_object_id"] == "1.3.6.1.4.1.2636.1.1.1.2.57"
+        assert result["name"] == "router-01"
+        assert result["location"] == "DC-1"
+
+    def test_extra_oids_failure_is_graceful(self, snmp_config):
+        """A failure fetching extra OIDs does not crash the collection."""
+        snmp_config.extra["extra_oids"] = {
+            "jnx_serial": "1.3.6.1.4.1.2636.3.1.3.0",
+        }
+        sys_info = {
+            "1.3.6.1.2.1.1.1.0": "",
+            "1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.2636.1.1.1.2.57",
+            "1.3.6.1.2.1.1.4.0": "",
+            "1.3.6.1.2.1.1.5.0": "router-01",
+            "1.3.6.1.2.1.1.6.0": "",
+        }
+        src = SNMPSource()
+        with patch("pysnmp.hlapi.v3arch.asyncio"):
+            src.connect(snmp_config)
+        src._hosts = ["10.0.0.1"]
+
+        call_count = {"n": 0}
+
+        async def _mock_get_multi(host, oids):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {oid: sys_info.get(oid, "") for oid in oids}
+            raise RuntimeError("SNMP timeout")
+
+        async def _mock_interfaces(host):
+            return []
+
+        async def _mock_ips(host):
+            return []
+
+        src._snmp_get_multi = _mock_get_multi
+        src._collect_interfaces = _mock_interfaces
+        src._collect_ip_addresses = _mock_ips
+
+        result = asyncio.run(src._collect_host("10.0.0.1"))
+        assert result is not None
+        assert result["name"] == "router-01"
+        assert "jnx_serial" not in result  # extra OID fetch failed gracefully
 
     def test_returns_none_on_get_failure(self, snmp_config):
         src = SNMPSource()
@@ -630,7 +633,11 @@ class TestCollectInterfaces:
         assert iface["index"] == 1
         assert iface["name"] == "ge-0/0/0"
         assert iface["label"] == "uplink-to-core"
-        assert iface["type"] == "1000base-t"
+        # Raw ifType integer is now exposed for vendor-specific HCL mapping
+        assert iface["if_type"] == 6
+        # Standard ifType map: 6 (ethernetCsmacd) → "other"
+        # Vendor-specific type refinement (e.g. "1000base-t") is done in HCL
+        assert iface["type"] == "other"
         assert iface["mac_address"] == "AA:BB:CC:DD:EE:FF"
         assert iface["admin_status"] == "up"
         assert iface["oper_status"] == "up"

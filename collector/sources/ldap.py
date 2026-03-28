@@ -1,116 +1,92 @@
-"""LDAP data source adapter.
+"""Generic LDAP data source adapter.
 
 Connects to an LDAP / Active Directory server using ``ldap3`` and returns
-DHCP-lease records as plain Python dicts.
+directory entries as plain Python dicts with LDAP attribute names as keys.
 
-Supported collection
---------------------
-``"dhcp_leases"`` — returns IP-address records sourced from DHCP / static
-registrations in a Novell eDirectory / Micro Focus IDM directory.
+Supported collections
+---------------------
+Any name passed to ``get_objects()`` is accepted — the name is a label used
+in the HCL ``source_collection`` attribute and has no effect on the search
+behaviour.  All search behaviour is driven by the ``extra`` config values in
+the ``source {}`` HCL block.
 
 Source HCL block example::
 
     source "ldap" {
-      api_type  = "ldap"
-      url       = env("LDAP_SERVER")          # e.g. ldaps://ldap.example.com
-      username  = env("LDAP_USER")
-      password  = env("LDAP_PASS")
-      verify_ssl = true
+      api_type      = "ldap"
+      url           = env("LDAP_SERVER")          # e.g. ldaps://ldap.example.com
+      username      = env("LDAP_USER")
+      password      = env("LDAP_PASS")
+      verify_ssl    = true
 
       # Extra configuration
       search_base   = env("LDAP_SEARCH_BASE")
-      search_filter = env("LDAP_FILTER", "(DirXMLjnsuDHCPAddress=*)")
-      skip_aps      = "true"
+      search_filter = env("LDAP_FILTER", "(objectClass=*)")
+      # Comma-separated list of LDAP attributes to fetch.
+      # Omit (or leave empty) to fetch all non-operational attributes ("*").
+      attributes    = "cn,mail,memberOf"
     }
 
-Each returned dict has the following fields:
+Each returned dict has LDAP attribute names as keys.  Single-value attributes
+are returned as strings; multi-value attributes are returned as lists of
+strings.  Absent or empty attributes are returned as empty strings.
 
-  address       IP address string.  A prefix length is appended when
-                ``default_prefix_length`` is set in source.extra, e.g.
-                ``"10.20.30.100/24"``.  Otherwise the bare IP is returned.
-  description   Formatted description string (max 64 chars).  Static entries
-                use the device description directly; DHCP entries prepend the
-                user UPN derived from the distinguished name.
-  status        ``"dhcp"`` for DHCP leases, ``"active"`` for static entries.
-  mac_address   Uppercase MAC address or empty string.
-  device_name   Device name from the directory attribute.
-  lease_type    ``"Static"`` or ``"Registered"`` (informational).
+Field mapping and any schema-specific normalisation should be done in the HCL
+``object {}`` block using the expression helpers (``source()``, ``when()``,
+``regex_replace()``, ``upper()``, ``truncate()``, etc.).  See
+``mappings/jnsu.hcl`` for a worked example using the Novell eDirectory /
+Micro Focus IDM DHCP-lease schema.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Optional
 
 from .base import DataSource
 
 logger = logging.getLogger(__name__)
 
-# Default LDAP attributes to request
-_DEFAULT_ATTRIBUTES = [
-    "DirXMLjnsuDHCPAddress",
-    "DirXMLjnsuDeviceName",
-    "DirXMLjnsuHWAddress",
-    "DirXMLjnsuDescription",
-    "DirXMLjnsuUserDN",
-    "DirXMLJnsuDisabled",
-    "DirXMLjnsuStaticAddrs",
-]
 
-# Patterns for AP detection (access points should be skipped)
-_AP_PATTERNS = [re.compile(r"-ap", re.IGNORECASE), re.compile(r"\bWAP\b")]
+def _entry_to_dict(entry: Any) -> dict:
+    """Convert a single ldap3 Entry into a plain Python dict.
 
-# Pattern to extract UPN from LDAP distinguished name
-_UPN_PATTERN = re.compile(r"^cn=(.+),ou=.+$", re.IGNORECASE)
+    Single-value attributes are returned as strings.
+    Multi-value attributes are returned as lists of strings.
+    Absent or empty attributes are returned as empty strings.
 
-
-def _is_ap(description: str) -> bool:
-    """Return True if *description* indicates an access point entry."""
-    return any(p.search(description) for p in _AP_PATTERNS)
-
-
-def _format_description(user_dn: str, description: str, lease_type: str) -> str:
-    """Return a sanitised description string (max 64 chars)."""
-    if lease_type == "Static":
-        full = description
+    Falls back to ``vars()`` for non-ldap3 objects (e.g. test mocks).
+    """
+    # Prefer ldap3's own attribute list; fall back to instance dict keys
+    if hasattr(entry, "entry_attributes"):
+        attr_names = entry.entry_attributes
     else:
-        match = _UPN_PATTERN.match(user_dn or "")
-        if match:
-            upn = f"{match.group(1)}@clemson.edu".upper()
-        else:
-            upn = (user_dn or "unknown").upper()
-        full = f"{upn}: {description}"
+        attr_names = [k for k in vars(entry) if not k.startswith("_")]
 
-    # Remove newlines and excess whitespace
-    full = re.sub(r"[\r\n]|[ ]{2,}", " ", full)
-    # Remove "Connected to " prefix
-    full = re.sub(r"^Connected to ", "", full)
-    return full[:64]
+    result: dict = {}
+    for attr_name in attr_names:
+        try:
+            val = getattr(entry, attr_name, None)
+            if val is None:
+                result[attr_name] = ""
+                continue
+            # ldap3 Attribute objects expose a .values list
+            if hasattr(val, "values"):
+                raw_values = [str(v) for v in val.values if str(v).strip()]
+            elif hasattr(val, "__iter__") and not isinstance(val, str):
+                raw_values = [str(v) for v in val if str(v).strip()]
+            else:
+                raw_values = [str(val)] if str(val).strip() else []
 
-
-def _attr(entry: Any, name: str) -> str:
-    """Return string value of an ldap3 entry attribute (safe)."""
-    try:
-        val = getattr(entry, name, None)
-        if val is None:
-            return ""
-        return str(val)
-    except Exception:
-        return ""
-
-
-def _is_static(entry: Any) -> bool:
-    """Return True if the LDAP entry represents a static (not DHCP) lease."""
-    try:
-        static_addrs = getattr(entry, "DirXMLjnsuStaticAddrs", None)
-        if static_addrs is None:
-            return False
-        # ldap3 represents multi-value attributes as lists
-        values = list(static_addrs) if hasattr(static_addrs, "__iter__") and not isinstance(static_addrs, str) else [static_addrs]
-        return any(str(v).strip() for v in values)
-    except Exception:
-        return False
+            if len(raw_values) == 0:
+                result[attr_name] = ""
+            elif len(raw_values) == 1:
+                result[attr_name] = raw_values[0]
+            else:
+                result[attr_name] = raw_values
+        except Exception:
+            result[attr_name] = ""
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +94,7 @@ def _is_static(entry: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 class LDAPSource(DataSource):
-    """ldap3-backed source adapter for LDAP/AD directories."""
+    """ldap3-backed generic source adapter for LDAP/AD directories."""
 
     def __init__(self) -> None:
         self._conn: Optional[Any] = None
@@ -154,20 +130,15 @@ class LDAPSource(DataSource):
         logger.info("LDAP connection established: %s", url)
 
     def get_objects(self, collection: str) -> list:
-        """Return records for *collection*."""
+        """Return LDAP entries for *collection* as raw attribute dicts.
+
+        The *collection* name is used only as a label; all search behaviour is
+        driven by the ``extra`` values in the source HCL block (``search_base``,
+        ``search_filter``, ``attributes``).
+        """
         if self._conn is None:
             raise RuntimeError("LDAPSource: connect() has not been called")
-
-        collectors = {
-            "dhcp_leases": self._get_dhcp_leases,
-        }
-        fn = collectors.get(collection.lower())
-        if fn is None:
-            raise ValueError(
-                f"LDAPSource: unknown collection {collection!r}. "
-                f"Supported: {sorted(collectors)}"
-            )
-        return fn()
+        return self._get_entries()
 
     def close(self) -> None:
         """Close the LDAP connection."""
@@ -180,17 +151,15 @@ class LDAPSource(DataSource):
                 self._conn = None
 
     # ------------------------------------------------------------------
-    # Collection fetchers
+    # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_dhcp_leases(self) -> list[dict]:
-        """Fetch and normalise DHCP/static lease records from LDAP."""
+    def _get_entries(self) -> list[dict]:
+        """Perform the configured LDAP search and return entries as dicts."""
         extra = self._config.extra if self._config else {}
         search_base   = extra.get("search_base", "")
-        search_filter = extra.get("search_filter", "(DirXMLjnsuDHCPAddress=*)")
-        skip_aps_raw  = extra.get("skip_aps", "true")
-        skip_aps      = str(skip_aps_raw).strip().lower() in ("true", "1", "yes")
-        prefix_length = extra.get("default_prefix_length", "")
+        search_filter = extra.get("search_filter", "(objectClass=*)")
+        attrs_raw     = extra.get("attributes", "")
 
         if not search_base:
             raise ValueError(
@@ -198,54 +167,21 @@ class LDAPSource(DataSource):
                 "(e.g. search_base = env('LDAP_SEARCH_BASE'))"
             )
 
+        # Parse comma-separated attribute list; default to all non-operational attrs
+        if attrs_raw:
+            attributes: Any = [a.strip() for a in str(attrs_raw).split(",") if a.strip()]
+        else:
+            attributes = ["*"]
+
         logger.info("LDAP search base=%s filter=%s", search_base, search_filter)
         self._conn.search(
             search_base=search_base,
             search_filter=search_filter,
-            attributes=_DEFAULT_ATTRIBUTES,
+            attributes=attributes,
         )
         entries = self._conn.entries
         logger.debug("LDAP: %d raw entries retrieved", len(entries))
 
-        records: list[dict] = []
-        for entry in entries:
-            record = self._normalise_entry(entry, prefix_length, skip_aps)
-            if record is not None:
-                records.append(record)
-
-        logger.debug("LDAP: returning %d normalised records", len(records))
+        records = [_entry_to_dict(e) for e in entries]
+        logger.debug("LDAP: returning %d records", len(records))
         return records
-
-    def _normalise_entry(
-        self, entry: Any, prefix_length: str, skip_aps: bool
-    ) -> Optional[dict]:
-        """Convert a single ldap3 entry into a plain dict, or None to skip."""
-        ip         = _attr(entry, "DirXMLjnsuDHCPAddress")
-        device_name = _attr(entry, "DirXMLjnsuDeviceName")
-        mac_raw    = _attr(entry, "DirXMLjnsuHWAddress")
-        description = _attr(entry, "DirXMLjnsuDescription")
-        user_dn    = _attr(entry, "DirXMLjnsuUserDN")
-
-        if not ip:
-            return None
-
-        if skip_aps and description and _is_ap(description):
-            logger.debug("Skipping AP entry: %s", description)
-            return None
-
-        lease_type = "Static" if _is_static(entry) else "Registered"
-        address = f"{ip}/{prefix_length}" if prefix_length else ip
-        formatted_desc = _format_description(user_dn, description, lease_type)
-        mac = mac_raw.upper() if mac_raw else ""
-
-        return {
-            "address":      address,
-            "description":  formatted_desc,
-            "status":       "active" if lease_type == "Static" else "dhcp",
-            "mac_address":  mac,
-            "device_name":  device_name,
-            "lease_type":   lease_type,
-            # Raw passthrough
-            "raw_ip":        ip,
-            "raw_user_dn":   user_dn,
-        }

@@ -1,7 +1,9 @@
 """SNMP data source adapter for network device discovery.
 
 Connects to one or more network devices via SNMP v2c or v3 and returns
-device and interface information as plain Python dicts.
+device and interface information as plain Python dicts.  All vendor-specific
+OID fetching and field mappings are left to the HCL mapping file so that this
+adapter remains vendor-agnostic.
 
 Supported collection
 --------------------
@@ -11,7 +13,7 @@ nested ``ip_addresses`` list.
 
 Source HCL block example (SNMPv2c)::
 
-    source "juniper" {
+    source "mydevices" {
       api_type  = "snmp"
       url       = env("SNMP_HOSTS")                  # comma-separated host list
       username  = env("SNMP_COMMUNITY", "public")    # community string
@@ -22,11 +24,18 @@ Source HCL block example (SNMPv2c)::
       port     = env("SNMP_PORT", "161")
       timeout  = env("SNMP_TIMEOUT", "5")
       retries  = env("SNMP_RETRIES", "1")
+
+      # Optional: fetch additional vendor-specific OIDs per device.
+      # The result is added to the device dict under the given field name.
+      extra_oids = {
+        jnx_model  = "1.3.6.1.4.1.2636.3.1.2.0"
+        jnx_serial = "1.3.6.1.4.1.2636.3.1.3.0"
+      }
     }
 
 Source HCL block example (SNMPv3)::
 
-    source "juniper" {
+    source "mydevices" {
       api_type       = "snmp"
       url            = env("SNMP_HOSTS")
       username       = env("SNMP_V3_USER")
@@ -44,21 +53,24 @@ Device dict fields
   host           The polled host (IP or hostname).
   name           sysName (falls back to *host* when empty).
   description    sysDescr.
+  sys_object_id  sysObjectID (vendor OID; use in HCL to detect the vendor).
   location       sysLocation.
   contact        sysContact.
-  serial         Serial number (jnxBoxSerialNo for Juniper, empty otherwise).
-  model          Model string (parsed from jnxBoxDescr / sysDescr).
-  os_version     OS version string (parsed from sysDescr, e.g. "20.4R3").
-  platform       Platform name, e.g. "Junos 20.4R3".
-  manufacturer   "Juniper Networks" for Juniper devices, empty otherwise.
+  serial         Empty string — populate via ``extra_oids`` in the HCL.
+  model          Empty string — populate via ``extra_oids`` in the HCL.
+  os_version     Empty string — derive from ``description`` in the HCL.
+  platform       Empty string — derive from ``description`` in the HCL.
+  manufacturer   Empty string — derive from ``sys_object_id`` in the HCL.
   interfaces     List of interface dicts (see below).
+  <extra_oid>    Any field names declared in ``extra_oids`` are added here.
 
 Interface dict fields
 ---------------------
   index          ifIndex integer.
   name           ifName (falls back to ifDescr).
   label          ifAlias (operator-assigned description).
-  type           NetBox-compatible interface type slug.
+  if_type        Raw SNMP ifType integer (use in HCL for vendor type mapping).
+  type           NetBox interface type slug derived from the standard ifType map.
   mac_address    MAC address string (uppercase colon-separated), or "".
   admin_status   "up" | "down" | "testing".
   oper_status    "up" | "down" | "testing" | "unknown" | "dormant" |
@@ -81,7 +93,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-import re
 from typing import Any, Optional
 
 from .base import DataSource
@@ -98,10 +109,6 @@ _OID_SYS_OBJECT_ID = "1.3.6.1.2.1.1.2.0"
 _OID_SYS_CONTACT   = "1.3.6.1.2.1.1.4.0"
 _OID_SYS_NAME      = "1.3.6.1.2.1.1.5.0"
 _OID_SYS_LOCATION  = "1.3.6.1.2.1.1.6.0"
-
-# Juniper enterprise OIDs (JUNIPER-MIB)
-_OID_JNX_BOX_DESCR  = "1.3.6.1.4.1.2636.3.1.2.0"
-_OID_JNX_BOX_SERIAL = "1.3.6.1.4.1.2636.3.1.3.0"
 
 # IF-MIB — ifTable (RFC 2863)
 _OID_IF_DESCR        = "1.3.6.1.2.1.2.2.1.2"   # ifDescr
@@ -122,9 +129,6 @@ _OID_IP_ADDR    = "1.3.6.1.2.1.4.20.1.1"  # ipAdEntAddr
 _OID_IP_IF_IDX  = "1.3.6.1.2.1.4.20.1.2"  # ipAdEntIfIndex
 _OID_IP_NETMASK = "1.3.6.1.2.1.4.20.1.3"  # ipAdEntNetMask
 
-# Juniper OID tree prefix (used to detect Juniper devices from sysObjectID)
-_JNX_OID_PREFIX = "1.3.6.1.4.1.2636"
-
 # ---------------------------------------------------------------------------
 # Value mappings
 # ---------------------------------------------------------------------------
@@ -141,6 +145,8 @@ _OPER_STATUS: dict[int, str] = {
 }
 
 # SNMP ifType integer → NetBox interface type slug (RFC 2863 / IANAifType)
+# Vendor-specific name-based type refinements belong in the HCL mapping
+# (e.g. via regex_file) rather than here.
 _IFTYPE_MAP: dict[int, str] = {
     1:   "other",
     6:   "other",    # ethernetCsmacd — use name/speed for finer mapping
@@ -150,32 +156,6 @@ _IFTYPE_MAP: dict[int, str] = {
     161: "lag",      # ieee8023adLag
     166: "virtual",  # mpls
 }
-
-# Juniper interface-name prefix → NetBox type slug (ordered, first match wins)
-_JNX_PREFIX_TYPE: list[tuple[str, str]] = [
-    ("ge-",  "1000base-t"),
-    ("xe-",  "10gbase-x-sfpp"),
-    ("et-",  "100gbase-x-cfp"),
-    ("fe-",  "100base-tx"),
-    ("ae",   "lag"),
-    ("reth", "lag"),
-    ("lo",   "virtual"),
-    ("irb",  "virtual"),
-    ("st0",  "virtual"),
-    ("vlan", "virtual"),
-    ("pp",   "virtual"),
-    ("vme",  "virtual"),
-    ("me",   "1000base-t"),
-    ("fxp",  "1000base-t"),
-    ("em",   "1000base-t"),
-]
-
-# ---------------------------------------------------------------------------
-# Regex patterns for Juniper sysDescr parsing
-# ---------------------------------------------------------------------------
-
-_RE_JNX_MODEL   = re.compile(r"Juniper\s+Networks,\s+Inc\.\s+(\S+)", re.IGNORECASE)
-_RE_JUNOS_VER   = re.compile(r"kernel\s+JUNOS\s+(\S+)", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Pure helper functions (testable without SNMP)
@@ -204,33 +184,14 @@ def _mac_bytes_to_str(raw: str) -> str:
     return ""
 
 
-def _if_type_to_netbox(if_type_int: int, if_name: str) -> str:
-    """Return the NetBox interface type slug for *if_name* / *if_type_int*.
+def _if_type_to_netbox(if_type_int: int) -> str:
+    """Return the NetBox interface type slug for *if_type_int*.
 
-    Juniper interface names are checked first (most specific); the generic
-    SNMP ifType map is used as a fallback.
+    Uses the standard SNMP ifType (IANAifType) map.  Vendor-specific
+    name-prefix mappings should be applied in the HCL mapping file
+    (e.g. via ``regex_file``).
     """
-    name_lower = if_name.lower()
-    for prefix, nb_type in _JNX_PREFIX_TYPE:
-        if name_lower.startswith(prefix):
-            return nb_type
     return _IFTYPE_MAP.get(if_type_int, "other")
-
-
-def _parse_juniper_descr(sys_descr: str) -> tuple[str, str]:
-    """Extract (model, os_version) from a Juniper sysDescr string.
-
-    Returns empty strings when the pattern is not found.
-    """
-    model = ""
-    os_version = ""
-    m = _RE_JNX_MODEL.search(sys_descr)
-    if m:
-        model = m.group(1)
-    v = _RE_JUNOS_VER.search(sys_descr)
-    if v:
-        os_version = v.group(1)
-    return model, os_version
 
 
 def _rows_by_index(rows: list[tuple[str, str]]) -> dict[int, str]:
@@ -283,6 +244,8 @@ class SNMPSource(DataSource):
         self._v3_auth_proto: str = "sha"
         self._v3_priv_proto: str = "aes"
         self._v3_priv_pass: str = ""
+        # Vendor-specific extra OIDs: {field_name: oid_string}
+        self._extra_oids: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -312,6 +275,10 @@ class SNMPSource(DataSource):
         self._port = int(extra.get("port", 161))
         self._timeout = int(extra.get("timeout", 5))
         self._retries = int(extra.get("retries", 1))
+
+        # extra_oids: {field_name: oid} — fetched per device and added to device dict
+        raw_extra_oids = extra.get("extra_oids") or {}
+        self._extra_oids = dict(raw_extra_oids) if isinstance(raw_extra_oids, dict) else {}
 
         if self._version in ("1", "2c", "2"):
             self._community = config.username or "public"
@@ -391,31 +358,39 @@ class SNMPSource(DataSource):
             logger.error("SNMP system-info GET failed for %s: %s", host, exc)
             return None
 
-        descr    = sys_info.get(_OID_SYS_DESCR, "")
-        obj_id   = sys_info.get(_OID_SYS_OBJECT_ID, "")
-        sys_name = sys_info.get(_OID_SYS_NAME, "") or host
-        location = sys_info.get(_OID_SYS_LOCATION, "")
-        contact  = sys_info.get(_OID_SYS_CONTACT, "")
+        descr         = sys_info.get(_OID_SYS_DESCR, "")
+        sys_object_id = sys_info.get(_OID_SYS_OBJECT_ID, "")
+        sys_name      = sys_info.get(_OID_SYS_NAME, "") or host
+        location      = sys_info.get(_OID_SYS_LOCATION, "")
+        contact       = sys_info.get(_OID_SYS_CONTACT, "")
 
-        is_juniper = _JNX_OID_PREFIX in str(obj_id)
+        device: dict = {
+            "host":          host,
+            "name":          sys_name,
+            "description":   descr,
+            "sys_object_id": sys_object_id,
+            "location":      location,
+            "contact":       contact,
+            "serial":        "",
+            "model":         "",
+            "os_version":    "",
+            "platform":      "",
+            "manufacturer":  "",
+        }
 
-        model, os_version = _parse_juniper_descr(descr)
-        serial       = ""
-        manufacturer = ""
-        platform     = ""
-
-        if is_juniper:
-            manufacturer = "Juniper Networks"
-            platform = f"Junos {os_version}".strip() if os_version else "Junos"
+        # Fetch any vendor-specific OIDs declared in the HCL source block.
+        if self._extra_oids:
+            oid_to_field = {oid: field for field, oid in self._extra_oids.items()}
             try:
-                jnx_info = await self._snmp_get_multi(
-                    host, [_OID_JNX_BOX_DESCR, _OID_JNX_BOX_SERIAL]
+                extra_results = await self._snmp_get_multi(
+                    host, list(self._extra_oids.values())
                 )
-                if not model:
-                    model = jnx_info.get(_OID_JNX_BOX_DESCR, "")
-                serial = jnx_info.get(_OID_JNX_BOX_SERIAL, "")
+                for oid, value in extra_results.items():
+                    field_name = oid_to_field.get(oid)
+                    if field_name:
+                        device[field_name] = value
             except Exception as exc:
-                logger.debug("Juniper-specific OIDs failed for %s: %s", host, exc)
+                logger.debug("Extra OID fetch failed for %s: %s", host, exc)
 
         # Collect interfaces, then attach their IP addresses
         interfaces = await self._collect_interfaces(host)
@@ -425,19 +400,8 @@ class SNMPSource(DataSource):
                 ip for ip in ip_entries if ip["if_index"] == iface["index"]
             ]
 
-        return {
-            "host":         host,
-            "name":         sys_name,
-            "description":  descr,
-            "location":     location,
-            "contact":      contact,
-            "serial":       serial,
-            "model":        model,
-            "os_version":   os_version,
-            "platform":     platform,
-            "manufacturer": manufacturer,
-            "interfaces":   interfaces,
-        }
+        device["interfaces"] = interfaces
+        return device
 
     async def _collect_interfaces(self, host: str) -> list[dict]:
         """Walk IF-MIB tables and return a list of interface dicts."""
@@ -499,7 +463,8 @@ class SNMPSource(DataSource):
                     "index":        idx,
                     "name":         if_name,
                     "label":        alias_by_idx.get(idx, ""),
-                    "type":         _if_type_to_netbox(if_type_int, if_name),
+                    "if_type":      if_type_int,
+                    "type":         _if_type_to_netbox(if_type_int),
                     "mac_address":  _mac_bytes_to_str(mac_by_idx.get(idx, "")),
                     "admin_status": _ADMIN_STATUS.get(
                         int(admin_by_idx.get(idx, 1) or 1), "up"

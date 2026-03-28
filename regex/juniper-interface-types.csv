@@ -1,0 +1,24 @@
+# Juniper interface name → NetBox type slug mapping
+# Used by the SNMP source via regex_file() in juniper-snmp.hcl.
+#
+# Each non-comment line is: <regex_pattern>,<netbox_type_slug>
+# The pattern is matched against the lower-cased interface name.
+# The catch-all at the end returns an empty string so that
+# coalesce() in the HCL falls back to the standard ifType-based slug.
+^ge-.*,1000base-t
+^xe-.*,10gbase-x-sfpp
+^et-.*,100gbase-x-cfp
+^fe-.*,100base-tx
+^ae[0-9].*,lag
+^reth[0-9].*,lag
+^lo[0-9].*,virtual
+^lo$,virtual
+^irb.*,virtual
+^st0.*,virtual
+^vlan.*,virtual
+^pp[0-9].*,virtual
+^vme.*,virtual
+^me[0-9].*,1000base-t
+^fxp[0-9].*,1000base-t
+^em[0-9].*,1000base-t
+^.*,

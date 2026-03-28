@@ -1,22 +1,27 @@
-# LDAP DHCP / static-lease → NetBox IP Address collector mapping
+# Generic LDAP → NetBox collector mapping template
+#
+# This is a minimal template for mapping arbitrary LDAP directory entries
+# into NetBox objects.  Customise the search_filter, attributes, and field
+# expressions to match your specific LDAP schema.
+#
+# For the Novell eDirectory / Micro Focus IDM DHCP-lease schema (DirXML
+# "jnsu" attributes), see mappings/jnsu.hcl instead.
 #
 # Required environment variables:
 #   LDAP_SERVER           LDAP server URI (e.g. ldaps://ldap.example.com)
 #   LDAP_USER             Bind DN (e.g. cn=admin,dc=example,dc=com)
 #   LDAP_PASS             Bind password
-#   LDAP_SEARCH_BASE      LDAP search base (e.g. ou=Network Devices,o=example)
+#   LDAP_SEARCH_BASE      LDAP search base (e.g. ou=People,dc=example,dc=com)
 #   NETBOX_URL            NetBox base URL
 #   NETBOX_TOKEN          NetBox API token
 #
 # Optional:
-#   LDAP_FILTER               LDAP search filter
-#                             (default: "(DirXMLjnsuDHCPAddress=*)")
-#   LDAP_SKIP_APS             Skip access-point entries: true | false (default: true)
-#   LDAP_PREFIX_LENGTH        Default prefix length appended to IPs (e.g. "24")
-#                             Leave empty to store bare IPs as /32 in NetBox.
-#   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
-#   NETBOX_CACHE_URL          Redis URL or SQLite path
-#   DRY_RUN                   Set to "true" to log payloads without writing
+#   LDAP_FILTER           LDAP search filter (default: "(objectClass=*)")
+#   LDAP_ATTRIBUTES       Comma-separated list of attributes to fetch
+#                         (default: all non-operational attributes)
+#   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL      Redis URL or SQLite path
+#   DRY_RUN               Set to "true" to log payloads without writing
 
 source "ldap" {
   api_type   = "ldap"
@@ -26,10 +31,10 @@ source "ldap" {
   verify_ssl = true
 
   # Extra source-specific configuration
-  search_base            = "env('LDAP_SEARCH_BASE')"
-  search_filter          = "env('LDAP_FILTER', '(DirXMLjnsuDHCPAddress=*)')"
-  skip_aps               = "env('LDAP_SKIP_APS', 'true')"
-  default_prefix_length  = "env('LDAP_PREFIX_LENGTH', '')"
+  search_base   = "env('LDAP_SEARCH_BASE')"
+  search_filter = "env('LDAP_FILTER', '(objectClass=*)')"
+  # Comma-separated attribute names to fetch; leave empty to fetch all.
+  attributes    = "env('LDAP_ATTRIBUTES', '')"
 }
 
 netbox {
@@ -48,20 +53,21 @@ collector {
 }
 
 # ---------------------------------------------------------------------------
-# IP Addresses (DHCP leases and static registrations)
+# Example: map LDAP person entries to NetBox (adapt as needed)
 #
-# The source adapter pre-normalises description formatting, MAC extraction,
-# and AP filtering so that the HCL can stay simple.
+# Each returned dict key is an LDAP attribute name exactly as retrieved.
+# Use source('<AttributeName>') to access values in field expressions.
 # ---------------------------------------------------------------------------
 
 object "ip_address" {
-  source_collection = "dhcp_leases"
+  source_collection = "objects"
   netbox_resource   = "ipam.ip-addresses"
   lookup_by         = ["address"]
   max_workers       = 8
 
+  # Replace 'ipAddress' with the attribute that holds the IP in your schema.
   field "address" {
-    value = "source('address')"
+    value = "source('ipAddress')"
   }
 
   field "description" {
@@ -69,7 +75,7 @@ object "ip_address" {
   }
 
   field "status" {
-    value = "source('status')"
+    value = "'active'"
   }
 
   field "tags" {

@@ -75,6 +75,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.f5 import F5Source
     from .sources.ldap import LDAPSource
     from .sources.nexus import NexusDashboardSource
+    from .sources.prometheus import PrometheusSource
     from .sources.rest import RestSource
     from .sources.snmp import SNMPSource
     from .sources.vmware import VMwareSource
@@ -88,6 +89,8 @@ def _get_source_adapter(api_type: str) -> Any:
         "snmp":   SNMPSource,
         "nexus":  NexusDashboardSource,
         "f5":     F5Source,
+        "nexus":       NexusDashboardSource,
+        "prometheus":  PrometheusSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:
