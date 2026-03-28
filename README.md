@@ -439,7 +439,6 @@ hcl-netbox-discovery/
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
-│   ├── jnsu.hcl.example
 │   ├── active-directory-computers.hcl.example
 │   ├── active-directory-users.hcl.example
 │   └── tenable.hcl.example
@@ -451,7 +450,7 @@ hcl-netbox-discovery/
 │   ├── vm_to_tenant.example
 │   ├── xclarity_location_to_site.example
 │   ├── xclarity_room_to_location.example
-│   └── linux-interface-types          # Interface type map for linux-snmp.hcl.example
+│   └── linux-interface-types      # Interface type map for linux-snmp.hcl.example
 │
 ├── docs/
     ├── ARCHITECTURE.md            # Framework design and data flow
