@@ -352,7 +352,7 @@ object "node" {
     }
 
     field "model" {
-      value = "str(coalesce('partNumber', 'model'), "'Fan'")"
+      value = "coalesce('partNumber', 'model', str("'Fan'"))"
     }
 
     field "serial" {
