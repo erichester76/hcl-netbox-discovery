@@ -107,20 +107,29 @@ For a deeper dive, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Python packages (see `requirements.txt`):
 
 ```
-pynetbox>=7.3.3
-pyvmomi>=8.0.3.0.1
-requests>=2.32.3
-deepdiff>=8.0.1
-pyyaml>=6.0.2
-redis
-ldap3
-netboxlabs-diode-sdk
+requests==2.32.3
+deepdiff==8.0.1
+pyyaml==6.0.2
+# Python-hcl2 for HCL parsing
 python-hcl2>=4.3.0
+# redis for caching
+redis
+# LDAP
+ldap3
+# Netbox
+pynetbox==7.3.3
+netboxlabs-diode-sdk
+# VMware
+pyvmomi==8.0.3.0.1
+# Cisco Catalyst Center
 dnacentersdk>=2.6.0
+# Microsoft Azure
 azure-identity>=1.15.0
 azure-mgmt-compute>=30.0.0
 azure-mgmt-network>=25.0.0
 azure-mgmt-subscription>=3.1.1
+# SNMP
+pysnmp>=7.1
 ```
 
 ---
