@@ -290,5 +290,10 @@ object "vm" {
     field "size" {
       value = "to_mb(source('capacityInKB'))"
     }
+
+    # description: "<vmdk-path> (Thin|Thick Provisioned <diskMode>)" – max 200 chars
+    field "description" {
+      value = "truncate((source('backing.fileName') or '') + ' (' + when(source('backing.thinProvisioned'), 'Thin Provisioned', 'Thick Provisioned') + ' ' + (source('backing.diskMode') or '') + ')', 200)"
+    }
   }
 }
