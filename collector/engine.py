@@ -72,6 +72,7 @@ def _get_source_adapter(api_type: str) -> Any:
     """Instantiate the correct DataSource sub-class for *api_type*."""
     from .sources.azure import AzureSource
     from .sources.catc import CatalystCenterSource
+    from .sources.f5 import F5Source
     from .sources.ldap import LDAPSource
     from .sources.nexus import NexusDashboardSource
     from .sources.rest import RestSource
@@ -86,6 +87,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "azure":  AzureSource,
         "snmp":   SNMPSource,
         "nexus":  NexusDashboardSource,
+        "f5":     F5Source,
     }
     cls = registry.get(api_type.lower())
     if cls is None:

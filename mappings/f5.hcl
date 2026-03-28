@@ -1,0 +1,193 @@
+# F5 BIG-IP → NetBox collector mapping
+#
+# Required environment variables:
+#   F5_HOST           BIG-IP hostname or IP (no https://)
+#   F5_USER           BIG-IP username
+#   F5_PASS           BIG-IP password
+#   NETBOX_URL        NetBox base URL
+#   NETBOX_TOKEN      NetBox API token
+#
+# Optional:
+#   F5_VERIFY_SSL             true | false  (default: true)
+#   F5_FETCH_INTERFACES       true | false  (default: false)
+#                             When true, physical interfaces and self IPs are
+#                             fetched and embedded so the interface {} and
+#                             ip_address {} blocks below can sync them.
+#   F5_SITE                   NetBox site name to assign the device to
+#                             (default: "Default")
+#   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL          Redis URL or SQLite path
+#   DRY_RUN                   Set to "true" to log payloads without writing
+#   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
+
+source "f5" {
+  api_type          = "f5"
+  url               = "env('F5_HOST')"
+  username          = "env('F5_USER')"
+  password          = "env('F5_PASS')"
+  verify_ssl        = "env('F5_VERIFY_SSL', 'true')"
+  fetch_interfaces  = "env('F5_FETCH_INTERFACES', 'false')"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers      = 4
+  dry_run          = "env('DRY_RUN', 'false')"
+  sync_tag         = "f5-sync"
+  regex_dir        = "./regex"
+  site             = "env('F5_SITE', 'Default')"
+  sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# BIG-IP Appliance
+#
+# The source adapter fetches device identity from the iControl REST API:
+# serial and model from sys/hardware (with fallback to identified-devices),
+# software version from sys/version, and management IP from sys/management-ip.
+#
+# Devices are looked up in NetBox by serial number.  A serial of "" will
+# cause the lookup to fall back to name — set F5_FETCH_INTERFACES=true or
+# ensure the hardware endpoint is reachable to populate serials reliably.
+# ---------------------------------------------------------------------------
+
+object "device" {
+  source_collection = "devices"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["serial"]
+  max_workers       = 1
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "source('manufacturer')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('model'), 'BIG-IP')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "'Load Balancer'" }
+    optional = false
+  }
+
+  # All BIG-IP devices discovered by this collector are placed in the site
+  # configured via F5_SITE.  Override per environment as needed.
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "collector.site" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name         = "coalesce(source('platform_name'), 'BIG-IP')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce(source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "serial" {
+    value = "source('serial')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['f5-sync']"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Network Interfaces
+  #
+  # Requires F5_FETCH_INTERFACES=true so the adapter embeds interface data in
+  # each device record.  Set COLLECTOR_SYNC_INTERFACES=false to skip entirely.
+  #
+  # Physical interfaces (1.1, 1.2, …) are synced as-is.  The management
+  # interface is named "mgmt".  VLAN interfaces sourced from self-IP records
+  # appear as virtual interfaces in the ip_address sub-block below.
+  # ---------------------------------------------------------------------------
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    field "mtu" {
+      value = "source('mtu')"
+    }
+
+    # -----------------------------------------------------------------------
+    # Self IPs
+    #
+    # Each physical/VLAN interface may carry one or more self IPs.  These are
+    # synced as ipam.ip_addresses and assigned to the parent interface.
+    # -----------------------------------------------------------------------
+
+    ip_address {
+      source_items = "ip_addresses"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "source('status')"
+      }
+    }
+  }
+}
