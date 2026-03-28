@@ -11,6 +11,12 @@ Each collector is defined by a single `.hcl` file that lives in `mappings/`. The
 
 The engine parses the file and drives the full sync. No Python code is needed per collector.
 
+Mapping files ship as `*.hcl.example` templates. Copy and rename to `*.hcl` to activate:
+
+```bash
+cp mappings/vmware.hcl.example mappings/vmware.hcl
+```
+
 ---
 
 ## Top-Level Blocks
@@ -69,11 +75,122 @@ source "xclarity" {
 }
 ```
 
+### Azure (`api_type = "azure"`)
+
+```hcl
+source "azure" {
+  api_type    = "azure"
+  auth_method = env("AZURE_AUTH_METHOD", "default")   # "default" | "service_principal"
+  tenant_id   = env("AZURE_TENANT_ID", "")
+  client_id   = env("AZURE_CLIENT_ID", "")
+  password    = env("AZURE_CLIENT_SECRET", "")        # client secret for service_principal
+  subscription_ids = env("AZURE_SUBSCRIPTION_IDS", "") # comma-separated, empty = all
+}
+```
+
+### LDAP (`api_type = "ldap"`)
+
+```hcl
+source "ldap" {
+  api_type   = "ldap"
+  url        = env("LDAP_SERVER")    # e.g. ldaps://ldap.example.com:636
+  username   = env("LDAP_USER")      # bind DN
+  password   = env("LDAP_PASS")
+  verify_ssl = true
+
+  search_base   = env("LDAP_SEARCH_BASE")
+  search_filter = env("LDAP_FILTER", "(objectClass=*)")
+  attributes    = "*"                # comma-separated, or "*" for all
+}
+```
+
+### Cisco Catalyst Center (`api_type = "catc"`)
+
+```hcl
+source "catc" {
+  api_type   = "catc"
+  url        = env("CATC_HOST")
+  username   = env("CATC_USER")
+  password   = env("CATC_PASS")
+  verify_ssl = env("CATC_VERIFY_SSL", "true")
+}
+```
+
+### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
+
+```hcl
+source "nexus" {
+  api_type         = "nexus"
+  url              = env("NDFC_HOST")
+  username         = env("NDFC_USER")
+  password         = env("NDFC_PASS")
+  verify_ssl       = env("NDFC_VERIFY_SSL", "true")
+  fetch_interfaces = env("NDFC_FETCH_INTERFACES", "false")
+}
+```
+
+### F5 BIG-IP (`api_type = "f5"`)
+
+```hcl
+source "f5" {
+  api_type         = "f5"
+  url              = env("F5_HOST")
+  username         = env("F5_USER")
+  password         = env("F5_PASS")
+  verify_ssl       = env("F5_VERIFY_SSL", "true")
+  fetch_interfaces = env("F5_FETCH_INTERFACES", "false")
+}
+```
+
+### Prometheus node-exporter (`api_type = "prometheus"`)
+
+```hcl
+source "prometheus" {
+  api_type         = "prometheus"
+  url              = env("PROMETHEUS_URL")
+  username         = env("PROMETHEUS_USER", "")
+  password         = env("PROMETHEUS_PASS", "")
+  verify_ssl       = env("PROMETHEUS_VERIFY_SSL", "true")
+  fetch_interfaces = env("PROMETHEUS_FETCH_INTERFACES", "true")
+}
+```
+
+### SNMP (`api_type = "snmp"`)
+
+```hcl
+source "snmp_devices" {
+  api_type   = "snmp"
+  url        = env("SNMP_HOSTS")          # comma-separated list of hosts
+  username   = env("SNMP_COMMUNITY", "public")  # v2c community string
+
+  # Optional SNMP parameters
+  version    = env("SNMP_VERSION", "2c")
+  port       = env("SNMP_PORT", "161")
+  timeout    = env("SNMP_TIMEOUT", "5")
+  retries    = env("SNMP_RETRIES", "1")
+
+  # SNMPv3 (only when version = "3")
+  # v3_user       = env("SNMP_V3_USER")
+  # v3_auth_pass  = env("SNMP_V3_AUTH_PASS")
+  # v3_auth_proto = env("SNMP_V3_AUTH_PROTO", "sha")
+  # v3_priv_pass  = env("SNMP_V3_PRIV_PASS")
+  # v3_priv_proto = env("SNMP_V3_PRIV_PROTO", "aes")
+
+  # Vendor-specific OIDs to fetch per device (added to device dict by field name)
+  extra_oids = {
+    jnx_model  = "1.3.6.1.4.1.2636.3.1.2.0"
+    jnx_serial = "1.3.6.1.4.1.2636.3.1.3.0"
+  }
+}
+```
+
+The SNMP adapter is vendor-agnostic. It exposes `sys_object_id` (raw sysObjectID OID) and `if_type` (raw integer) on every device/interface. Vendor-specific detection and field extraction should be expressed in HCL field expressions using `when()`, `regex_extract()`, and `map_value()`.
+
 ### `source` scalar attributes
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Selects the source adapter: `vmware` or `rest` |
+| `api_type` | yes | Selects the source adapter: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, or `snmp` |
 | `url` | yes | Base URL / hostname of the source system |
 | `username` | no | Credential (required for `basic` auth) |
 | `password` | no | Credential / token value |
@@ -211,6 +328,7 @@ prerequisite "manufacturer" {
 | `ensure_cluster_type` | `virtualization.cluster-types` | integer ID |
 | `ensure_cluster_group` | `virtualization.cluster-groups` | integer ID |
 | `ensure_inventory_item_role` | `dcim.inventory-item-roles` | integer ID |
+| `ensure_tenant` | `tenancy.tenants` | integer ID |
 | `resolve_placement` | site → location → rack chain | dict with `.site_id`, `.location_id`, `.rack_id`, `.rack_position` |
 | `lookup_tenant` | `tenancy.tenants` (read-only lookup) | integer ID or `None` |
 
@@ -371,7 +489,8 @@ The engine performs a four-step chain for every source item:
 | `source_items` | yes | Dotted path to the list of components on the parent object |
 | `profile` | no | Human-readable category label stored in `ModuleConfig` (e.g. `"CPU"`, `"Memory"`) |
 | `dedupe_by` | no | Expression used as a deduplication key |
-| `enabled_if` | no | Boolean expression; block is skipped when `false` |
+| `filter_if` | no | Per-item boolean expression; falsy items are skipped (evaluated per source item) |
+| `enabled_if` | no | Boolean expression; entire block is skipped when `false` |
 
 **Special field names** interpreted by the module processor:
 
@@ -425,6 +544,18 @@ Returns the first argument that is not `None` and not an empty string. When pass
 
 `str.replace(old, new)` on `value`.
 
+### `regex_replace(value, pattern, replacement)`
+
+`re.sub(pattern, replacement, value)` — regex substitution on `value`.
+
+### `regex_extract(value, pattern, group=1)`
+
+Returns the specified capture `group` from the first match of `pattern` against `value`, or `None` if there is no match.
+
+```
+regex_extract(source("description"), r"version (\S+)")   → "12.1R3.5" (for example)
+```
+
 ### `upper(value)` / `lower(value)`
 
 `str.upper()` / `str.lower()`.
@@ -440,6 +571,23 @@ Returns `value[:n]`.
 ### `to_gb(bytes_value)`
 
 `int(bytes_value / 1_073_741_824)`.
+
+### `to_mb(kb_value)`
+
+`int(kb_value / 1_024)` — converts kilobytes to megabytes.
+
+### `mask_to_prefix(mask)`
+
+Converts a dotted-decimal subnet mask to a CIDR prefix length integer.
+
+```
+mask_to_prefix("255.255.255.0")   → 24
+mask_to_prefix("255.255.0.0")     → 16
+```
+
+### `str(value)` / `int(value)`
+
+Cast a value to string or integer.
 
 ### `prereq("name")` / `prereq("name.attr")`
 
@@ -482,6 +630,15 @@ NETBOX_TOKEN          NetBox API token
 NETBOX_CACHE_BACKEND  Cache backend (none | memory | redis | sqlite)
 NETBOX_CACHE_URL      Redis URL or SQLite file path
 DRY_RUN               Set to "true" to enable dry-run mode
+LOG_LEVEL             Logging verbosity: DEBUG | INFO | WARNING | ERROR
 ```
 
-Source-specific variables are defined per mapping file and documented in the comments at the top of each `.hcl` file.
+Source-specific variables are defined per mapping file and documented in the comments
+at the top of each `.hcl.example` file, and in `.env.example` at the repository root.
+Copy `.env.example` to `.env`, fill in your values, and load it before running:
+
+```bash
+cp .env.example .env
+# edit .env with your credentials
+set -a && source .env && set +a
+```

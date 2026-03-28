@@ -54,13 +54,14 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 |---|---|
 | **Zero Python per new REST source** | Configure entirely in HCL; the generic `rest` adapter handles the HTTP layer |
 | **Declarative HCL mappings** | Describe *what* to sync, not *how* — the engine takes care of execution |
-| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, LDAP, and any HTTP/REST API |
+| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, LDAP, SNMP, and any HTTP/REST API |
 | **Automatic prerequisites** | Creates manufacturers, device types, sites, racks, platforms, cluster types, and more on the fly |
 | **Thread-safe parallel execution** | Configurable worker pools; each item gets an isolated execution context |
 | **Dry-run mode** | Preview all payloads that *would* be sent without writing anything to NetBox |
 | **Smart caching** | Pluggable backends: in-memory, Redis, or SQLite — reduces redundant NetBox API calls |
 | **Flexible field expressions** | 20+ helper functions for transformation (`source()`, `coalesce()`, `regex_file()`, `map_value()`, etc.) |
-| **Nested collections** | Sync interfaces, IP addresses, inventory items, and virtual disks within a single mapping file |
+| **Nested collections** | Sync interfaces, IP addresses, inventory items, virtual disks, and modules within a single mapping file |
+| **Module support** | Full NetBox module bay / module type / module hierarchy for detailed hardware tracking |
 | **Error isolation** | Failures on individual items are logged and skipped without aborting the run |
 | **Tag management** | Automatically tag every synced object; tags are merged with existing values |
 
@@ -162,6 +163,9 @@ pip install -r requirements.txt
 # credentials in shell history — see Configuration section below)
 set -a && source .env && set +a
 
+# Copy an example mapping to activate it (mapping files ship as *.hcl.example)
+cp mappings/vmware.hcl.example mappings/vmware.hcl
+
 # Dry-run to preview changes without writing
 python main.py --mapping mappings/vmware.hcl --dry-run
 
@@ -201,7 +205,7 @@ All sensitive values are read from environment variables inside the HCL files us
 | `NETBOX_CACHE_URL` | Redis URL or SQLite file path when using those backends |
 | `DRY_RUN` | Set to `"true"` to log payloads without writing to NetBox |
 
-#### VMware (`mappings/vmware.hcl`)
+#### VMware (`mappings/vmware.hcl.example`)
 
 | Variable | Description |
 |---|---|
@@ -209,7 +213,7 @@ All sensitive values are read from environment variables inside the HCL files us
 | `VCENTER_USER` | vCenter username |
 | `VCENTER_PASS` | vCenter password |
 
-#### Lenovo XClarity (`mappings/xclarity.hcl`)
+#### Lenovo XClarity (`mappings/xclarity.hcl.example`, `mappings/xclarity-modules.hcl.example`)
 
 | Variable | Description |
 |---|---|
@@ -218,30 +222,91 @@ All sensitive values are read from environment variables inside the HCL files us
 | `XCLARITY_PASS` | XClarity password |
 | `XCLARITY_VERIFY_SSL` | TLS verification: `"true"` or `"false"` (default: `"true"`) |
 
-#### Microsoft Azure (`mappings/azure.hcl`)
+#### Microsoft Azure (`mappings/azure.hcl.example`)
 
 | Variable | Description |
 |---|---|
-| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID (optional; all visible subscriptions are used if omitted) |
+| `AZURE_AUTH_METHOD` | `"default"` (az login / managed identity) or `"service_principal"` |
+| `AZURE_SUBSCRIPTION_IDS` | Comma-separated subscription IDs (leave empty for all visible subscriptions) |
 | `AZURE_TENANT_ID` | Azure tenant ID (required for service-principal auth) |
 | `AZURE_CLIENT_ID` | Service principal client ID |
 | `AZURE_CLIENT_SECRET` | Service principal client secret |
 
-#### Cisco Catalyst Center (`mappings/catc.hcl`)
+#### Cisco Catalyst Center (`mappings/catc.hcl.example`)
 
 | Variable | Description |
 |---|---|
-| `CATC_URL` | Catalyst Center base URL |
+| `CATC_HOST` | Catalyst Center base URL |
 | `CATC_USER` | Catalyst Center username |
 | `CATC_PASS` | Catalyst Center password |
+| `CATC_VERIFY_SSL` | TLS verification: `"true"` or `"false"` (default: `"true"`) |
 
-#### LDAP (`mappings/ldap.hcl`)
+#### LDAP (`mappings/ldap.hcl.example`)
 
 | Variable | Description |
 |---|---|
-| `LDAP_URL` | LDAP server URL (e.g., `ldaps://ldap.example.com`; prefer `ldaps://` over `ldap://` for encrypted connections) |
+| `LDAP_SERVER` | LDAP server URI (e.g., `ldaps://ldap.example.com:636`) |
 | `LDAP_USER` | Bind DN |
 | `LDAP_PASS` | Bind password |
+| `LDAP_SEARCH_BASE` | LDAP search base DN |
+| `LDAP_FILTER` | LDAP search filter (default: `"(objectClass=*)"`) |
+
+#### LDAP / JNSU schema (`mappings/jnsu.hcl.example`)
+
+Uses the same `LDAP_SERVER` / `LDAP_USER` / `LDAP_PASS` credentials as `ldap.hcl.example`.
+
+| Variable | Description |
+|---|---|
+| `LDAP_SEARCH_BASE` | Search base for DHCP lease records |
+| `LDAP_FILTER` | LDAP filter for DHCP entries (default: `"(DirXMLjnsuDHCPAddress=*)"`) |
+| `LDAP_PREFIX_LENGTH` | Default prefix length appended to bare IPs (e.g., `"24"`) |
+
+#### Cisco Nexus Dashboard Fabric Controller (`mappings/nexus.hcl.example`)
+
+| Variable | Description |
+|---|---|
+| `NDFC_HOST` | Nexus Dashboard hostname or IP |
+| `NDFC_USER` | Nexus Dashboard username |
+| `NDFC_PASS` | Nexus Dashboard password |
+| `NDFC_VERIFY_SSL` | TLS verification (default: `"true"`) |
+| `NDFC_FETCH_INTERFACES` | Fetch per-switch interfaces: `"true"` or `"false"` (default: `"false"`) |
+
+#### F5 BIG-IP (`mappings/f5.hcl.example`)
+
+| Variable | Description |
+|---|---|
+| `F5_HOST` | BIG-IP hostname or IP |
+| `F5_USER` | BIG-IP username |
+| `F5_PASS` | BIG-IP password |
+| `F5_VERIFY_SSL` | TLS verification (default: `"true"`) |
+| `F5_FETCH_INTERFACES` | Fetch physical interfaces and self-IPs: `"true"` or `"false"` (default: `"false"`) |
+| `F5_SITE` | NetBox site name to assign the appliance to (default: `"Default"`) |
+
+#### Prometheus node-exporter (`mappings/prometheus.hcl.example`)
+
+| Variable | Description |
+|---|---|
+| `PROMETHEUS_URL` | Prometheus server base URL (e.g., `http://prometheus:9090`) |
+| `PROMETHEUS_USER` | HTTP basic auth username (optional) |
+| `PROMETHEUS_PASS` | HTTP basic auth password (optional) |
+| `PROMETHEUS_VERIFY_SSL` | TLS verification (default: `"true"`) |
+| `PROMETHEUS_FETCH_INTERFACES` | Fetch per-node network interface info (default: `"true"`) |
+
+#### SNMP / Juniper (`mappings/juniper-snmp.hcl.example`)
+
+| Variable | Description |
+|---|---|
+| `SNMP_HOSTS` | Comma-separated list of hostnames or IP addresses to poll |
+| `SNMP_COMMUNITY` | SNMP v2c community string (default: `"public"`) |
+| `SNMP_VERSION` | SNMP version: `"1"`, `"2c"`, or `"3"` (default: `"2c"`) |
+| `SNMP_PORT` | UDP port (default: `"161"`) |
+| `SNMP_TIMEOUT` | Request timeout in seconds (default: `"5"`) |
+| `SNMP_RETRIES` | Retry count (default: `"1"`) |
+| `SNMP_V3_USER` | SNMPv3 username (only when `SNMP_VERSION=3`) |
+| `SNMP_V3_AUTH_PASS` | SNMPv3 authentication password |
+| `SNMP_V3_AUTH_PROTO` | Auth protocol: `md5`, `sha`, `sha256`, etc. (default: `"sha"`) |
+| `SNMP_V3_PRIV_PASS` | SNMPv3 privacy (encryption) password |
+| `SNMP_V3_PRIV_PROTO` | Privacy protocol: `des`, `aes`, `aes256`, etc. (default: `"aes"`) |
 
 ---
 
@@ -273,12 +338,18 @@ python main.py --mapping mappings/vmware.hcl --mapping mappings/xclarity.hcl
 # Preview changes without writing
 python main.py --mapping mappings/vmware.hcl --dry-run
 
-# Auto-discover and run all mappings in mappings/
+# Auto-discover and run all *.hcl files in mappings/
 python main.py
 
 # Verbose output for debugging
 python main.py --mapping mappings/vmware.hcl --log-level DEBUG
 ```
+
+> **Tip:** Mapping files ship as `*.hcl.example` templates.  Copy and rename before running:
+>
+> ```bash
+> cp mappings/vmware.hcl.example mappings/vmware.hcl
+> ```
 
 ---
 
@@ -341,7 +412,7 @@ source "xclarity" {
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Adapter to use: `vmware`, `rest`, `azure`, `ldap`, `catc` |
+| `api_type` | yes | Adapter to use: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp` |
 | `url` | yes | Base URL / hostname |
 | `username` | no | Username (required for `basic` auth) |
 | `password` | no | Password / API token |
@@ -383,6 +454,7 @@ collector {
   regex_dir       = "./regex"
   sync_interfaces = env("COLLECTOR_SYNC_INTERFACES", "true")
   sync_inventory  = env("COLLECTOR_SYNC_INVENTORY", "true")
+  sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
 }
 ```
@@ -395,6 +467,7 @@ collector {
 | `regex_dir` | no | Directory containing regex pattern files (default: `"./regex"`) |
 | `sync_interfaces` | no | Enable interface syncing (used by `enabled_if`) |
 | `sync_inventory` | no | Enable inventory item syncing (used by `enabled_if`) |
+| `sync_modules` | no | Enable module syncing (used by `enabled_if`) |
 | `use_modules` | no | Use NetBox modules instead of inventory items |
 
 Custom boolean flags added here are available in `enabled_if` expressions as `collector.flag_name`.
@@ -417,6 +490,7 @@ object "host" {
   interface        { … }   # nested interface loop (repeatable)
   inventory_item   { … }   # nested inventory item loop (repeatable)
   disk             { … }   # nested virtual disk loop (repeatable)
+  module           { … }   # nested module bay/type/instance loop (repeatable)
 }
 ```
 
@@ -454,6 +528,7 @@ prerequisite "manufacturer" {
 | `ensure_cluster_type` | `virtualization.cluster-types` | integer ID |
 | `ensure_cluster_group` | `virtualization.cluster-groups` | integer ID |
 | `ensure_inventory_item_role` | `dcim.inventory-item-roles` | integer ID |
+| `ensure_tenant` | `tenancy.tenants` | integer ID |
 | `resolve_placement` | site → location → rack chain | dict with `.site_id`, `.location_id`, `.rack_id`, `.rack_position` |
 | `lookup_tenant` | `tenancy.tenants` (read-only) | integer ID or `None` |
 
@@ -557,6 +632,55 @@ disk {
 }
 ```
 
+#### `module` block
+
+Syncs hardware components as NetBox modules (ModuleBay → ModuleType → Module). This is an alternative to `inventory_item` that uses the richer NetBox module hierarchy and is suited for tracking installed components with their own interfaces or power ports.
+
+```hcl
+module {
+  source_items = "processors"
+  profile      = "CPU"                     # human-readable category label
+  dedupe_by    = "source('socket')"        # optional deduplication key
+  enabled_if   = "collector.sync_modules"
+
+  field "bay_name"     { value = "coalesce(source('socket'), source('productName'))" }
+  field "model"        { value = "coalesce(source('displayName'), source('model'))" }
+  field "serial"       { value = "str(source('serialNumber'))" }
+  field "manufacturer" { value = "source('manufacturer')" }
+
+  # Optional: power input ports on the module
+  power_input {
+    name = "source('powerSupplyInput')"
+    type = "iec-60320-c14"
+  }
+}
+```
+
+The engine performs a four-step chain per source item:
+
+1. **ModuleBayTemplate** — ensures the slot exists on the `DeviceType` template.
+2. **ModuleBay** — ensures the physical slot instance exists on the `Device`.
+3. **ModuleType** — ensures a reusable make/model record exists.
+4. **Module** — upserts the installed instance linking device, bay, and type.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `source_items` | yes | Dotted path to the list of components on the parent object |
+| `profile` | no | Category label (e.g. `"CPU"`, `"Memory"`, `"Fan"`) |
+| `dedupe_by` | no | Expression used as a deduplication key |
+| `filter_if` | no | Per-item boolean expression; items that evaluate falsy are skipped |
+| `enabled_if` | no | Boolean expression; entire block is skipped when `false` |
+
+**Special field names** for the module processor:
+
+| Field | Required | Description |
+|---|---|---|
+| `bay_name` | yes | Slot label on the device (e.g. `"CPU Socket 1"`) |
+| `model` | yes | ModuleType model string |
+| `position` | no | Numeric or string position on the bay template |
+| `serial` | no | Serial number of the installed module |
+| `manufacturer` | no | Manufacturer name (looked up / created automatically) |
+
 ---
 
 ## Field Expression Reference
@@ -572,14 +696,16 @@ All `value`, `lookup`, `args`, `source_items`, and `enabled_if` attributes accep
 | `when(cond, true_val, false_val)` | Ternary conditional |
 | `coalesce(a, b, c, …)` | First non-`None`, non-empty result; single-string args treated as `source()` paths |
 | `replace(value, old, new)` | `str.replace` |
+| `regex_replace(value, pattern, replacement)` | Regex substitution |
+| `regex_extract(value, pattern, group=1)` | Return a capture group from a regex match |
 | `upper(value)` / `lower(value)` | Case conversion |
 | `truncate(value, n)` | Enforce max-length string (`value[:n]`) |
 | `join(sep, items)` | Join non-empty strings |
 | `to_gb(bytes_value)` | Bytes → GB (integer) |
 | `to_mb(kb_value)` | KB → MB (integer) |
+| `mask_to_prefix(mask)` | Convert dotted-decimal subnet mask to prefix length (e.g. `"255.255.255.0"` → `24`) |
 | `str(value)` | Cast to string |
 | `int(value)` | Cast to integer |
-| `regex_replace(value, pattern, replacement)` | Regex substitution |
 | `prereq("name")` | Reference a resolved prerequisite by name |
 | `prereq("name.attr")` | Reference a named attribute on a multi-value prerequisite |
 | `collector.flag_name` | Reference a boolean flag from the `collector {}` block |
@@ -599,16 +725,27 @@ For the full specification, see [`docs/HCL_DESIGN.md`](docs/HCL_DESIGN.md).
 
 ## Included Mappings
 
+Mapping files ship as `*.hcl.example` templates.  Copy and rename to `*.hcl` to activate them:
+
+```bash
+cp mappings/vmware.hcl.example mappings/vmware.hcl
+```
+
 | File | Source System | Objects Synced |
 |---|---|---|
-| `mappings/vmware.hcl` | VMware vCenter | Clusters, hypervisor hosts, VMs, interfaces, IPs, virtual disks |
-| `mappings/xclarity.hcl` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
-| `mappings/xclarity-modules.hcl` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
-| `mappings/azure.hcl` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks |
-| `mappings/catc.hcl` | Cisco Catalyst Center | Network devices |
-| `mappings/ldap.hcl` | LDAP directory | Users and groups |
+| `mappings/vmware.hcl.example` | VMware vCenter | Clusters, hypervisor hosts, VMs, interfaces, IPs, virtual disks |
+| `mappings/xclarity.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
+| `mappings/xclarity-modules.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
+| `mappings/azure.hcl.example` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks |
+| `mappings/catc.hcl.example` | Cisco Catalyst Center | Network devices |
+| `mappings/nexus.hcl.example` | Cisco Nexus Dashboard (NDFC) | Fabric switches, interfaces |
+| `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
+| `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
+| `mappings/juniper-snmp.hcl.example` | SNMP (Juniper routers) | Devices, interfaces, IP addresses |
+| `mappings/ldap.hcl.example` | LDAP directory | Generic LDAP objects |
+| `mappings/jnsu.hcl.example` | LDAP / Novell eDirectory (jnsu schema) | DHCP lease IP addresses |
 
-> **xclarity.hcl vs xclarity-modules.hcl** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl` uses `dcim.inventory_items` while `xclarity-modules.hcl` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
+> **xclarity.hcl.example vs xclarity-modules.hcl.example** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl.example` uses `dcim.inventory_items` while `xclarity-modules.hcl.example` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl.example` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
 
 ---
 
@@ -717,6 +854,8 @@ cp regex/cluster_to_site.example regex/cluster_to_site
 cp regex/vm_to_tenant.example    regex/vm_to_tenant
 cp regex/host_to_tenant.example  regex/host_to_tenant
 cp regex/vm_to_role.example      regex/vm_to_role
+cp regex/xclarity_location_to_site.example  regex/xclarity_location_to_site
+cp regex/xclarity_room_to_location.example  regex/xclarity_room_to_location
 ```
 
 ---
@@ -724,7 +863,7 @@ cp regex/vm_to_role.example      regex/vm_to_role
 ## Project Layout
 
 ```
-clemson-netbox-discovery/
+hcl-netbox-discovery/
 ├── main.py                        # CLI entry point
 ├── requirements.txt               # Python dependencies
 │
@@ -740,24 +879,35 @@ clemson-netbox-discovery/
 │       ├── vmware.py              # VMware vCenter (pyVmomi)
 │       ├── azure.py               # Microsoft Azure
 │       ├── ldap.py                # LDAP directory
-│       └── catc.py                # Cisco Catalyst Center
+│       ├── catc.py                # Cisco Catalyst Center
+│       ├── nexus.py               # Cisco Nexus Dashboard (NDFC)
+│       ├── f5.py                  # F5 BIG-IP
+│       ├── prometheus.py          # Prometheus node-exporter
+│       └── snmp.py                # SNMP (vendor-agnostic)
 │
 ├── lib/
 │   └── pynetbox2.py               # NetBox client (caching, upsert, retry)
 │
-├── mappings/                      # HCL mapping files
-│   ├── vmware.hcl
-│   ├── xclarity.hcl
-│   ├── xclarity-modules.hcl
-│   ├── azure.hcl
-│   ├── catc.hcl
-│   └── ldap.hcl
+├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
+│   ├── vmware.hcl.example
+│   ├── xclarity.hcl.example
+│   ├── xclarity-modules.hcl.example
+│   ├── azure.hcl.example
+│   ├── catc.hcl.example
+│   ├── nexus.hcl.example
+│   ├── f5.hcl.example
+│   ├── prometheus.hcl.example
+│   ├── juniper-snmp.hcl.example
+│   ├── ldap.hcl.example
+│   └── jnsu.hcl.example
 │
 ├── regex/                         # Pattern files for field transformations
 │   ├── cluster_to_site.example
 │   ├── host_to_tenant.example
 │   ├── vm_to_role.example
-│   └── vm_to_tenant.example
+│   ├── vm_to_tenant.example
+│   ├── xclarity_location_to_site.example
+│   └── xclarity_room_to_location.example
 │
 ├── docs/
 │   ├── ARCHITECTURE.md            # Framework design and data flow

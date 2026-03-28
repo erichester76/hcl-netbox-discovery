@@ -5,7 +5,7 @@ Covers:
 - _ensure_module_bay_template, _ensure_module_bay, _ensure_module_type
   in collector/prerequisites.py
 - Engine._process_modules in collector/engine.py
-- xclarity-modules.hcl parses without error
+- xclarity-modules.hcl.example parses without error
 """
 
 from __future__ import annotations
@@ -268,14 +268,14 @@ class TestModuleConfigParsing:
 
 
 # ---------------------------------------------------------------------------
-# xclarity-modules.hcl parses without error
+# xclarity-modules.hcl.example parses without error
 # ---------------------------------------------------------------------------
 
 
 class TestXclarityModulesHcl:
     """The new mapping file should parse cleanly and contain module blocks."""
 
-    HCL_PATH = "mappings/xclarity-modules.hcl"
+    HCL_PATH = "mappings/xclarity-modules.hcl.example"
 
     def test_parses_without_error(self):
         cfg = load_config(self.HCL_PATH)
@@ -1036,7 +1036,7 @@ class TestPowerInputConfigParsing:
         assert cfg.objects[0].modules[0].power_input is None
 
     def test_xclarity_power_supply_module_has_power_input(self):
-        cfg = load_config("mappings/xclarity-modules.hcl")
+        cfg = load_config("mappings/xclarity-modules.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         psu_mod = next(m for m in node.modules if m.profile == "Power supply")
         assert psu_mod.power_input is not None
@@ -1044,7 +1044,7 @@ class TestPowerInputConfigParsing:
         assert psu_mod.power_input.type is not None
 
     def test_xclarity_non_psu_modules_have_no_power_input(self):
-        cfg = load_config("mappings/xclarity-modules.hcl")
+        cfg = load_config("mappings/xclarity-modules.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         non_psu = [m for m in node.modules if m.profile != "Power supply"]
         assert len(non_psu) > 0
@@ -1433,11 +1433,11 @@ class TestProcessModulesPowerInput:
         assert len(module_type_attr_calls) == 0
 
     def test_xclarity_modules_hcl_has_attribute_blocks(self):
-        """The xclarity-modules.hcl mapping file should have attribute blocks
+        """The xclarity-modules.hcl.example mapping file should have attribute blocks
         on its CPU, Memory, Hard disk, Expansion card, Fan, and Power supply
         module blocks."""
         from collector.config import load_config
-        cfg = load_config("mappings/xclarity-modules.hcl")
+        cfg = load_config("mappings/xclarity-modules.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         profile_to_attrs: dict = {
             m.profile: [a.name for a in m.attributes]
