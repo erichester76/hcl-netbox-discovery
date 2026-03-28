@@ -204,6 +204,11 @@ class ModuleConfig:
       position     — numeric or string position passed to the bay
       serial       — module serial number
       manufacturer — manufacturer name (resolved to ID automatically)
+
+    Optional attribute sub-blocks (resolved from source data via ``attribute``
+    sub-blocks) are applied to the ModuleType record after the profile is
+    assigned.  Attribute names must match the keys declared in the profile's
+    JSON Schema in NetBox.
     """
 
     source_items: str = ""
@@ -211,6 +216,7 @@ class ModuleConfig:
     dedupe_by: Optional[str] = None
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
+    attributes: list[FieldConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -348,6 +354,7 @@ def _parse_modules(raw: list) -> list[ModuleConfig]:
             dedupe_by=body.get("dedupe_by"),
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
+            attributes=_parse_fields(body.get("attribute", [])),
         ))
     return configs
 
