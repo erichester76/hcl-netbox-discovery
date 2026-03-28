@@ -61,3 +61,21 @@ class TestSetupLogging:
         self.reset_root_logger()
         _setup_logging(level_str)
         assert logging.getLogger().level == expected_level
+
+    def test_defaults_to_info_when_no_env_and_no_arg(self, monkeypatch):
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        self.reset_root_logger()
+        _setup_logging()
+        assert logging.getLogger().level == logging.INFO
+
+    def test_reads_env_variable_when_no_arg(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        self.reset_root_logger()
+        _setup_logging()
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_explicit_arg_overrides_env(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        self.reset_root_logger()
+        _setup_logging("WARNING")
+        assert logging.getLogger().level == logging.WARNING

@@ -57,7 +57,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _setup_logging(level: str) -> None:
+def _setup_logging(level: str | None = None) -> None:
+    if level is None:
+        level = os.environ.get("LOG_LEVEL", "INFO")
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
         format="%(asctime)s [%(threadName)s] [%(levelname)s] [%(name)s] %(message)s",
