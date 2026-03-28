@@ -52,6 +52,7 @@ def catc_config():
         username="admin",
         password="secret",
         verify_ssl=False,
+        extra={"fetch_interfaces": "false"},
     )
 
 

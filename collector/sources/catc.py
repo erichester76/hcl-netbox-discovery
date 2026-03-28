@@ -3,9 +3,11 @@
 Uses the ``dnacentersdk`` Python SDK to connect to Cisco Catalyst Center and
 return network device inventory as plain Python dicts.
 
-Supported collection
---------------------
-``"devices"`` – all managed network devices, enriched with site hierarchy data.
+Supported collections
+---------------------
+``"devices"`` – all managed network devices, enriched with site hierarchy data
+                and optionally with embedded interface lists when
+                ``fetch_interfaces`` is enabled in the source config.
 
 Each returned dict includes both normalised convenience fields and the original
 Catalyst Center response attributes:
@@ -17,13 +19,27 @@ Normalised fields
   role              Device role in title-case (e.g. ``"ACCESS"`` → ``"Access"``)
   platform_name     ``"{softwareType} {softwareVersion}"``
   serial            Uppercase serial number
+  ip_address        Management IP address (empty string if absent)
   site_name         Site name extracted from ``siteNameHierarchy`` (level 3)
   location_name     Building/location from hierarchy (level 4; empty string if absent)
   status            ``"active"`` if Reachable, otherwise ``"offline"``
+  interfaces        List of normalised interface dicts (when fetch_interfaces enabled)
 
 Raw fields (passthrough from DNAC)
   hostname, platformId, softwareType, softwareVersion, serialNumber,
-  reachabilityStatus, family, siteNameHierarchy, rawRole
+  reachabilityStatus, family, siteNameHierarchy, rawRole,
+  managementIpAddress, deviceId
+
+Interface dict fields (when fetch_interfaces is enabled)
+  name              Interface name (e.g. ``"GigabitEthernet1/0/1"``)
+  type              NetBox-compatible interface type string
+  enabled           ``True`` if admin status is UP
+  description       Interface description
+  mac_address       MAC address (upper-cased, colon-separated)
+  ip_address        IPv4 address with prefix length (e.g. ``"10.0.0.1/24"``)
+                    or empty string
+  speed             Speed in Mbps (integer or ``None``)
+  portName, interfaceType, adminStatus, operStatus (raw passthrough)
 """
 
 from __future__ import annotations
@@ -55,6 +71,33 @@ _MODEL_REPLACEMENTS: list[tuple[str, str]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# DNAC interface type → NetBox interface type slug
+# ---------------------------------------------------------------------------
+
+# Maps DNAC ``interfaceType`` strings to NetBox interface type slugs.
+_IFACE_TYPE_MAP: dict[str, str] = {
+    "Physical":                    "1000base-t",
+    "Management":                  "1000base-t",
+    "Virtual":                     "virtual",
+    "SVI":                         "virtual",
+    "Loopback":                    "virtual",
+    "Port-Channel":                "lag",
+    "Tunnel":                      "virtual",
+    "NVE":                         "virtual",
+}
+
+# Speed string suffix → multiplier to convert to Mbps.
+_SPEED_SUFFIX_MAP: list[tuple[str, int]] = [
+    ("gbps", 1000),
+    ("g",    1000),
+    ("mbps", 1),
+    ("m",    1),
+    ("kbps", 0),   # rounded to 0 Mbps — effectively too slow to matter
+    ("k",    0),
+]
+
+
 def _normalize_model(platform_id: str) -> str:
     """Return a normalised Cisco model string from *platform_id*."""
     if not platform_id:
@@ -65,6 +108,63 @@ def _normalize_model(platform_id: str) -> str:
         if new != model:
             model = new
     return model.strip()
+
+
+def _normalize_iface_type(raw_type: str) -> str:
+    """Return a NetBox-compatible interface type slug for *raw_type*."""
+    if not raw_type:
+        return "other"
+    return _IFACE_TYPE_MAP.get(raw_type, "other")
+
+
+def _parse_speed_mbps(speed_str: str) -> Optional[int]:
+    """Parse a DNAC speed string into Mbps.
+
+    DNAC may return speed as:
+      * a numeric string of bits-per-second (e.g. ``"1000000000"`` for 1 Gbps)
+      * a human-readable string like ``"1 Gbps"`` or ``"100 Mbps"``
+
+    Returns ``None`` when the value cannot be parsed.
+    """
+    if not speed_str:
+        return None
+    s = str(speed_str).strip()
+
+    # Pure numeric → assume bits per second
+    if s.isdigit():
+        bps = int(s)
+        if bps == 0:
+            return None
+        return max(1, bps // 1_000_000)  # bps → Mbps
+
+    # Human-readable suffix matching
+    lower = s.lower().replace(" ", "")
+    m = re.match(r"(\d+(?:\.\d+)?)(.*)", lower)
+    if m:
+        value = float(m.group(1))
+        suffix = m.group(2)
+        for key, multiplier in _SPEED_SUFFIX_MAP:
+            if suffix.startswith(key):
+                return int(value * multiplier)
+
+    return None
+
+
+def _mask_to_prefix(mask: str) -> Optional[int]:
+    """Convert a dotted-quad subnet mask to a prefix length.
+
+    Returns ``None`` when *mask* is empty or invalid.
+    """
+    if not mask:
+        return None
+    try:
+        octets = mask.split(".")
+        if len(octets) != 4:
+            return None
+        bits = sum(bin(int(o)).count("1") for o in octets)
+        return bits
+    except (ValueError, AttributeError):
+        return None
 
 
 def _hierarchy_part(hierarchy: str, level: int) -> str:
@@ -89,6 +189,7 @@ class CatalystCenterSource(DataSource):
     def __init__(self) -> None:
         self._client: Optional[Any] = None
         self._config: Optional[Any] = None
+        self._fetch_interfaces: bool = False
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -114,6 +215,9 @@ class CatalystCenterSource(DataSource):
                 "Catalyst Center authentication requires both username and password. "
                 "Ensure CATC_USER and CATC_PASS environment variables are set."
             )
+
+        extra = config.extra or {}
+        self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
 
         logger.info("Connecting to Catalyst Center: %s", url)
         self._client = api.DNACenterAPI(
@@ -181,7 +285,14 @@ class CatalystCenterSource(DataSource):
                         continue
                     if serial:
                         seen_serials.add(serial)
-                    devices.append(self._enrich_device(device, site_hierarchy))
+                    enriched = self._enrich_device(device, site_hierarchy)
+                    if self._fetch_interfaces:
+                        device_id = enriched.get("deviceId", "")
+                        if device_id:
+                            enriched["interfaces"] = self._fetch_device_interfaces(device_id)
+                        else:
+                            enriched["interfaces"] = []
+                    devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
         return devices
@@ -216,6 +327,8 @@ class CatalystCenterSource(DataSource):
         serial            = _safe_get(device, "serialNumber", "") or ""
         reachability      = _safe_get(device, "reachabilityStatus", "") or ""
         family            = _safe_get(device, "family", "") or ""
+        mgmt_ip           = _safe_get(device, "managementIpAddress", "") or ""
+        device_id         = _safe_get(device, "id", "") or ""
 
         name = (hostname.split(".")[0] if hostname else "")[:64] or "Unknown"
 
@@ -227,6 +340,7 @@ class CatalystCenterSource(DataSource):
             "role":          role.replace("_", " ").title() if role else "Network Device",
             "platform_name": f"{software_type.upper()} {software_version}".strip() or "Unknown",
             "serial":        serial.upper() if serial else "",
+            "ip_address":    mgmt_ip,
             "site_name":     (_hierarchy_part(site_hierarchy, 3)
                               or _hierarchy_part(site_hierarchy, 2)
                               or "Unknown"),
@@ -242,6 +356,72 @@ class CatalystCenterSource(DataSource):
             "family":               family,
             "siteNameHierarchy":    site_hierarchy,
             "rawRole":              role,
+            "managementIpAddress":  mgmt_ip,
+            "deviceId":             device_id,
+        }
+
+    def _fetch_device_interfaces(self, device_id: str) -> list[dict]:
+        """Return a list of normalised interface dicts for *device_id*.
+
+        Uses the DNAC ``devices.get_interface_info_by_id`` endpoint.  Returns
+        an empty list on any API failure so that one unreachable device does
+        not abort the entire collection run.
+        """
+        try:
+            resp = self._client.devices.get_interface_info_by_id(device_id=device_id)
+            raw_list = resp.response if hasattr(resp, "response") else []
+        except Exception as exc:
+            logger.warning(
+                "CatalystCenter: failed to fetch interfaces for device %s: %s",
+                device_id, exc,
+            )
+            return []
+
+        if not isinstance(raw_list, list):
+            raw_list = []
+
+        return [self._enrich_interface(iface) for iface in raw_list]
+
+    def _enrich_interface(self, iface: Any) -> dict:
+        """Return a normalised dict for a single DNAC interface record."""
+        port_name    = _safe_get(iface, "portName", "") or ""
+        iface_type   = _safe_get(iface, "interfaceType", "") or ""
+        admin_status = _safe_get(iface, "adminStatus", "") or ""
+        oper_status  = _safe_get(iface, "operStatus", "") or ""
+        description  = _safe_get(iface, "description", "") or ""
+        mac_address  = _safe_get(iface, "macAddress", "") or ""
+        ipv4_address = _safe_get(iface, "ipv4Address", "") or ""
+        ipv4_mask    = _safe_get(iface, "ipv4Mask", "") or ""
+        speed_raw    = _safe_get(iface, "speed", "") or ""
+
+        # Build CIDR notation when both address and mask are present.
+        ip_address = ""
+        if ipv4_address:
+            prefix = _mask_to_prefix(ipv4_mask)
+            if prefix is not None:
+                ip_address = f"{ipv4_address}/{prefix}"
+            else:
+                logger.debug(
+                    "CatalystCenter: interface %s has IP %s but unparseable mask %r; "
+                    "storing address without prefix length",
+                    port_name, ipv4_address, ipv4_mask,
+                )
+                ip_address = ipv4_address
+
+        return {
+            # --- normalised convenience fields ---
+            "name":        port_name,
+            "type":        _normalize_iface_type(iface_type),
+            "enabled":     admin_status.upper() == "UP",
+            "description": description,
+            "mac_address": mac_address.upper() if mac_address else "",
+            "ip_address":  ip_address,
+            "speed":       _parse_speed_mbps(str(speed_raw)) if speed_raw else None,
+            # --- passthrough raw fields ---
+            "portName":      port_name,
+            "interfaceType": iface_type,
+            "adminStatus":   admin_status,
+            "operStatus":    oper_status,
         }
 
 
