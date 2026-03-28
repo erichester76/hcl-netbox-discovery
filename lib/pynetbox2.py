@@ -1854,6 +1854,9 @@ class NetBoxExtendedClient:
                 )
                 if result is not None:
                     self.cache.set(key, result)
+                    self._set_get_cache_by_id(resource, result)
+                    for derived_filters in self._derived_lookup_filters_for_record(resource, result):
+                        self._set_get_cache_key(resource, derived_filters, result)
                 return result
         else:
             self._inc_cache_metric("get_bypass")
@@ -1866,8 +1869,11 @@ class NetBoxExtendedClient:
             filters,
             result is not None,
         )
-        if use_cache and result is not None:
+        if result is not None:
             self.cache.set(key, result)
+            self._set_get_cache_by_id(resource, result)
+            for derived_filters in self._derived_lookup_filters_for_record(resource, result):
+                self._set_get_cache_key(resource, derived_filters, result)
         return result
 
     def list(self, resource: str, use_cache: bool = True, **filters: Any) -> list[Any]:
