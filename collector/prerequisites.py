@@ -322,3 +322,71 @@ class PrerequisiteRunner:
         except Exception as exc:
             logger.debug("lookup_tenant name=%r: %s", name, exc)
             return None
+
+    # ------------------------------------------------------------------
+    # Module bay / module type helpers (used by engine._process_modules)
+    # ------------------------------------------------------------------
+
+    def _ensure_module_bay_template(self, args: dict, dry_run: bool) -> Optional[int]:
+        """Ensure a ModuleBayTemplate exists on a DeviceType."""
+        device_type_id = args.get("device_type")
+        name = args.get("name") or "Unknown"
+        position = args.get("position", "")
+        if device_type_id is None:
+            return None
+        payload: dict[str, Any] = {"device_type": device_type_id, "name": name}
+        if position:
+            payload["position"] = position
+        if dry_run:
+            logger.info(
+                "[DRY-RUN] ensure_module_bay_template device_type=%s name=%s",
+                device_type_id, name,
+            )
+            return None
+        obj = self.nb.upsert(
+            "dcim.module_bay_templates",
+            payload,
+            lookup_fields=["device_type", "name"],
+        )
+        return extract_id(obj)
+
+    def _ensure_module_bay(self, args: dict, dry_run: bool) -> Optional[int]:
+        """Ensure a ModuleBay exists on a Device."""
+        device_id = args.get("device")
+        name = args.get("name") or "Unknown"
+        position = args.get("position", "")
+        if device_id is None:
+            return None
+        payload: dict[str, Any] = {"device": device_id, "name": name}
+        if position:
+            payload["position"] = position
+        if dry_run:
+            logger.info(
+                "[DRY-RUN] ensure_module_bay device=%s name=%s",
+                device_id, name,
+            )
+            return None
+        obj = self.nb.upsert(
+            "dcim.module_bays",
+            payload,
+            lookup_fields=["device", "name"],
+        )
+        return extract_id(obj)
+
+    def _ensure_module_type(self, args: dict, dry_run: bool) -> Optional[int]:
+        """Ensure a ModuleType exists (model + optional manufacturer)."""
+        model = args.get("model") or "Unknown"
+        slug = slugify(model)
+        manufacturer_id = args.get("manufacturer")
+        payload: dict[str, Any] = {"model": model, "slug": slug}
+        if manufacturer_id is not None:
+            payload["manufacturer"] = manufacturer_id
+        lookup = ["manufacturer", "slug"] if manufacturer_id is not None else ["slug"]
+        if dry_run:
+            logger.info(
+                "[DRY-RUN] ensure_module_type model=%s manufacturer=%s",
+                model, manufacturer_id,
+            )
+            return None
+        obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
+        return extract_id(obj)

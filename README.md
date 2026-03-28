@@ -602,10 +602,13 @@ For the full specification, see [`docs/HCL_DESIGN.md`](docs/HCL_DESIGN.md).
 | File | Source System | Objects Synced |
 |---|---|---|
 | `mappings/vmware.hcl` | VMware vCenter | Clusters, hypervisor hosts, VMs, interfaces, IPs, virtual disks |
-| `mappings/xclarity.hcl` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, inventory items |
+| `mappings/xclarity.hcl` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
+| `mappings/xclarity-modules.hcl` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
 | `mappings/azure.hcl` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks |
 | `mappings/catc.hcl` | Cisco Catalyst Center | Network devices |
 | `mappings/ldap.hcl` | LDAP directory | Users and groups |
+
+> **xclarity.hcl vs xclarity-modules.hcl** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl` uses `dcim.inventory_items` while `xclarity-modules.hcl` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
 
 ---
 
@@ -745,6 +748,7 @@ clemson-netbox-discovery/
 ├── mappings/                      # HCL mapping files
 │   ├── vmware.hcl
 │   ├── xclarity.hcl
+│   ├── xclarity-modules.hcl
 │   ├── azure.hcl
 │   ├── catc.hcl
 │   └── ldap.hcl
