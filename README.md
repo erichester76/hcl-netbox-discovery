@@ -1,4 +1,4 @@
-# clemson-netbox-discovery
+# hcl-netbox-discovery
 
 A **modular, declarative framework** for syncing infrastructure data from multiple external sources into [NetBox](https://netbox.dev/). Instead of writing hundreds of lines of Python per data source, each collector is a single HCL mapping file — no Python required for REST-based systems.
 
@@ -21,16 +21,16 @@ A **modular, declarative framework** for syncing infrastructure data from multip
 
 ## Overview
 
-**clemson-netbox-discovery** was built at Clemson University to replace a collection of 1,500–2,300 line monolithic Python collectors with a single, reusable engine driven by declarative HCL configuration files. The engine handles:
+**hcl-netbox-discovery** was built at Clemson University to replace a collection of dozens of 1,500–2,300 line monolithic Python collectors with a single, reusable engine driven by declarative HCL configuration files. The engine handles:
 
-- Connecting to source systems (VMware, Azure, Lenovo XClarity, Cisco Catalyst Center, LDAP, or any REST API)
+- Connecting to various source systems via APIs and python modules
 - Fetching raw infrastructure objects
 - Transforming and mapping fields to NetBox resources
 - Automatically creating prerequisite objects (manufacturers, device types, sites, racks, etc.)
 - Upserting data into NetBox with compound-key deduplication
 - Syncing nested resources: interfaces, IP addresses, inventory items, and virtual disks
 
-Adding support for a new REST-based data source requires only a new `.hcl` file — no Python code.
+Adding support for a new REST-based data source requires only a new `.hcl` file — no Python code, if its a complex API or SDK a small adapter has to be written
 
 ---
 
@@ -129,8 +129,8 @@ azure-mgmt-subscription>=3.1.1
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/erichester76/clemson-netbox-discovery.git
-cd clemson-netbox-discovery
+git clone https://github.com/erichester76/hcl-netbox-discovery.git
+cd hcl-netbox-discovery
 
 # 2. (Recommended) Create and activate a virtual environment
 python -m venv .venv
