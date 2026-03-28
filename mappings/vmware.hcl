@@ -278,9 +278,9 @@ object "vm" {
     }
   }
 
-  # Virtual Disks
+  # Virtual Disks – filter to devices that have capacityInKB (VirtualDisk only)
   disk {
-    source_items = "config.hardware.device[*]"
+    source_items = "[d for d in (source('config.hardware.device') or []) if getattr(d, 'capacityInKB', None)]"
     enabled_if   = "collector.sync_vms"
 
     field "name" {
