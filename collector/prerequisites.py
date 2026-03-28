@@ -171,6 +171,13 @@ class PrerequisiteRunner:
         name = args.get("name") or "Unknown"
         slug = slugify(name)
         manufacturer_id = args.get("manufacturer_id") or args.get("manufacturer")
+        # Allow callers to pass a manufacturer name string; we'll ensure it ourselves.
+        if manufacturer_id is None:
+            manufacturer_name = args.get("manufacturer_name")
+            if manufacturer_name:
+                manufacturer_id = self._ensure_manufacturer(
+                    {"name": manufacturer_name}, dry_run
+                )
         payload: dict[str, Any] = {"name": name, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
@@ -182,7 +189,9 @@ class PrerequisiteRunner:
         except Exception as exc:
             # Race condition: another thread may have created the platform between
             # the GET check and our POST — fall back to a plain GET by slug.
-            if "unique" in str(exc).lower():
+            # Check for a 400 status code with a uniqueness constraint violation.
+            exc_str = str(exc)
+            if "400" in exc_str and "unique" in exc_str.lower():
                 logger.debug("ensure_platform collision for %r — falling back to GET", name)
                 try:
                     obj = self.nb.get("dcim.platforms", slug=slug)
