@@ -54,16 +54,40 @@ services:
       XCLARITY_VERIFY_SSL: ${XCLARITY_VERIFY_SSL:-true}
 
       # Microsoft Azure
-      AZURE_TENANT_ID:      ${AZURE_TENANT_ID:-}
-      AZURE_CLIENT_ID:      ${AZURE_CLIENT_ID:-}
-      AZURE_CLIENT_SECRET:  ${AZURE_CLIENT_SECRET:-}
-      AZURE_AUTH_METHOD:    ${AZURE_AUTH_METHOD:-default}
+      AZURE_TENANT_ID:          ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID:          ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET:      ${AZURE_CLIENT_SECRET:-}
+      AZURE_AUTH_METHOD:        ${AZURE_AUTH_METHOD:-default}
+      AZURE_SUBSCRIPTION_IDS:   ${AZURE_SUBSCRIPTION_IDS:-}
 
       # LDAP
-      LDAP_SERVER:       ${LDAP_SERVER:-}
-      LDAP_USER:         ${LDAP_USER:-}
-      LDAP_PASS:         ${LDAP_PASS:-}
-      LDAP_SEARCH_BASE:  ${LDAP_SEARCH_BASE:-}
+      LDAP_SERVER:         ${LDAP_SERVER:-}
+      LDAP_USER:           ${LDAP_USER:-}
+      LDAP_PASS:           ${LDAP_PASS:-}
+      LDAP_SEARCH_BASE:    ${LDAP_SEARCH_BASE:-}
+      LDAP_FILTER:         ${LDAP_FILTER:-}
+      LDAP_PREFIX_LENGTH:  ${LDAP_PREFIX_LENGTH:-}
+      LDAP_SKIP_APS:       ${LDAP_SKIP_APS:-true}
+
+      # Cisco Nexus Dashboard Fabric Controller (NDFC)
+      NDFC_HOST:              ${NDFC_HOST:-}
+      NDFC_USER:              ${NDFC_USER:-}
+      NDFC_PASS:              ${NDFC_PASS:-}
+      NDFC_VERIFY_SSL:        ${NDFC_VERIFY_SSL:-true}
+      NDFC_FETCH_INTERFACES:  ${NDFC_FETCH_INTERFACES:-false}
+
+      # SNMP / Juniper
+      SNMP_HOSTS:        ${SNMP_HOSTS:-}
+      SNMP_COMMUNITY:    ${SNMP_COMMUNITY:-public}
+      SNMP_VERSION:      ${SNMP_VERSION:-2c}
+      SNMP_PORT:         ${SNMP_PORT:-161}
+      SNMP_TIMEOUT:      ${SNMP_TIMEOUT:-5}
+      SNMP_RETRIES:      ${SNMP_RETRIES:-1}
+      SNMP_V3_USER:      ${SNMP_V3_USER:-}
+      SNMP_V3_AUTH_PASS: ${SNMP_V3_AUTH_PASS:-}
+      SNMP_V3_AUTH_PROTO: ${SNMP_V3_AUTH_PROTO:-sha}
+      SNMP_V3_PRIV_PASS: ${SNMP_V3_PRIV_PASS:-}
+      SNMP_V3_PRIV_PROTO: ${SNMP_V3_PRIV_PROTO:-aes}
 
       # Collector flags
       COLLECTOR_SYNC_INTERFACES: ${COLLECTOR_SYNC_INTERFACES:-true}
