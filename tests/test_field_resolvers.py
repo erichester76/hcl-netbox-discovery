@@ -407,6 +407,83 @@ class TestResolverErrorHandling:
 
 
 # ---------------------------------------------------------------------------
+# Resolver – VMware virtual disk description (backing fields)
+# ---------------------------------------------------------------------------
+
+_DISK_DESC_EXPR = (
+    "truncate("
+    "(source('backing.fileName') or '') + ' (' +"
+    " when(source('backing.thinProvisioned'), 'Thin Provisioned', 'Thick Provisioned')"
+    " + ' ' + (source('backing.diskMode') or '') + ')',"
+    " 200)"
+)
+
+
+class TestVMwareDiskDescription:
+    """Tests for the disk description expression used in mappings/vmware.hcl."""
+
+    def _disk_obj(self, file_name=None, thin=False, disk_mode=None):
+        """Build a SimpleNamespace that mimics a pyVmomi VirtualDisk device."""
+        from types import SimpleNamespace
+
+        backing = SimpleNamespace(
+            fileName=file_name,
+            thinProvisioned=thin,
+            diskMode=disk_mode,
+        )
+        return SimpleNamespace(backing=backing)
+
+    def test_thin_provisioned_disk_full_info(self):
+        disk = self._disk_obj(
+            file_name="[datastore1] vm-01/vm-01.vmdk",
+            thin=True,
+            disk_mode="persistent",
+        )
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert result == "[datastore1] vm-01/vm-01.vmdk (Thin Provisioned persistent)"
+
+    def test_thick_provisioned_disk_full_info(self):
+        disk = self._disk_obj(
+            file_name="[datastore2] vm-02/vm-02.vmdk",
+            thin=False,
+            disk_mode="persistent",
+        )
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert result == "[datastore2] vm-02/vm-02.vmdk (Thick Provisioned persistent)"
+
+    def test_missing_thin_provisioned_defaults_to_thick(self):
+        """When thinProvisioned is None (attribute absent), default to Thick Provisioned."""
+        from types import SimpleNamespace
+
+        # backing without thinProvisioned attribute
+        backing = SimpleNamespace(fileName="[ds] vm/vm.vmdk", diskMode="persistent")
+        disk = SimpleNamespace(backing=backing)
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert "Thick Provisioned" in result
+
+    def test_missing_file_name_uses_empty_string(self):
+        disk = self._disk_obj(file_name=None, thin=True, disk_mode="persistent")
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert result == " (Thin Provisioned persistent)"
+
+    def test_missing_disk_mode_uses_empty_string(self):
+        disk = self._disk_obj(
+            file_name="[ds] vm/vm.vmdk", thin=False, disk_mode=None
+        )
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert result == "[ds] vm/vm.vmdk (Thick Provisioned )"
+
+    def test_description_truncated_to_200_chars(self):
+        long_path = "[datastore1] " + "a" * 200 + "/vm.vmdk"
+        disk = self._disk_obj(file_name=long_path, thin=True, disk_mode="persistent")
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert len(result) == 200
 # Resolver – mask_to_prefix()
 # ---------------------------------------------------------------------------
 
