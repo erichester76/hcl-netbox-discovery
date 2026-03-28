@@ -136,11 +136,6 @@ object "device" {
     value = "source('hostname')"
   }
 
-  field "tags" {
-    type  = "tags"
-    value = "['prometheus-sync']"
-  }
-
   # ---------------------------------------------------------------------------
   # Network Interfaces
   #
@@ -169,9 +164,5 @@ object "device" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
     }
 
-    field "tags" {
-      type  = "tags"
-      value = "['prometheus-sync']"
-    }
   }
 }
