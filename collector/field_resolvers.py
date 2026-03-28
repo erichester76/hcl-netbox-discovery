@@ -341,6 +341,13 @@ class Resolver:
             except (TypeError, ValueError):
                 return default
 
+        def float_val(value: Any, default: float = 0.0) -> float:
+            """Safely convert *value* to a float, returning *default* on error."""
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
         # ---- regex helpers ----
         def regex_replace(value: Any, pattern: str, replacement: str) -> str:
             """Apply a regex substitution to *value*.
@@ -431,6 +438,7 @@ class Resolver:
             "to_mb": to_mb,
             "str": str_val,
             "int": int_val,
+            "float": float_val,
             "prereq": prereq,
             "collector": collector_ns,
             # Attribute access helper (safe: only reads attributes, no side-effects)
