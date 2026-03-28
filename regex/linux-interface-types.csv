@@ -1,0 +1,41 @@
+# Linux server interface name → NetBox type slug mapping
+# Used by the SNMP source via regex_file() in linux-snmp.hcl.
+#
+# Each non-comment line is: <regex_pattern>,<netbox_type_slug>
+# The pattern is matched against the lower-cased interface name.
+# The catch-all at the end returns an empty string so that
+# the `or` operator in the HCL falls back to the standard ifType-based slug.
+#
+# Ethernet — traditional and predictable naming (systemd-udevd)
+^eth[0-9].*,1000base-t
+^ens[0-9].*,1000base-t
+^enp[0-9].*,1000base-t
+^eno[0-9].*,1000base-t
+^enx.*,1000base-t
+# Wireless
+^wlan[0-9].*,ieee802.11a
+^wlp[0-9].*,ieee802.11a
+^wlo[0-9].*,ieee802.11a
+# Loopback
+^lo$,virtual
+^lo[0-9].*,virtual
+# Bonding / teaming (LAG)
+^bond[0-9].*,lag
+^team[0-9].*,lag
+# Bridge interfaces
+^br[0-9].*,bridge
+^virbr[0-9].*,bridge
+^docker[0-9].*,bridge
+# Virtual / tunnel / VLAN
+^veth.*,virtual
+^vlan[0-9].*,virtual
+^tun[0-9].*,virtual
+^tap[0-9].*,virtual
+^dummy[0-9].*,virtual
+^macvlan.*,virtual
+^ipvlan.*,virtual
+^vxlan[0-9].*,virtual
+^gre[0-9].*,virtual
+^sit[0-9].*,virtual
+# Catch-all: return empty string so the HCL falls back to the ifType slug
+^.*,
