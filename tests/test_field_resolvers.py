@@ -226,6 +226,38 @@ class TestResolverNumericHelpers:
 
 
 # ---------------------------------------------------------------------------
+# Resolver – getattr()
+# ---------------------------------------------------------------------------
+
+
+class TestResolverGetattr:
+    def test_getattr_existing_attribute(self):
+        from types import SimpleNamespace
+        obj = SimpleNamespace(capacityInKB=1024)
+        r = _make_resolver({"device": obj})
+        assert r.evaluate("getattr(source('device'), 'capacityInKB', None)") == 1024
+
+    def test_getattr_missing_attribute_returns_default(self):
+        from types import SimpleNamespace
+        obj = SimpleNamespace()  # no capacityInKB
+        r = _make_resolver({"device": obj})
+        assert r.evaluate("getattr(source('device'), 'capacityInKB', None)") is None
+
+    def test_getattr_used_in_list_comprehension_filters_non_disks(self):
+        """Simulates filtering VirtualDisk devices from a mixed hardware device list."""
+        from types import SimpleNamespace
+        disk = SimpleNamespace(capacityInKB=20971520, deviceInfo=SimpleNamespace(label="Hard disk 1"))
+        nic = SimpleNamespace(deviceInfo=SimpleNamespace(label="Network adapter 1"))
+        cdrom = SimpleNamespace(deviceInfo=SimpleNamespace(label="CD/DVD drive 1"))
+        r = _make_resolver({"devices": [disk, nic, cdrom]})
+        result = r.evaluate(
+            "[d for d in (source('devices') or []) if getattr(d, 'capacityInKB', None)]"
+        )
+        assert len(result) == 1
+        assert result[0] is disk
+
+
+# ---------------------------------------------------------------------------
 # Resolver – when() and coalesce()
 # ---------------------------------------------------------------------------
 
