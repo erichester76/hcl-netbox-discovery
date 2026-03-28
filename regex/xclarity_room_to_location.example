@@ -1,0 +1,9 @@
+# xclarity_room_to_location — map XClarity location.room values to NetBox location names
+# Format: regex_pattern,replacement
+# Lines starting with # are ignored.
+# The first matching pattern wins; the original value is returned unchanged if nothing matches.
+#
+# Examples:
+#   ^Room101$,Server Room A
+#   ^Room202$,Server Room B
+#   (?i)^mdf.*,Main Distribution Frame

@@ -119,8 +119,8 @@ object "node" {
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
-      site     = "coalesce('location.location', 'dataCenter')"
-      location = "source('location.room')"
+      site     = "regex_file(coalesce('location.location', 'dataCenter'), 'xclarity_location_to_site')"
+      location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
     }
@@ -128,7 +128,7 @@ object "node" {
   }
 
   field "name" {
-    value = "coalesce('name', 'hostname', 'uuid')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -321,8 +321,8 @@ object "chassis" {
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
-      site     = "coalesce('location.location', 'dataCenter')"
-      location = "source('location.room')"
+      site     = "regex_file(coalesce('location.location', 'dataCenter'), 'xclarity_location_to_site')"
+      location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
     }
@@ -330,7 +330,7 @@ object "chassis" {
   }
 
   field "name" {
-    value = "coalesce('name', 'hostname', 'uuid')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -409,8 +409,8 @@ object "switch" {
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
-      site     = "coalesce('location.location', 'dataCenter')"
-      location = "source('location.room')"
+      site     = "regex_file(coalesce('location.location', 'dataCenter'), 'xclarity_location_to_site')"
+      location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
     }
@@ -418,7 +418,7 @@ object "switch" {
   }
 
   field "name" {
-    value = "coalesce('name', 'hostname', 'uuid')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -515,8 +515,8 @@ object "storage" {
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
-      site     = "coalesce('location.location', 'dataCenter')"
-      location = "source('location.room')"
+      site     = "regex_file(coalesce('location.location', 'dataCenter'), 'xclarity_location_to_site')"
+      location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
     }
@@ -524,7 +524,7 @@ object "storage" {
   }
 
   field "name" {
-    value = "coalesce('name', 'hostname', 'uuid')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
