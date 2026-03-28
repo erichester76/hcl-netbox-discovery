@@ -224,7 +224,7 @@ object "device" {
       # Apply Linux interface-name → type mapping via regex_file.
       # The CSV returns an empty string for unrecognised names so that
       # `or` falls back to the standard ifType-mapped slug.
-      value = "regex_file(lower(source('name')), 'linux-interface-types.csv') or source('type')"
+      value = "regex_file(lower(source('name')), 'linux-interface-types') or source('type')"
     }
 
     field "mac_address" {
