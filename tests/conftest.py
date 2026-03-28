@@ -72,6 +72,18 @@ def ldap_config():
 
 
 @pytest.fixture()
+def f5_config():
+    return SourceConfig(
+        api_type="f5",
+        url="https://bigip.example.com",
+        username="admin",
+        password="secret",
+        verify_ssl=False,
+        extra={"fetch_interfaces": "false"},
+    )
+
+
+@pytest.fixture()
 def nexus_config():
     return SourceConfig(
         api_type="nexus",
