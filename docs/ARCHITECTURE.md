@@ -52,8 +52,11 @@ hcl-netbox-discovery/
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
 │   ├── juniper-snmp.hcl.example
+│   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
-│   └── jnsu.hcl.example
+│   ├── jnsu.hcl.example
+│   ├── active-directory-computers.hcl.example
+│   └── active-directory-users.hcl.example
 ├── regex/                         # Pattern files consumed by regex_file() expressions
 ├── main.py                        # CLI entry point
 └── requirements.txt
@@ -255,6 +258,8 @@ Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"
 
 Generic LDAP adapter using `ldap3`. Supports any collection name; maps it to an LDAP search using `extra.search_base`, `extra.search_filter`, and `extra.attributes`. Returns raw LDAP entry dicts.
 
+Because Active Directory exposes its data over the standard LDAP protocol, `api_type = "ldap"` also covers Active Directory. The included `active-directory-computers.hcl.example` and `active-directory-users.hcl.example` templates demonstrate syncing AD computer accounts as NetBox devices and AD user accounts as NetBox contacts respectively.
+
 ---
 
 ### `collector/sources/catc.py`
@@ -296,6 +301,10 @@ Vendor-agnostic SNMP adapter using `pysnmp ≥ 7.1` async API (via `asyncio.run(
 Additional OIDs can be fetched per device using `extra_oids = { field_name = "oid" }` in the source block.
 
 Implements `get_objects` for collection `"devices"` (with nested `"interfaces"` and `"ip_addresses"`).
+
+Included example mappings:
+- `juniper-snmp.hcl.example` — Juniper routers (Juniper enterprise OIDs, model/version via regex, interface type mapping)
+- `linux-snmp.hcl.example` — Linux servers running `net-snmp` (kernel version extraction, standard interface types)
 
 ---
 

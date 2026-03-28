@@ -742,8 +742,11 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
 | `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
 | `mappings/juniper-snmp.hcl.example` | SNMP (Juniper routers) | Devices, interfaces, IP addresses |
+| `mappings/linux-snmp.hcl.example` | SNMP (Linux / net-snmp) | Devices, interfaces, IP addresses |
 | `mappings/ldap.hcl.example` | LDAP directory | Generic LDAP objects |
 | `mappings/jnsu.hcl.example` | LDAP / Novell eDirectory (jnsu schema) | DHCP lease IP addresses |
+| `mappings/active-directory-computers.hcl.example` | Active Directory (LDAP) | Computer accounts → NetBox devices |
+| `mappings/active-directory-users.hcl.example` | Active Directory (LDAP) | User accounts → NetBox contacts |
 
 > **xclarity.hcl.example vs xclarity-modules.hcl.example** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl.example` uses `dcim.inventory_items` while `xclarity-modules.hcl.example` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl.example` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
 
@@ -898,8 +901,11 @@ hcl-netbox-discovery/
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
 │   ├── juniper-snmp.hcl.example
+│   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
-│   └── jnsu.hcl.example
+│   ├── jnsu.hcl.example
+│   ├── active-directory-computers.hcl.example
+│   └── active-directory-users.hcl.example
 │
 ├── regex/                         # Pattern files for field transformations
 │   ├── cluster_to_site.example
@@ -907,7 +913,8 @@ hcl-netbox-discovery/
 │   ├── vm_to_role.example
 │   ├── vm_to_tenant.example
 │   ├── xclarity_location_to_site.example
-│   └── xclarity_room_to_location.example
+│   ├── xclarity_room_to_location.example
+│   └── linux-interface-types          # Interface type map for linux-snmp.hcl.example
 │
 ├── docs/
 │   ├── ARCHITECTURE.md            # Framework design and data flow
