@@ -344,7 +344,7 @@ object "node" {
     enabled_if   = "collector.sync_modules"
 
     field "bay_name" {
-      value = "coalesce('name', 'description')"
+      value = "coalesce('name', 'description', 'bay')"
     }
 
     field "position" {
@@ -352,7 +352,7 @@ object "node" {
     }
 
     field "model" {
-      value = "coalesce('partNumber', 'model', str("'Fan'"))"
+      value = "coalesce('partNumber', 'model') or 'Fan'"
     }
 
     field "serial" {

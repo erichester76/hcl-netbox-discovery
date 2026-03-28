@@ -1058,7 +1058,7 @@ class Engine:
                 module_type_id: Optional[int] = None
                 try:
                     module_type_id = prereq_runner._ensure_module_type(
-                        {"model": model, "manufacturer": manufacturer_id},
+                        {"model": model, "manufacturer": manufacturer_id, "profile": mod_cfg.profile},
                         dry_run=False,
                     )
                 except Exception as exc:

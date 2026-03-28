@@ -374,18 +374,21 @@ class PrerequisiteRunner:
         return extract_id(obj)
 
     def _ensure_module_type(self, args: dict, dry_run: bool) -> Optional[int]:
-        """Ensure a ModuleType exists (model + optional manufacturer)."""
+        """Ensure a ModuleType exists (model + optional manufacturer + optional profile)."""
         model = args.get("model") or "Unknown"
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
+        profile = args.get("profile")
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
+        if profile is not None:
+            payload["profile"] = profile
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
-                "[DRY-RUN] ensure_module_type model=%s manufacturer=%s",
-                model, manufacturer_id,
+                "[DRY-RUN] ensure_module_type model=%s manufacturer=%s profile=%s",
+                model, manufacturer_id, profile,
             )
             return None
         obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
