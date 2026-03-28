@@ -210,6 +210,7 @@ class ModuleConfig:
     profile: Optional[str] = None   # module type profile name (informational)
     dedupe_by: Optional[str] = None
     enabled_if: Optional[str] = None
+    filter_if: Optional[str] = None  # per-item filter; item skipped when expression is falsy
     fields: list[FieldConfig] = field(default_factory=list)
 
 
@@ -347,6 +348,7 @@ def _parse_modules(raw: list) -> list[ModuleConfig]:
             profile=body.get("profile"),
             dedupe_by=body.get("dedupe_by"),
             enabled_if=body.get("enabled_if"),
+            filter_if=body.get("filter_if"),
             fields=_parse_fields(body.get("field", [])),
         ))
     return configs

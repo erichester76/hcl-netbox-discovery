@@ -969,6 +969,11 @@ class Engine:
                 nested_ctx = ctx.for_nested(mod_item, parent_nb_obj)
                 mod_resolver = Resolver(nested_ctx)
 
+                # Per-item filter guard
+                if mod_cfg.filter_if is not None:
+                    if not mod_resolver.evaluate(mod_cfg.filter_if):
+                        continue
+
                 # Deduplication guard
                 if mod_cfg.dedupe_by:
                     dedup_key = mod_resolver.evaluate(mod_cfg.dedupe_by)

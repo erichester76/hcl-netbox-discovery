@@ -194,6 +194,33 @@ class TestModuleConfigParsing:
         assert mod.profile is None
         assert mod.dedupe_by is None
         assert mod.enabled_if is None
+        assert mod.filter_if is None
+
+    def test_filter_if_parsed(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "xclarity" {
+              api_type = "rest"
+              url      = "https://xclarity.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            object "node" {
+              source_collection = "nodes"
+              netbox_resource   = "dcim.devices"
+
+              module {
+                source_items = "fans"
+                filter_if    = "source('partNumber') != None"
+                field "bay_name" { value = "source('name')" }
+                field "model"    { value = "source('partNumber')" }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        mod = cfg.objects[0].modules[0]
+        assert mod.filter_if == "source('partNumber') != None"
 
 
 # ---------------------------------------------------------------------------
@@ -633,3 +660,60 @@ class TestProcessModules:
         ]
         # Only one module should be installed (second is deduplicated)
         assert len(module_calls) == 1
+
+    def test_filter_if_skips_items_where_expression_is_falsy(self):
+        """filter_if skips per-item entries whose expression evaluates to False/None.
+
+        Simulates the XClarity fan/tach scenario: fan entries with no
+        partNumber (the "Tach" sensor entries) are excluded while real fan
+        modules (which have a partNumber) are created.
+        """
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+        engine = self._make_engine()
+        source_obj = {
+            "fans": [
+                {
+                    "name": "Fan 1",
+                    "slot": "1",
+                    "partNumber": "46K3543",
+                    "serialNumber": "SN001",
+                    "manufacturer": "Delta",
+                },
+                {
+                    "name": "Fan 1 Tach",
+                    "slot": "1",
+                    "partNumber": None,
+                    "serialNumber": None,
+                },
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.return_value = MagicMock(id=1)
+
+        mod_cfg = ModuleConfig(
+            source_items="fans",
+            profile="Fan",
+            filter_if="source('partNumber') != None",
+            fields=[
+                FieldConfig(name="bay_name", value="source('name')"),
+                FieldConfig(name="model", value="source('partNumber')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.modules"
+        ]
+        # Only the real fan module (Fan 1) should be created; Tach entry is filtered out
+        assert len(module_calls) == 1
+        assert module_calls[0][0][1]["serial"] == "SN001"

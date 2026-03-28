@@ -342,6 +342,7 @@ object "node" {
     source_items = "fans"
     profile      = "Fan"
     enabled_if   = "collector.sync_modules"
+    filter_if    = "source('partNumber') != None"
 
     field "bay_name" {
       value = "coalesce('name', 'description')"
