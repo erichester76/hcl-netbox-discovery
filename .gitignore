@@ -2,6 +2,8 @@ regex/cluster_to_site
 regex/host_to_tenant
 regex/vm_to_role
 regex/vm_to_tenant
+regex/xclarity_location_to_site
+regex/xclarity_room_to_location
 
 # Python
 __pycache__/
