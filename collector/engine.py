@@ -1059,8 +1059,28 @@ class Engine:
                 # 4. Ensure module type
                 module_type_id: Optional[int] = None
                 try:
+                    # Evaluate ``attribute {}`` field expressions for this item.
+                    # These are applied to the ModuleType record (not the Module
+                    # instance) after the profile has been committed to NetBox.
+                    attrs: dict[str, Any] = {}
+                    for attr_cfg in mod_cfg.attributes:
+                        try:
+                            val = self._eval_field(attr_cfg, mod_resolver, nested_ctx)
+                            if val is not None:
+                                attrs[attr_cfg.name] = val
+                        except Exception as exc:
+                            logger.debug(
+                                "Module attribute %r evaluation error: %s",
+                                attr_cfg.name, exc,
+                            )
+
                     module_type_id = prereq_runner._ensure_module_type(
-                        {"model": model, "manufacturer": manufacturer_id, "profile": mod_cfg.profile},
+                        {
+                            "model": model,
+                            "manufacturer": manufacturer_id,
+                            "profile": mod_cfg.profile,
+                            "attributes": attrs if attrs else None,
+                        },
                         dry_run=False,
                     )
                 except Exception as exc:
