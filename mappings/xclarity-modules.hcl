@@ -262,7 +262,7 @@ object "node" {
     dedupe_by    = "source('serialNumber')"
 
     field "bay_name" {
-      value = "'Drive ' + str(when(coalesce('bay', 'slot'), coalesce('bay', 'slot'), '?'))"
+      value = "str(coalesce('name', 'description'))"
     }
 
     field "position" {
