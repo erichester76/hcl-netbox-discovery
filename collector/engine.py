@@ -204,7 +204,14 @@ class Engine:
         )
 
         if cfg.collector.sync_tag and not dry_run:
-            self._ensure_sync_tag(nb, cfg.collector.sync_tag)
+            tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
+            if not tag_ok:
+                logger.error(
+                    "Sync tag %r could not be created in NetBox; "
+                    "tag injection disabled for this run to prevent 400 errors",
+                    cfg.collector.sync_tag,
+                )
+                cfg.collector.sync_tag = ""
 
         all_stats: list[RunStats] = []
         try:
@@ -223,7 +230,15 @@ class Engine:
     # Object-level processing
     # ------------------------------------------------------------------
 
-    def _ensure_sync_tag(self, nb: Any, tag_name: str) -> None:
+    def _ensure_sync_tag(self, nb: Any, tag_name: str) -> bool:
+        """Create or verify the sync tag in NetBox.
+
+        Returns ``True`` when the tag was successfully created or already
+        exists, and ``False`` when creation failed.  Callers that receive
+        ``False`` should disable tag injection so that subsequent object
+        upserts are not rejected by NetBox with a 400 "Related object not
+        found" error.
+        """
         slug = slugify(tag_name)
         try:
             nb.upsert(
@@ -231,8 +246,10 @@ class Engine:
                 {"name": tag_name, "slug": slug, "color": "9e9e9e"},
                 lookup_fields=["slug"],
             )
+            return True
         except Exception as exc:
-            logger.warning("Failed to ensure sync tag %r: %s", tag_name, exc)
+            logger.error("Failed to ensure sync tag %r: %s", tag_name, exc)
+            return False
 
     def _process_object(self, obj_cfg: ObjectConfig, ctx: RunContext) -> RunStats:
         stats = RunStats(obj_cfg.name)

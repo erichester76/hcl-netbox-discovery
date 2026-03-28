@@ -4,6 +4,7 @@ Covers:
 - _eval_field normalises plain-string tags to {"name": tag} dicts (Fix 1a)
 - _inject_sync_tag uses {"name": sync_tag} dicts (Fix 1b)
 - _inject_sync_tag de-duplicates correctly when tags already contain the tag (Fix 1c)
+- _ensure_sync_tag returns True on success and False on failure (Fix 2)
 """
 
 from __future__ import annotations
@@ -54,6 +55,45 @@ class TestInjectSyncTag:
         payload = {"tags": "not-a-list"}
         Engine._inject_sync_tag(payload, "vmware-sync")
         assert payload["tags"] == [{"name": "vmware-sync"}]
+
+
+# ---------------------------------------------------------------------------
+# _ensure_sync_tag
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureSyncTag:
+    """Unit-test _ensure_sync_tag return values and error handling."""
+
+    def test_returns_true_on_successful_upsert(self):
+        nb = MagicMock()
+        nb.upsert.return_value = {"id": 1, "name": "vmware-sync"}
+        engine = Engine()
+        result = engine._ensure_sync_tag(nb, "vmware-sync")
+        assert result is True
+        nb.upsert.assert_called_once_with(
+            "extras.tags",
+            {"name": "vmware-sync", "slug": "vmware-sync", "color": "9e9e9e"},
+            lookup_fields=["slug"],
+        )
+
+    def test_returns_false_when_upsert_raises(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception("NetBox 403 Forbidden")
+        engine = Engine()
+        result = engine._ensure_sync_tag(nb, "vmware-sync")
+        assert result is False
+
+    def test_slug_is_derived_from_tag_name(self):
+        """Verify the slug sent to NetBox is the slugified form of the name."""
+        nb = MagicMock()
+        nb.upsert.return_value = {"id": 2, "name": "My Tag"}
+        engine = Engine()
+        engine._ensure_sync_tag(nb, "My Tag")
+        call_kwargs = nb.upsert.call_args
+        payload = call_kwargs[0][1]
+        assert payload["slug"] == "my-tag"
+        assert payload["name"] == "My Tag"
 
 
 # ---------------------------------------------------------------------------
