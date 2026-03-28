@@ -1,0 +1,134 @@
+# Active Directory → NetBox Contacts
+#
+# Queries Active Directory for user accounts and creates/updates
+# NetBox contacts (tenancy.contacts) for each enabled user.
+#
+# Run this file to sync AD users.  For computers, see
+# mappings/active-directory-computers.hcl.
+#
+# Required environment variables:
+#   AD_SERVER             LDAP URI of the AD domain controller
+#                         (e.g. ldaps://dc01.corp.example.com or
+#                              ldap://dc01.corp.example.com:389)
+#   AD_USER               Bind account DN or sAMAccountName@domain
+#                         (e.g. CN=svc-netbox,OU=ServiceAccounts,DC=corp,DC=example,DC=com)
+#   AD_PASS               Bind account password
+#   AD_SEARCH_BASE        OU (or root) to search for user objects
+#                         (e.g. OU=Users,DC=corp,DC=example,DC=com)
+#   NETBOX_URL            NetBox base URL  (e.g. https://netbox.corp.example.com)
+#   NETBOX_TOKEN          NetBox API token
+#
+# Optional:
+#   AD_USERS_FILTER       LDAP search filter for user accounts.
+#                         Default: all enabled user accounts
+#                           (&(objectClass=user)(objectCategory=person)
+#                             (!(objectClass=computer))
+#                             (!(userAccountControl:1.2.840.113556.1.4.803:=2)))
+#                         To include disabled accounts remove the last clause.
+#   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL      Redis URL or SQLite path when cache is redis/sqlite
+#   DRY_RUN               Set to "true" to log payloads without writing to NetBox
+#
+# Active Directory attribute notes:
+#   cn              — "Common Name"; usually "First Last" in AD
+#   givenName       — First name
+#   sn              — Surname / last name
+#   sAMAccountName  — Login name (pre-Windows 2000 logon name)
+#   mail            — Primary email address
+#   telephoneNumber — Office phone
+#   mobile          — Mobile / cell phone
+#   title           — Job title
+#   department      — Department name
+#   company         — Company name
+#   distinguishedName — Full LDAP distinguished name (used in comments)
+
+source "ldap" {
+  api_type   = "ldap"
+  url        = "env('AD_SERVER')"
+  username   = "env('AD_USER')"
+  password   = "env('AD_PASS')"
+  verify_ssl = true
+
+  search_base = "env('AD_SEARCH_BASE')"
+
+  # Default filter: enabled user accounts only (no computer accounts)
+  search_filter = "env('AD_USERS_FILTER', '(&(objectClass=user)(objectCategory=person)(!(objectClass=computer))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))')"
+
+  # Fetch only the attributes needed for contact records
+  attributes = "cn,givenName,sn,sAMAccountName,mail,telephoneNumber,mobile,title,department,company,distinguishedName"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers = 8
+  dry_run     = "env('DRY_RUN', 'false')"
+  sync_tag    = "ad-users-sync"
+  regex_dir   = "./regex"
+}
+
+# ---------------------------------------------------------------------------
+# AD Users → NetBox Contacts
+#
+# Field expression notes
+# ----------------------
+# name
+#   Prefer "First Last" assembled from givenName + sn; fall back to
+#   the AD Common Name (cn) when one or both name parts are absent.
+#
+# title
+#   Maps the AD "title" attribute directly to the NetBox contact title.
+#
+# phone
+#   Prefer the office phone (telephoneNumber); fall back to mobile when
+#   no office phone is set.
+#
+# email
+#   Maps the AD primary email address (mail attribute).
+#
+# comments
+#   Combines department and company into a short summary string so that
+#   the contact's organisational context is visible inside NetBox.
+#   The distinguishedName is appended on a new line for traceability.
+# ---------------------------------------------------------------------------
+
+object "contact" {
+  source_collection = "users"
+  netbox_resource   = "tenancy.contacts"
+  lookup_by         = ["name"]
+  max_workers       = 8
+
+  # Full display name — "First Last" with cn fallback
+  field "name" {
+    value = "join(' ', [source('givenName'), source('sn')]) or source('cn')"
+  }
+
+  field "title" {
+    value = "source('title')"
+  }
+
+  # Office phone preferred; fall back to mobile
+  field "phone" {
+    value = "source('telephoneNumber') or source('mobile')"
+  }
+
+  field "email" {
+    value = "source('mail')"
+  }
+
+  # Department / Company and the LDAP DN for traceability
+  field "comments" {
+    value = "join(' | ', [source('department'), source('company')])"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ad-users-sync']"
+  }
+}
