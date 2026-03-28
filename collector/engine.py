@@ -25,6 +25,7 @@ from .config import (
     InterfaceConfig,
     InventoryItemConfig,
     ObjectConfig,
+    TaggedVlanConfig,
     load_config,
 )
 from .context import RunContext
@@ -624,6 +625,92 @@ class Engine:
                                         )
 
                         first_for_iface = False
+
+                # Nested tagged VLANs
+                if iface_cfg.tagged_vlans:
+                    self._process_tagged_vlans(
+                        iface_cfg, nb_iface, iface_item, nested_ctx, resolver, iface_resource
+                    )
+
+    def _process_tagged_vlans(
+        self,
+        iface_cfg: InterfaceConfig,
+        nb_iface: Any,
+        iface_item: Any,
+        ctx: RunContext,
+        resolver: Any,
+        iface_resource: str,
+    ) -> None:
+        """Find/create VLANs described by *iface_cfg.tagged_vlans* and assign
+        them as ``tagged_vlans`` on *nb_iface* in NetBox.
+
+        If VLANs are found the interface ``mode`` is also set to ``"tagged"``.
+        Nothing is written when *ctx.dry_run* is ``True``.
+        """
+        all_vlan_ids: list[int] = []
+
+        for vlan_cfg in iface_cfg.tagged_vlans:
+            if vlan_cfg.enabled_if is not None:
+                if not resolver.evaluate(vlan_cfg.enabled_if):
+                    continue
+
+            vlan_items = _get_nested_items(iface_item, vlan_cfg.source_items, resolver)
+            if not vlan_items:
+                continue
+
+            for vlan_item in vlan_items:
+                vlan_ctx = ctx.for_nested(vlan_item, nb_iface)
+                vlan_resolver = Resolver(vlan_ctx)
+
+                vlan_payload = self._build_payload(vlan_cfg.fields, vlan_resolver, vlan_ctx)
+                if not vlan_payload:
+                    continue
+
+                # Require at least the first lookup field to be present
+                primary_key = vlan_cfg.lookup_by[0] if vlan_cfg.lookup_by else None
+                if not primary_key or not vlan_payload.get(primary_key):
+                    continue
+
+                if ctx.dry_run:
+                    logger.info(
+                        "[DRY-RUN] tagged_vlan  resource=%s  lookup=%s  payload=%s",
+                        vlan_cfg.netbox_resource,
+                        vlan_cfg.lookup_by,
+                        sorted(vlan_payload.keys()),
+                    )
+                    continue
+
+                try:
+                    lookup_fields = [k for k in vlan_cfg.lookup_by if k in vlan_payload]
+                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag)
+                    nb_vlan = ctx.nb.upsert(
+                        vlan_cfg.netbox_resource,
+                        vlan_payload,
+                        lookup_fields=lookup_fields,
+                    )
+                    vlan_id = extract_id(nb_vlan)
+                    if vlan_id is not None:
+                        all_vlan_ids.append(vlan_id)
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to find/create %s %s=%s: %s",
+                        vlan_cfg.netbox_resource, primary_key,
+                        vlan_payload.get(primary_key), exc,
+                    )
+
+        if all_vlan_ids and nb_iface is not None:
+            iface_id = extract_id(nb_iface)
+            if iface_id is not None:
+                try:
+                    ctx.nb.update(
+                        iface_resource,
+                        iface_id,
+                        {"mode": "tagged", "tagged_vlans": all_vlan_ids},
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to set tagged_vlans on interface %s: %s", iface_id, exc
+                    )
 
     def _process_inventory_items(
         self,
