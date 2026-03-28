@@ -194,6 +194,77 @@ class TestModuleConfigParsing:
         assert mod.profile is None
         assert mod.dedupe_by is None
         assert mod.enabled_if is None
+        assert mod.attributes == []
+
+    def test_attribute_sub_blocks_parsed(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "xclarity" {
+              api_type = "rest"
+              url      = "https://xclarity.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            object "node" {
+              source_collection = "nodes"
+              netbox_resource   = "dcim.devices"
+
+              module {
+                source_items = "processors"
+                profile      = "CPU"
+
+                field "bay_name"     { value = "source('socket')" }
+                field "model"        { value = "source('displayName')" }
+
+                attribute "cores"        { value = "int(source('cores')) if source('cores') != None else None" }
+                attribute "speed"        { value = "float(source('speed')) if source('speed') != None else None" }
+                attribute "architecture" { value = "source('architecture')" }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        mod = cfg.objects[0].modules[0]
+        attr_names = [a.name for a in mod.attributes]
+        assert "cores" in attr_names
+        assert "speed" in attr_names
+        assert "architecture" in attr_names
+        assert len(mod.attributes) == 3
+
+    def test_attribute_blocks_independent_of_field_blocks(self, tmp_path):
+        """attribute {} and field {} sub-blocks must be parsed into separate lists."""
+        path = _write_hcl(tmp_path, """
+            source "xclarity" {
+              api_type = "rest"
+              url      = "https://xclarity.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            object "node" {
+              source_collection = "nodes"
+              netbox_resource   = "dcim.devices"
+
+              module {
+                source_items = "processors"
+
+                field "bay_name" { value = "source('socket')" }
+                field "model"    { value = "source('displayName')" }
+
+                attribute "cores" { value = "source('cores')" }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        mod = cfg.objects[0].modules[0]
+        field_names = [f.name for f in mod.fields]
+        attr_names = [a.name for a in mod.attributes]
+        assert "bay_name" in field_names
+        assert "model" in field_names
+        assert "cores" not in field_names
+        assert "cores" in attr_names
+        assert "bay_name" not in attr_names
 
 
 # ---------------------------------------------------------------------------
@@ -504,10 +575,180 @@ class TestEnsureModuleType:
         payload = nb.upsert.call_args[0][1]
         assert "profile" not in payload
 
+    def test_attributes_applied_via_patch_after_upsert(self):
+        """Attributes must be written via nb.update (PATCH) after the module
+        type upsert so that the profile is committed before attributes are
+        validated against it."""
+        nb = MagicMock()
+        # upsert calls: profile, then module_type
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=50)]
+        nb.update.return_value = MagicMock(id=50)
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+        assert result == 50
+        # There should be an nb.update call for dcim.module_types with attributes
+        update_calls = nb.update.call_args_list
+        module_type_attr_calls = [
+            c for c in update_calls if c[0][0] == "dcim.module_types"
+        ]
+        assert len(module_type_attr_calls) == 1
+        update_call = module_type_attr_calls[0]
+        assert update_call[0][1] == 50
+        assert update_call[0][2] == {"attributes": {"cores": 16, "speed": 2.5}}
+        # The module_type upsert payload should NOT contain attributes
+        module_type_upsert = nb.upsert.call_args_list[1]
+        assert "attributes" not in module_type_upsert[0][1]
+
+    def test_attributes_not_called_when_empty(self):
+        """When attributes dict is empty/None, nb.update should not be called."""
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=36)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {"model": "Samsung 32GB DDR4", "attributes": {}},
+            dry_run=False,
+        )
+        nb.update.assert_not_called()
+
+    def test_attributes_not_called_when_none(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=37)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {"model": "Samsung 32GB DDR4", "attributes": None},
+            dry_run=False,
+        )
+        nb.update.assert_not_called()
+
+    def test_none_attribute_values_filtered_out(self):
+        """Attribute keys with None values should be excluded from the PATCH."""
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=51)]
+        nb.update.return_value = MagicMock(id=51)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": None, "architecture": "x86"},
+            },
+            dry_run=False,
+        )
+        update_attrs = nb.update.call_args[0][2]["attributes"]
+        assert "speed" not in update_attrs
+        assert update_attrs["cores"] == 16
+        assert update_attrs["architecture"] == "x86"
+
+    def test_profile_schema_set_when_attributes_provided(self):
+        """When attributes are specified, a schema is attached to the profile
+        to prevent NetBox from wiping attribute values on every save."""
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=52)]
+        nb.update.return_value = MagicMock(id=52)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16},
+            },
+            dry_run=False,
+        )
+        # nb.update should be called at least twice:
+        #   once for the profile schema, once for module_type attributes
+        assert nb.update.call_count >= 1
+        update_calls = nb.update.call_args_list
+        profile_schema_calls = [
+            c for c in update_calls
+            if c[0][0] == "dcim.module_type_profiles"
+        ]
+        assert len(profile_schema_calls) == 1
+        schema_payload = profile_schema_calls[0][0][2]
+        assert "schema" in schema_payload
+        schema = schema_payload["schema"]
+        assert schema["type"] == "object"
+        assert "cores" in schema["properties"]
+
+    def test_dry_run_includes_attributes_in_log(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "attributes": {"cores": 16},
+            },
+            dry_run=True,
+        )
+        assert result is None
+        nb.upsert.assert_not_called()
+        nb.update.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
-# Engine._process_modules
+# prerequisites — ensure_module_type_profile (schema support)
 # ---------------------------------------------------------------------------
+
+
+class TestEnsureModuleTypeProfileSchema:
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_schema_applied_via_update_when_provided(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=10)
+        nb.update.return_value = MagicMock(id=10)
+        runner = self._make_runner(nb)
+        schema = {"type": "object", "properties": {"cores": {}}}
+        runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+        nb.update.assert_called_once()
+        update_call = nb.update.call_args
+        assert update_call[0][0] == "dcim.module_type_profiles"
+        assert update_call[0][1] == 10
+        assert update_call[0][2]["schema"] == schema
+
+    def test_schema_auto_generated_from_attribute_names(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=11)
+        nb.update.return_value = MagicMock(id=11)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type_profile(
+            {"name": "CPU", "attribute_names": ["cores", "speed", "architecture"]},
+            dry_run=False,
+        )
+        nb.update.assert_called_once()
+        schema = nb.update.call_args[0][2]["schema"]
+        assert schema["type"] == "object"
+        assert "cores" in schema["properties"]
+        assert "speed" in schema["properties"]
+        assert "architecture" in schema["properties"]
+
+    def test_no_update_when_no_schema_and_no_attribute_names(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=12)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type_profile({"name": "CPU"}, dry_run=False)
+        nb.update.assert_not_called()
+
+    def test_dry_run_skips_both_upsert_and_update(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": {"type": "object"}},
+            dry_run=True,
+        )
+        assert result is None
+        nb.upsert.assert_not_called()
+        nb.update.assert_not_called()
 
 
 class TestProcessModules:
@@ -888,6 +1129,21 @@ class TestProcessModulesPowerInput:
                     "manufacturer": "Lenovo",
                     "slot": "1",
                     "outputWatts": 900,
+    def test_attribute_fields_evaluated_and_passed_to_ensure_module_type(self):
+        """Attribute sub-blocks are evaluated per source item and forwarded to
+        _ensure_module_type as the ``attributes`` dict, which then applies them
+        via a PATCH after profile assignment."""
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "cores": 16,
+                    "speed": 2.5,
                 }
             ]
         }
@@ -1029,6 +1285,56 @@ class TestProcessModulesPowerInput:
 
     def test_no_power_input_config_means_no_power_port(self):
         """Modules without power_input config do not create power ports."""
+        # Calls: ensure_manufacturer, ensure_module_type_profile (upsert),
+        #        ensure_module_bay_template, ensure_module_bay,
+        #        ensure_module_type (upsert), dcim.modules (upsert)
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=99),  # ensure_module_type_profile
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type
+            MagicMock(id=40),  # upsert module
+        ]
+        nb.update.return_value = MagicMock(id=30)
+
+        mod_cfg = ModuleConfig(
+            source_items="processors",
+            profile="CPU",
+            fields=[
+                FieldConfig(name="bay_name", value="source('socket')"),
+                FieldConfig(name="model", value="source('displayName')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+                FieldConfig(name="manufacturer", value="source('manufacturer')"),
+            ],
+            attributes=[
+                FieldConfig(name="cores", value="source('cores')"),
+                FieldConfig(name="speed", value="source('speed')"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        # nb.update should have been called for attributes on the module type
+        update_calls = nb.update.call_args_list
+        module_type_attr_calls = [
+            c for c in update_calls
+            if c[0][0] == "dcim.module_types"
+        ]
+        assert len(module_type_attr_calls) == 1
+        attrs_payload = module_type_attr_calls[0][0][2]["attributes"]
+        assert attrs_payload["cores"] == 16
+        assert attrs_payload["speed"] == 2.5
+
+    def test_none_attribute_values_not_forwarded(self):
+        """Attribute fields that evaluate to None are not included in the
+        attributes dict passed to _ensure_module_type."""
         from collector.config import FieldConfig, ModuleConfig, ObjectConfig
         engine = self._make_engine()
         source_obj = {
@@ -1043,12 +1349,15 @@ class TestProcessModulesPowerInput:
         ctx = self._make_ctx(source_obj)
         nb = ctx.nb
         nb.upsert.side_effect = [
-            MagicMock(id=1),
-            MagicMock(id=10),
-            MagicMock(id=20),
-            MagicMock(id=30),
-            MagicMock(id=40),
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=99),  # ensure_module_type_profile (when called)
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type
+            MagicMock(id=40),  # upsert module
         ]
+        nb.update.return_value = MagicMock(id=30)
+
         mod_cfg = ModuleConfig(
             source_items="processors",
             profile="CPU",
@@ -1057,6 +1366,11 @@ class TestProcessModulesPowerInput:
                 FieldConfig(name="model", value="source('displayName')"),
             ],
             power_input=None,
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+            ],
+            attributes=[
+                FieldConfig(name="cores", value="source('cores')"),
+            ],
         )
         obj_cfg = ObjectConfig(
             name="node",
@@ -1110,3 +1424,42 @@ class TestProcessModulesPowerInput:
         ]
         assert len(power_port_calls) == 1
         assert power_port_calls[0][0][1]["type"] == "iec-60320-c20"
+        # With all attribute values being None, nb.update for module_types
+        # should not be called (no clean attributes to write).
+        module_type_attr_calls = [
+            c for c in nb.update.call_args_list
+            if c[0][0] == "dcim.module_types"
+        ]
+        assert len(module_type_attr_calls) == 0
+
+    def test_xclarity_modules_hcl_has_attribute_blocks(self):
+        """The xclarity-modules.hcl mapping file should have attribute blocks
+        on its CPU, Memory, Hard disk, Expansion card, Fan, and Power supply
+        module blocks."""
+        from collector.config import load_config
+        cfg = load_config("mappings/xclarity-modules.hcl")
+        node = next(o for o in cfg.objects if o.name == "node")
+        profile_to_attrs: dict = {
+            m.profile: [a.name for a in m.attributes]
+            for m in node.modules
+            if m.profile is not None
+        }
+        # CPU must have cores, speed, architecture
+        assert "cores" in profile_to_attrs.get("CPU", [])
+        assert "speed" in profile_to_attrs.get("CPU", [])
+        assert "architecture" in profile_to_attrs.get("CPU", [])
+        # Memory must have size, class, data_rate, ecc
+        assert "size" in profile_to_attrs.get("Memory", [])
+        assert "class" in profile_to_attrs.get("Memory", [])
+        assert "data_rate" in profile_to_attrs.get("Memory", [])
+        assert "ecc" in profile_to_attrs.get("Memory", [])
+        # Hard disk must have size, speed, type
+        assert "size" in profile_to_attrs.get("Hard disk", [])
+        assert "type" in profile_to_attrs.get("Hard disk", [])
+        # Expansion card must have connector_type
+        assert "connector_type" in profile_to_attrs.get("Expansion card", [])
+        # Power supply must have input_current, input_voltage
+        assert "input_current" in profile_to_attrs.get("Power supply", [])
+        assert "input_voltage" in profile_to_attrs.get("Power supply", [])
+        # Fan must have rpm
+        assert "rpm" in profile_to_attrs.get("Fan", [])

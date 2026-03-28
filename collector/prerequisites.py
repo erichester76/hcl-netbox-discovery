@@ -376,9 +376,35 @@ class PrerequisiteRunner:
         return extract_id(obj)
 
     def _ensure_module_type_profile(self, args: dict, dry_run: bool) -> Optional[int]:
-        """Ensure a ModuleTypeProfile exists and return its numeric ID."""
+        """Ensure a ModuleTypeProfile exists and return its numeric ID.
+
+        *args* may contain:
+          ``name``   — profile name (required)
+          ``schema`` — JSON Schema dict attached to the profile so that NetBox
+                       does not wipe ``attributes`` to NULL on every module-type
+                       save.  When omitted and attribute names are provided via
+                       ``attribute_names``, a minimal permissive schema is
+                       auto-generated.
+          ``attribute_names`` — list of attribute key names used to
+                       auto-generate a schema when no explicit schema is given.
+
+        The schema is applied via a dedicated ``nb.update`` (PATCH) call after
+        the upsert so it is always written even when the profile already exists
+        and the upsert would otherwise skip unchanged fields.
+        """
         name = args.get("name") or "Unknown"
         slug = slugify(name)
+        schema: Any = args.get("schema")
+        # Auto-generate a minimal schema from attribute names so that NetBox
+        # retains ``attributes`` on every save (a profile with no schema causes
+        # NetBox to wipe attributes to NULL).
+        if schema is None:
+            attr_names = args.get("attribute_names") or []
+            if attr_names:
+                schema = {
+                    "type": "object",
+                    "properties": {k: {} for k in attr_names},
+                }
         if dry_run:
             logger.info("[DRY-RUN] ensure_module_type_profile name=%s", name)
             return None
@@ -387,27 +413,70 @@ class PrerequisiteRunner:
             {"name": name, "slug": slug},
             lookup_fields=["name"],
         )
-        return extract_id(obj)
+        # Apply the schema in a separate PATCH after the upsert so it is
+        # always written even when the profile record already existed.
+        profile_id = extract_id(obj)
+        if profile_id is not None and schema is not None:
+            try:
+                self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
+            except Exception as exc:
+                logger.debug(
+                    "Could not set schema on module_type_profile %r: %s", name, exc
+                )
+        return profile_id
 
     def _ensure_module_type(self, args: dict, dry_run: bool) -> Optional[int]:
-        """Ensure a ModuleType exists (model + optional manufacturer + optional profile)."""
+        """Ensure a ModuleType exists (model + optional manufacturer + optional profile).
+
+        When *args* includes an ``attributes`` dict the values are applied to
+        the module-type record via a dedicated PATCH **after** the profile has
+        been committed.  NetBox validates attribute values against the profile's
+        JSON Schema; sending both ``profile`` and ``attributes`` in a single
+        request causes attributes to be silently ignored on some NetBox
+        versions, so the two-step approach is mandatory.
+        """
         model = args.get("model") or "Unknown"
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
         profile_name = args.get("profile")
+        attrs: dict[str, Any] = args.get("attributes") or {}
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
         if profile_name is not None:
-            profile_id = self._ensure_module_type_profile({"name": profile_name}, dry_run)
+            attr_names = list(attrs.keys()) if attrs else []
+            profile_id = self._ensure_module_type_profile(
+                {"name": profile_name, "attribute_names": attr_names}, dry_run
+            )
             if profile_id is not None:
                 payload["profile"] = profile_id
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
-                "[DRY-RUN] ensure_module_type model=%s manufacturer=%s profile=%s",
-                model, manufacturer_id, profile_name,
+                "[DRY-RUN] ensure_module_type model=%s manufacturer=%s profile=%s attributes=%s",
+                model, manufacturer_id, profile_name, attrs,
             )
             return None
+        # Step 1: create/update the module type with the profile assigned.
+        # ``attributes`` is intentionally omitted here so that the profile is
+        # committed to NetBox before attributes are applied in step 2.
         obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
-        return extract_id(obj)
+        module_type_id = extract_id(obj)
+
+        # Step 2: apply attributes via a direct PATCH after the profile has
+        # been persisted.  Using ``nb.update`` (PATCH) rather than ``upsert``
+        # ensures attributes are always written even when the type record
+        # otherwise appears unchanged.
+        if module_type_id and attrs:
+            clean_attrs = {k: v for k, v in attrs.items() if v is not None}
+            if clean_attrs:
+                try:
+                    self.nb.update(
+                        "dcim.module_types", module_type_id, {"attributes": clean_attrs}
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Could not set attributes on module_type %r: %s", model, exc
+                    )
+
+        return module_type_id

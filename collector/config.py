@@ -232,6 +232,11 @@ class ModuleConfig:
     Optional sub-blocks:
       power_input  — if present, a ``dcim.power_ports`` record is created on
                      the installed module after each upsert.
+                     
+    Optional attribute sub-blocks (resolved from source data via ``attribute``
+    sub-blocks) are applied to the ModuleType record after the profile is
+    assigned.  Attribute names must match the keys declared in the profile's
+    JSON Schema in NetBox.
     """
 
     source_items: str = ""
@@ -240,6 +245,7 @@ class ModuleConfig:
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
     power_input: Optional[PowerInputConfig] = None
+    attributes: list[FieldConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -392,6 +398,7 @@ def _parse_modules(raw: list) -> list[ModuleConfig]:
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
             power_input=_parse_power_input(body.get("power_input", [])),
+            attributes=_parse_fields(body.get("attribute", [])),
         ))
     return configs
 

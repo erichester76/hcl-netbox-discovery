@@ -73,6 +73,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.azure import AzureSource
     from .sources.catc import CatalystCenterSource
     from .sources.ldap import LDAPSource
+    from .sources.nexus import NexusDashboardSource
     from .sources.rest import RestSource
     from .sources.vmware import VMwareSource
 
@@ -82,6 +83,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "catc":   CatalystCenterSource,
         "ldap":   LDAPSource,
         "azure":  AzureSource,
+        "nexus":  NexusDashboardSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:
@@ -1063,8 +1065,28 @@ class Engine:
                 # 4. Ensure module type
                 module_type_id: Optional[int] = None
                 try:
+                    # Evaluate ``attribute {}`` field expressions for this item.
+                    # These are applied to the ModuleType record (not the Module
+                    # instance) after the profile has been committed to NetBox.
+                    attrs: dict[str, Any] = {}
+                    for attr_cfg in mod_cfg.attributes:
+                        try:
+                            val = self._eval_field(attr_cfg, mod_resolver, nested_ctx)
+                            if val is not None:
+                                attrs[attr_cfg.name] = val
+                        except Exception as exc:
+                            logger.debug(
+                                "Module attribute %r evaluation error: %s",
+                                attr_cfg.name, exc,
+                            )
+
                     module_type_id = prereq_runner._ensure_module_type(
-                        {"model": model, "manufacturer": manufacturer_id, "profile": mod_cfg.profile},
+                        {
+                            "model": model,
+                            "manufacturer": manufacturer_id,
+                            "profile": mod_cfg.profile,
+                            "attributes": attrs if attrs else None,
+                        },
                         dry_run=False,
                     )
                 except Exception as exc:

@@ -72,6 +72,18 @@ def ldap_config():
 
 
 @pytest.fixture()
+def nexus_config():
+    return SourceConfig(
+        api_type="nexus",
+        url="https://ndfc.example.com",
+        username="admin",
+        password="secret",
+        verify_ssl=False,
+        extra={"fetch_interfaces": "false"},
+    )
+
+
+@pytest.fixture()
 def rest_config():
     return SourceConfig(
         api_type="rest",
