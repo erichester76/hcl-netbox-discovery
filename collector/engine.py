@@ -26,6 +26,7 @@ from .config import (
     InventoryItemConfig,
     ModuleConfig,
     ObjectConfig,
+    PowerInputConfig,
     TaggedVlanConfig,
     load_config,
 )
@@ -34,6 +35,11 @@ from .field_resolvers import Resolver, walk_path
 from .prerequisites import PrerequisiteRunner, extract_id, slugify
 
 logger = logging.getLogger(__name__)
+
+# Default IEC 60320 power-port connector type used when a power_input block
+# does not specify a type expression or when the expression evaluates to a
+# falsy value.
+_DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +73,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.azure import AzureSource
     from .sources.catc import CatalystCenterSource
     from .sources.ldap import LDAPSource
+    from .sources.nexus import NexusDashboardSource
     from .sources.rest import RestSource
     from .sources.snmp import SNMPSource
     from .sources.vmware import VMwareSource
@@ -78,6 +85,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "ldap":   LDAPSource,
         "azure":  AzureSource,
         "snmp":   SNMPSource,
+        "nexus":  NexusDashboardSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:
@@ -1059,8 +1067,28 @@ class Engine:
                 # 4. Ensure module type
                 module_type_id: Optional[int] = None
                 try:
+                    # Evaluate ``attribute {}`` field expressions for this item.
+                    # These are applied to the ModuleType record (not the Module
+                    # instance) after the profile has been committed to NetBox.
+                    attrs: dict[str, Any] = {}
+                    for attr_cfg in mod_cfg.attributes:
+                        try:
+                            val = self._eval_field(attr_cfg, mod_resolver, nested_ctx)
+                            if val is not None:
+                                attrs[attr_cfg.name] = val
+                        except Exception as exc:
+                            logger.debug(
+                                "Module attribute %r evaluation error: %s",
+                                attr_cfg.name, exc,
+                            )
+
                     module_type_id = prereq_runner._ensure_module_type(
-                        {"model": model, "manufacturer": manufacturer_id, "profile": mod_cfg.profile},
+                        {
+                            "model": model,
+                            "manufacturer": manufacturer_id,
+                            "profile": mod_cfg.profile,
+                            "attributes": attrs if attrs else None,
+                        },
                         dry_run=False,
                     )
                 except Exception as exc:
@@ -1083,9 +1111,37 @@ class Engine:
                 if serial:
                     module_payload["serial"] = str(serial)
 
-                self._upsert(
+                module_record = self._upsert(
                     nested_ctx,
                     "dcim.modules",
                     module_payload,
                     ["device", "module_bay"],
                 )
+
+                # 6. Create power input port if configured
+                if mod_cfg.power_input is not None and module_record is not None:
+                    module_id = extract_id(module_record)
+                    if module_id is not None and parent_id is not None:
+                        pi_cfg = mod_cfg.power_input
+                        pi_name = (
+                            mod_resolver.evaluate(pi_cfg.name)
+                            if pi_cfg.name
+                            else None
+                        )
+                        pi_type = (
+                                mod_resolver.evaluate(pi_cfg.type)
+                                if pi_cfg.type
+                                else _DEFAULT_POWER_PORT_TYPE
+                            ) or _DEFAULT_POWER_PORT_TYPE
+                        if pi_name:
+                            self._upsert(
+                                nested_ctx,
+                                "dcim.power_ports",
+                                {
+                                    "device": parent_id,
+                                    "module": module_id,
+                                    "name": str(pi_name),
+                                    "type": str(pi_type),
+                                },
+                                ["device", "module", "name"],
+                            )

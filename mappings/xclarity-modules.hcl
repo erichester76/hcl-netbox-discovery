@@ -224,6 +224,18 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer')"
     }
+
+    attribute "cores" {
+      value = "int(source('cores')) if source('cores') != None else None"
+    }
+
+    attribute "speed" {
+      value = "float(source('speed')) if source('speed') != None else None"
+    }
+
+    attribute "architecture" {
+      value = "coalesce('architecture', 'cpuFamily', 'family')"
+    }
   }
 
   # Memory DIMMs
@@ -250,6 +262,22 @@ object "node" {
 
     field "manufacturer" {
       value = "source('manufacturer')"
+    }
+
+    attribute "size" {
+      value = "int(coalesce('capacity', 'size')) if coalesce('capacity', 'size') != None else None"
+    }
+
+    attribute "class" {
+      value = "coalesce('memoryType', 'type')"
+    }
+
+    attribute "data_rate" {
+      value = "int(source('speed')) if source('speed') != None else None"
+    }
+
+    attribute "ecc" {
+      value = "coalesce('eccEnabled', 'ecc')"
     }
   }
 
@@ -280,6 +308,18 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer')"
     }
+
+    attribute "size" {
+      value = "int(source('capacity')) if source('capacity') != None else None"
+    }
+
+    attribute "speed" {
+      value = "int(source('rpm')) if source('rpm') != None else None"
+    }
+
+    attribute "type" {
+      value = "coalesce('mediaType', 'type', 'interfaceType')"
+    }
   }
 
   # PCIe add-in cards
@@ -306,6 +346,14 @@ object "node" {
 
     field "manufacturer" {
       value = "source('manufacturer')"
+    }
+
+    attribute "bandwidth" {
+      value = "int(source('bandwidth')) if source('bandwidth') != None else None"
+    }
+
+    attribute "connector_type" {
+      value = "coalesce('pciExpressConnectorType', 'connectorType', 'slotType')"
     }
   }
 
@@ -335,6 +383,27 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer')"
     }
+
+    power_input {
+      name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+      type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"  
+    }
+    
+    attribute "hot_swappable" {
+      value = "coalesce('hotSwappable', 'isHotSwappable')"
+    }
+
+    attribute "input_current" {
+      value = "when(source('inputVoltageIsAC') == False, 'DC', 'AC')"
+    }
+
+    attribute "input_voltage" {
+      value = "int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) if coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage') != None else 120"
+    }
+
+    attribute "wattage" {
+      value = "int(source('outputWatts')) if source('outputWatts') != None else None"
+    }
   }
 
   # Fans
@@ -361,6 +430,10 @@ object "node" {
 
     field "manufacturer" {
       value = "source('manufacturer') or 'Lenovo'"
+    }
+
+    attribute "rpm" {
+      value = "int(coalesce('speed', 'rpm')) if coalesce('speed', 'rpm') != None else None"
     }
   }
 }

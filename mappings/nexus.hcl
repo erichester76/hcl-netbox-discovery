@@ -1,0 +1,165 @@
+# Cisco Nexus Dashboard Fabric Controller (NDFC) → NetBox collector mapping
+#
+# Required environment variables:
+#   NDFC_HOST         Nexus Dashboard hostname or IP (no https://)
+#   NDFC_USER         Nexus Dashboard username
+#   NDFC_PASS         Nexus Dashboard password
+#   NETBOX_URL        NetBox base URL
+#   NETBOX_TOKEN      NetBox API token
+#
+# Optional:
+#   NDFC_VERIFY_SSL           true | false  (default: true)
+#   NDFC_FETCH_INTERFACES     true | false  (default: false)
+#                             When true, interfaces are fetched per-switch and
+#                             embedded in each device record so that the
+#                             interface {} block below can sync them to NetBox.
+#   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL          Redis URL or SQLite path
+#   DRY_RUN                   Set to "true" to log payloads without writing
+#   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
+
+source "nexus" {
+  api_type          = "nexus"
+  url               = "env('NDFC_HOST')"
+  username          = "env('NDFC_USER')"
+  password          = "env('NDFC_PASS')"
+  verify_ssl        = "env('NDFC_VERIFY_SSL', 'true')"
+  fetch_interfaces  = "env('NDFC_FETCH_INTERFACES', 'false')"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers      = 4
+  dry_run          = "env('DRY_RUN', 'false')"
+  sync_tag         = "ndfc-sync"
+  regex_dir        = "./regex"
+  sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# Nexus Fabric Switches
+#
+# The source adapter pre-normalises Cisco Nexus model strings and maps
+# NDFC fabric membership to NetBox sites so that HCL expressions stay simple.
+#
+# Each switch is looked up in NetBox by its serial number.  If no matching
+# device exists it is created; otherwise it is updated in place.
+# ---------------------------------------------------------------------------
+
+object "device" {
+  source_collection = "switches"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["serial"]
+  max_workers       = 4
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "source('manufacturer')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('model'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "coalesce(source('role'), 'Network Device')" }
+    optional = false
+  }
+
+  # Fabric name is used as the NetBox site so that all switches in the same
+  # fabric are grouped together in the same site.
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "coalesce(source('fabric_name'), 'Unknown')" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name         = "coalesce(source('platform_name'), 'NX-OS')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce(source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "serial" {
+    value = "source('serial')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync']"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Network Interfaces
+  #
+  # Interface sync requires NDFC_FETCH_INTERFACES=true so the adapter fetches
+  # and embeds interface data inside each switch record.  Set
+  # COLLECTOR_SYNC_INTERFACES=false to skip this step entirely.
+  # ---------------------------------------------------------------------------
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "description" {
+      value = "coalesce(source('description'), '')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+  }
+}
