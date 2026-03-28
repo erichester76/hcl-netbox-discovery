@@ -55,7 +55,6 @@ hcl-netbox-discovery/
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
-│   ├── jnsu.hcl.example
 │   ├── active-directory-computers.hcl.example
 │   ├── active-directory-users.hcl.example
 │   └── tenable.hcl.example
