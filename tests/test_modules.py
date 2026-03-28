@@ -383,13 +383,13 @@ class TestEnsureModuleTypeProfile:
         assert result is None
         nb.upsert.assert_not_called()
 
-    def test_lookup_by_slug(self):
+    def test_lookup_by_name(self):
         nb = MagicMock()
         nb.upsert.return_value = MagicMock(id=101)
         runner = self._make_runner(nb)
         runner._ensure_module_type_profile({"name": "Memory"}, dry_run=False)
         kwargs = nb.upsert.call_args[1]
-        assert kwargs.get("lookup_fields") == ["slug"]
+        assert kwargs.get("lookup_fields") == ["name"]
 
 
 # ---------------------------------------------------------------------------
