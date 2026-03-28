@@ -12,6 +12,9 @@
 #
 # Optional:
 #   XCLARITY_VERIFY_SSL       true | false  (default: true)
+#   XCLARITY_DEFAULT_SITE     Fallback NetBox site name used when a device's
+#                             location cannot be mapped via xclarity_location_to_site
+#                             (default: "Unknown")
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
 #   DRY_RUN                   Set to "true" to log payloads without writing
@@ -111,6 +114,13 @@ object "node" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   # Resolves site → location (room) → rack → rack position in one step.
   # location.location  = data-centre / site name
   # location.room      = room or area within the site
@@ -144,7 +154,7 @@ object "node" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -362,6 +372,13 @@ object "chassis" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -390,7 +407,7 @@ object "chassis" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -450,6 +467,13 @@ object "switch" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -478,7 +502,7 @@ object "switch" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -556,6 +580,13 @@ object "storage" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -584,7 +615,7 @@ object "storage" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
