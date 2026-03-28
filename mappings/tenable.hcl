@@ -1,0 +1,218 @@
+# Tenable One / Nessus → NetBox collector mapping
+#
+# This mapping file syncs asset and vulnerability data from Tenable One
+# (cloud) or an on-premise Nessus scanner into NetBox.
+#
+# Required environment variables:
+#   TENABLE_HOST        API base URL.  For Tenable.io omit or set to
+#                       "https://cloud.tenable.com".  For on-prem Nessus
+#                       set to e.g. "https://nessus.example.com:8834".
+#   TENABLE_ACCESS_KEY  Tenable.io API access key  (or Nessus username)
+#   TENABLE_SECRET_KEY  Tenable.io API secret key  (or Nessus password)
+#   NETBOX_URL          NetBox base URL
+#   NETBOX_TOKEN        NetBox API token
+#
+# Optional:
+#   TENABLE_PLATFORM              "tenable" (default) or "nessus"
+#   TENABLE_DATE_RANGE            Days to look back for asset/vuln activity (default: 30)
+#   TENABLE_VERIFY_SSL            true | false  (default: true)
+#   TENABLE_INCLUDE_ASSET_DETAILS true | false  (default: false)
+#                                 Set to true to enable the "findings" collection
+#                                 and embed per-asset vulnerability lists in assets.
+#   NETBOX_CACHE_BACKEND          Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL              Redis URL or SQLite path
+#   DRY_RUN                       Set to "true" to log payloads without writing
+
+source "tenable" {
+  api_type   = "tenable"
+  url        = "env('TENABLE_HOST', 'https://cloud.tenable.com')"
+  username   = "env('TENABLE_ACCESS_KEY')"
+  password   = "env('TENABLE_SECRET_KEY')"
+  verify_ssl = "env('TENABLE_VERIFY_SSL', 'true')"
+
+  extra = {
+    platform              = "env('TENABLE_PLATFORM', 'tenable')"
+    date_range            = "env('TENABLE_DATE_RANGE', '30')"
+    include_asset_details = "env('TENABLE_INCLUDE_ASSET_DETAILS', 'false')"
+  }
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers = 4
+  dry_run     = "env('DRY_RUN', 'false')"
+  sync_tag    = "tenable-sync"
+  regex_dir   = "./regex"
+}
+
+# ---------------------------------------------------------------------------
+# Assets → NetBox Devices
+#
+# Each Tenable asset is created or updated as a NetBox device.  Assets are
+# looked up by name (FQDN short name).  The device type is derived from the
+# OS string; the site is set to "Tenable" as a catch-all — adjust the
+# regex_file() call to map OS/FQDN to your own site names.
+# ---------------------------------------------------------------------------
+
+object "device" {
+  source_collection = "assets"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["name"]
+  max_workers       = 4
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = {
+      name = "coalesce(split(source('os'))[0], 'Unknown')"
+    }
+    optional = true
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('os'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = {
+      name = "coalesce(source('system_type'), 'Server')"
+    }
+    optional = false
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "'Tenable'" }
+    optional = false
+  }
+
+  field "name" {
+    value = "coalesce(source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['tenable-sync']"
+  }
+
+  field "comments" {
+    value = "when(source('critical_vulns') > 0, 'Critical vulns: ' + str(source('critical_vulns')) + '  High: ' + str(source('high_vulns')) + '  Medium: ' + str(source('medium_vulns')), '')"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Vulnerabilities → NetBox Security Vulnerabilities
+#
+# Requires the netbox-security plugin to be installed and configured in
+# NetBox.  Each unique Nessus plugin is recorded as a vulnerability.
+#
+# Uncomment this block when the netbox-security plugin is available.
+# ---------------------------------------------------------------------------
+
+# object "vulnerability" {
+#   source_collection = "vulnerabilities"
+#   netbox_resource   = "security.vulnerabilities"
+#   lookup_by         = ["name"]
+#
+#   field "name" {
+#     value = "source('cve_id')"
+#   }
+#
+#   field "description" {
+#     value = "coalesce(source('description'), source('plugin_name'), '')"
+#   }
+#
+#   field "severity" {
+#     value = "source('severity')"
+#   }
+#
+#   field "cvss_score" {
+#     value = "source('cvss_score')"
+#   }
+#
+#   field "comments" {
+#     value = "coalesce(source('solution'), '')"
+#   }
+#
+#   field "tags" {
+#     type  = "tags"
+#     value = "['tenable-sync']"
+#   }
+# }
+
+# ---------------------------------------------------------------------------
+# Findings → NetBox Security Findings
+#
+# One finding per (asset, vulnerability) combination.  Requires
+# TENABLE_INCLUDE_ASSET_DETAILS=true so that per-asset vulnerability data is
+# fetched, and the netbox-security plugin to be installed in NetBox.
+#
+# Uncomment this block when both requirements are met.
+# ---------------------------------------------------------------------------
+
+# object "finding" {
+#   source_collection = "findings"
+#   netbox_resource   = "security.findings"
+#   lookup_by         = ["device", "vulnerability"]
+#
+#   prerequisite "device" {
+#     method   = "ensure_device"
+#     args     = { name = "source('name')" }
+#     optional = true
+#   }
+#
+#   prerequisite "vulnerability" {
+#     method   = "ensure_vulnerability"
+#     args     = { name = "source('cve_id')" }
+#     optional = true
+#   }
+#
+#   field "device" {
+#     value = "prereq('device')"
+#   }
+#
+#   field "vulnerability" {
+#     value = "prereq('vulnerability')"
+#   }
+#
+#   field "severity" {
+#     value = "source('severity')"
+#   }
+#
+#   field "status" {
+#     value = "when(source('state') == 'open', 'open', 'closed')"
+#   }
+#
+#   field "tags" {
+#     type  = "tags"
+#     value = "['tenable-sync']"
+#   }
+# }
