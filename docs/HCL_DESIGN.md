@@ -131,6 +131,7 @@ collector {
   regex_dir       = "./regex"
   sync_interfaces = env("COLLECTOR_SYNC_INTERFACES", "true")
   sync_inventory  = env("COLLECTOR_SYNC_INVENTORY", "true")
+  sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
 }
 ```
@@ -143,6 +144,7 @@ collector {
 | `regex_dir` | no | Directory containing regex pattern files (default: `"./regex"`) |
 | `sync_interfaces` | no | Enable interface syncing (referenced by `enabled_if`) |
 | `sync_inventory` | no | Enable inventory item syncing (referenced by `enabled_if`) |
+| `sync_modules` | no | Enable module syncing (referenced by `enabled_if`) |
 | `use_modules` | no | Use NetBox modules instead of inventory items |
 
 Custom boolean flags added here are available in `enabled_if` expressions as `collector.flag_name`.
@@ -335,6 +337,52 @@ inventory_item {
 
 Same structure as `inventory_item` but targets `virtualization.virtual-disks` for VMs.
 
+### `module` block
+
+```hcl
+module {
+  source_items = "processors"
+  profile      = "CPU"              # module type profile (informational label)
+  dedupe_by    = "source('socket')" # optional deduplication key
+  enabled_if   = "collector.sync_modules"
+
+  # Required fields
+  field "bay_name"     { value = "coalesce('socket', 'productName', 'description')" }
+  field "model"        { value = "coalesce('displayName', 'productVersion', 'model')" }
+
+  # Optional fields
+  field "position"     { value = "str(source('slot'))" }
+  field "serial"       { value = "str(source('serialNumber'))" }
+  field "manufacturer" { value = "source('manufacturer')" }
+}
+```
+
+The engine performs a four-step chain for every source item:
+
+1. **ModuleBayTemplate** — ensures the slot is declared on the `DeviceType`
+   template (so new devices of that type will have the bay automatically).
+2. **ModuleBay** — ensures the physical slot instance exists on the `Device`.
+3. **ModuleType** — ensures a reusable make/model record exists
+   (`model` + optional `manufacturer`).
+4. **Module** — upserts the installed instance linking device, bay, and type.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `source_items` | yes | Dotted path to the list of components on the parent object |
+| `profile` | no | Human-readable category label stored in `ModuleConfig` (e.g. `"CPU"`, `"Memory"`) |
+| `dedupe_by` | no | Expression used as a deduplication key |
+| `enabled_if` | no | Boolean expression; block is skipped when `false` |
+
+**Special field names** interpreted by the module processor:
+
+| Field | Required | Description |
+|---|---|---|
+| `bay_name` | yes | Slot label on the device (e.g. `"CPU Socket 1"`) |
+| `model` | yes | ModuleType model string |
+| `position` | no | Numeric or string position passed to the bay template |
+| `serial` | no | Serial number of the installed module |
+| `manufacturer` | no | Manufacturer name (looked up / created automatically) |
+
 ---
 
 ## Field Expression Reference
@@ -418,6 +466,9 @@ For each source item, the engine evaluates in this order:
      - Set primary IP if `primary_if = "first"` and this is the first
 5. For each `inventory_item` block: inner loop over `source_items`
 6. For each `disk` block: inner loop
+7. For each `module` block: inner loop over `source_items`
+   - Resolve manufacturer → ensure ModuleBayTemplate → ensure ModuleBay
+     → ensure ModuleType → upsert Module
 
 ---
 

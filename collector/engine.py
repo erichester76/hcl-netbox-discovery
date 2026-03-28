@@ -24,6 +24,7 @@ from .config import (
     FieldConfig,
     InterfaceConfig,
     InventoryItemConfig,
+    ModuleConfig,
     ObjectConfig,
     TaggedVlanConfig,
     load_config,
@@ -361,6 +362,7 @@ class Engine:
             self._process_interfaces(obj_cfg, nb_obj, ctx)
             self._process_inventory_items(obj_cfg, nb_obj, ctx)
             self._process_disks(obj_cfg, nb_obj, ctx)
+            self._process_modules(obj_cfg, nb_obj, ctx)
         except Exception as exc:
             logger.error(
                 "Nested collection processing failed for %r: %s",
@@ -810,4 +812,180 @@ class Engine:
                     "virtualization.virtual_disks",
                     payload,
                     ["virtual_machine", "name"],
+                )
+
+    def _process_modules(
+        self,
+        obj_cfg: ObjectConfig,
+        parent_nb_obj: Any,
+        ctx: RunContext,
+    ) -> None:
+        """Sync hardware components as NetBox Modules (ModuleBay + Module).
+
+        For each item in each ``module {}`` block the engine will:
+
+        1. Evaluate the ``bay_name``, ``position``, ``model``, ``serial``, and
+           ``manufacturer`` fields from the source data.
+        2. Call ``ensure_module_bay_template`` on the device type so that the
+           slot is declared on the type template.
+        3. Call ``ensure_module_bay`` on the device instance to ensure the
+           physical bay record exists.
+        4. Call ``ensure_module_type`` (model + manufacturer) to obtain the
+           reusable module-type record.
+        5. Upsert the ``dcim.modules`` record linking device, bay, and type.
+        """
+        if not obj_cfg.modules:
+            return
+
+        prereq_runner = PrerequisiteRunner(ctx.nb)
+        parent_id = extract_id(parent_nb_obj)
+
+        # Derive device_type_id from the parent NetBox device so we can add
+        # bay templates without an extra API call.
+        device_type_id: Optional[int] = None
+        if parent_nb_obj is not None:
+            dt = (
+                parent_nb_obj.get("device_type")
+                if isinstance(parent_nb_obj, dict)
+                else getattr(parent_nb_obj, "device_type", None)
+            )
+            if isinstance(dt, dict):
+                device_type_id = dt.get("id")
+            elif dt is not None:
+                device_type_id = getattr(dt, "id", None)
+
+        for mod_cfg in obj_cfg.modules:
+            resolver = Resolver(ctx)
+
+            if mod_cfg.enabled_if is not None:
+                if not resolver.evaluate(mod_cfg.enabled_if):
+                    continue
+
+            items = _get_nested_items(ctx.source_obj, mod_cfg.source_items, resolver)
+            if not items:
+                continue
+
+            seen_dedup_keys: set = set()
+
+            for mod_item in items:
+                nested_ctx = ctx.for_nested(mod_item, parent_nb_obj)
+                mod_resolver = Resolver(nested_ctx)
+
+                # Deduplication guard
+                if mod_cfg.dedupe_by:
+                    dedup_key = mod_resolver.evaluate(mod_cfg.dedupe_by)
+                    if dedup_key is not None:
+                        if dedup_key in seen_dedup_keys:
+                            continue
+                        seen_dedup_keys.add(dedup_key)
+
+                # Evaluate all field expressions for this item
+                raw_payload = self._build_payload(mod_cfg.fields, mod_resolver, nested_ctx)
+                if not raw_payload:
+                    continue
+
+                bay_name = raw_payload.get("bay_name") or raw_payload.get("name")
+                position = str(raw_payload.get("position") or "")
+                model = raw_payload.get("model")
+                serial = raw_payload.get("serial")
+                manufacturer_name = raw_payload.get("manufacturer")
+
+                if not bay_name or not model:
+                    logger.debug(
+                        "Module item missing bay_name or model — skipping (bay=%r model=%r)",
+                        bay_name, model,
+                    )
+                    continue
+
+                if ctx.dry_run:
+                    logger.info(
+                        "[DRY-RUN] module  bay=%s  model=%s  serial=%s",
+                        bay_name, model, serial,
+                    )
+                    continue
+
+                # 1. Resolve manufacturer ID (optional)
+                manufacturer_id: Optional[int] = None
+                if manufacturer_name:
+                    try:
+                        manufacturer_id = prereq_runner._ensure_manufacturer(
+                            {"name": manufacturer_name}, dry_run=False
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "ensure_manufacturer for module %r failed: %s", bay_name, exc
+                        )
+
+                # 2. Ensure bay template on device type
+                if device_type_id is not None:
+                    try:
+                        prereq_runner._ensure_module_bay_template(
+                            {
+                                "device_type": device_type_id,
+                                "name": bay_name,
+                                "position": position,
+                            },
+                            dry_run=False,
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "ensure_module_bay_template %r failed: %s", bay_name, exc
+                        )
+
+                # 3. Ensure bay instance on device
+                bay_id: Optional[int] = None
+                if parent_id is not None:
+                    try:
+                        bay_id = prereq_runner._ensure_module_bay(
+                            {
+                                "device": parent_id,
+                                "name": bay_name,
+                                "position": position,
+                            },
+                            dry_run=False,
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "ensure_module_bay %r failed: %s", bay_name, exc
+                        )
+
+                if bay_id is None:
+                    logger.debug(
+                        "Could not obtain module_bay for %r — skipping module install",
+                        bay_name,
+                    )
+                    continue
+
+                # 4. Ensure module type
+                module_type_id: Optional[int] = None
+                try:
+                    module_type_id = prereq_runner._ensure_module_type(
+                        {"model": model, "manufacturer": manufacturer_id},
+                        dry_run=False,
+                    )
+                except Exception as exc:
+                    logger.debug("ensure_module_type %r failed: %s", model, exc)
+
+                if module_type_id is None:
+                    logger.debug(
+                        "Could not obtain module_type for %r — skipping module install",
+                        model,
+                    )
+                    continue
+
+                # 5. Install module
+                module_payload: dict[str, Any] = {
+                    "device": parent_id,
+                    "module_bay": bay_id,
+                    "module_type": module_type_id,
+                    "status": "active",
+                }
+                if serial:
+                    module_payload["serial"] = str(serial)
+
+                self._upsert(
+                    nested_ctx,
+                    "dcim.modules",
+                    module_payload,
+                    ["device", "module_bay"],
                 )

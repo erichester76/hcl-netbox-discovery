@@ -188,6 +188,32 @@ class DiskConfig:
 
 
 @dataclass
+class ModuleConfig:
+    """Describes one ``module {}`` block inside an ``object {}`` block.
+
+    Each item in *source_items* becomes a NetBox Module installed in a
+    ModuleBay on the parent device.  The engine calls ensure_module_bay (and
+    optionally ensure_module_bay_template on the device type) then
+    ensure_module_type before upserting the Module.
+
+    Required fields (resolved from source data via ``field`` sub-blocks):
+      bay_name     — the slot / bay label (e.g. "CPU Socket 1")
+      model        — the module-type model string
+
+    Optional fields:
+      position     — numeric or string position passed to the bay
+      serial       — module serial number
+      manufacturer — manufacturer name (resolved to ID automatically)
+    """
+
+    source_items: str = ""
+    profile: Optional[str] = None   # module type profile name (informational)
+    dedupe_by: Optional[str] = None
+    enabled_if: Optional[str] = None
+    fields: list[FieldConfig] = field(default_factory=list)
+
+
+@dataclass
 class ObjectConfig:
     name: str
     source_collection: str
@@ -199,6 +225,7 @@ class ObjectConfig:
     interfaces: list[InterfaceConfig] = field(default_factory=list)
     inventory_items: list[InventoryItemConfig] = field(default_factory=list)
     disks: list[DiskConfig] = field(default_factory=list)
+    modules: list[ModuleConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -312,6 +339,19 @@ def _parse_disks(raw: list) -> list[DiskConfig]:
     return configs
 
 
+def _parse_modules(raw: list) -> list[ModuleConfig]:
+    configs = []
+    for body in _unlabeled_list(raw):
+        configs.append(ModuleConfig(
+            source_items=body.get("source_items", ""),
+            profile=body.get("profile"),
+            dedupe_by=body.get("dedupe_by"),
+            enabled_if=body.get("enabled_if"),
+            fields=_parse_fields(body.get("field", [])),
+        ))
+    return configs
+
+
 def _parse_objects(raw: list) -> list[ObjectConfig]:
     objects = []
     for label, body in _labeled_list(raw):
@@ -332,6 +372,7 @@ def _parse_objects(raw: list) -> list[ObjectConfig]:
             interfaces=_parse_interfaces(body.get("interface", [])),
             inventory_items=_parse_inventory_items(body.get("inventory_item", [])),
             disks=_parse_disks(body.get("disk", [])),
+            modules=_parse_modules(body.get("module", [])),
         ))
     return objects
 
