@@ -310,7 +310,7 @@ object "node" {
     }
 
     attribute "size" {
-      value = "int(source('capacity')) if source('capacity') != None else None"
+      value = "to_gb(int(source('capacity'))) if source('capacity') != None else None"
     }
 
     attribute "speed" {
