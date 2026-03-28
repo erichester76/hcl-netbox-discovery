@@ -149,6 +149,7 @@ class PrerequisiteConfig:
 class IpAddressConfig:
     source_items: str = ""
     primary_if: Optional[str] = None
+    oob_if: Optional[str] = None
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
 
@@ -315,6 +316,7 @@ def _parse_ip_addresses(raw: list) -> list[IpAddressConfig]:
         configs.append(IpAddressConfig(
             source_items=body.get("source_items", ""),
             primary_if=body.get("primary_if"),
+            oob_if=body.get("oob_if"),
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
         ))
