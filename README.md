@@ -237,16 +237,6 @@ All sensitive values are read from environment variables inside the HCL files us
 | `LDAP_SEARCH_BASE` | LDAP search base DN |
 | `LDAP_FILTER` | LDAP search filter (default: `"(objectClass=*)"`) |
 
-#### LDAP / JNSU schema (`mappings/jnsu.hcl.example`)
-
-Uses the same `LDAP_SERVER` / `LDAP_USER` / `LDAP_PASS` credentials as `ldap.hcl.example`.
-
-| Variable | Description |
-|---|---|
-| `LDAP_SEARCH_BASE` | Search base for DHCP lease records |
-| `LDAP_FILTER` | LDAP filter for DHCP entries (default: `"(DirXMLjnsuDHCPAddress=*)"`) |
-| `LDAP_PREFIX_LENGTH` | Default prefix length appended to bare IPs (e.g., `"24"`) |
-
 #### Cisco Nexus Dashboard Fabric Controller (`mappings/nexus.hcl.example`)
 
 | Variable | Description |
@@ -367,7 +357,6 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/juniper-snmp.hcl.example` | SNMP (Juniper routers) | Devices, interfaces, IP addresses |
 | `mappings/linux-snmp.hcl.example` | SNMP (Linux / net-snmp) | Devices, interfaces, IP addresses |
 | `mappings/ldap.hcl.example` | LDAP directory | Generic LDAP objects |
-| `mappings/jnsu.hcl.example` | LDAP / Novell eDirectory (jnsu schema) | DHCP lease IP addresses |
 | `mappings/active-directory-computers.hcl.example` | Active Directory (LDAP) | Computer accounts → NetBox devices |
 | `mappings/active-directory-users.hcl.example` | Active Directory (LDAP) | User accounts → NetBox contacts |
 | `mappings/tenable.hcl.example` | Tenable One / Nessus | Assets, vulnerabilities, findings → NetBox IP addresses / virtual machines |
