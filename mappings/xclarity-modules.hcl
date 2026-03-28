@@ -127,7 +127,7 @@ object "node" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -164,11 +164,6 @@ object "node" {
 
   field "status" {
     value = "when(source('powerStatus') == 'on', 'active', 'offline')"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['xclarity-sync']"
   }
 
   # Network interfaces — sourced from onboard controller ports reported by
@@ -452,10 +447,6 @@ object "chassis" {
     value = "'active'"
   }
 
-  field "tags" {
-    type  = "tags"
-    value = "['xclarity-sync']"
-  }
 }
 
 # ---------------------------------------------------------------------------
@@ -501,7 +492,7 @@ object "switch" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -607,7 +598,7 @@ object "storage" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -646,8 +637,4 @@ object "storage" {
     value = "'active'"
   }
 
-  field "tags" {
-    type  = "tags"
-    value = "['xclarity-sync']"
-  }
 }
