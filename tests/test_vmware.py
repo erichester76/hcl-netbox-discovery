@@ -32,7 +32,7 @@ sys.modules.setdefault("pyVim", _fake_pyvim)
 sys.modules.setdefault("pyVim.connect", _fake_pyvim_connect)
 sys.modules.setdefault("pyVmomi", _fake_pyvmomi)
 
-from collector.sources.vmware import VMwareSource, _NicProxy  # noqa: E402 (after sys.modules setup)
+from collector.sources.vmware import VMwareSource, _NicProxy, _ManagedObjectProxy  # noqa: E402 (after sys.modules setup)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +157,10 @@ class TestVMwareGetObjects:
 
         result = src._get_hosts()
 
-        assert result == fake_hosts
+        assert len(result) == 1
+        assert isinstance(result[0], _ManagedObjectProxy)
+        # Managed-object attributes must still be reachable through the proxy
+        assert result[0].name == "esxi-01"
 
     def test_get_vms(self):
         src = self._connected_source()
@@ -320,6 +323,90 @@ class TestNicProxy:
         proxy = _NicProxy(strict_obj, [{"id": 42, "name": "VLAN42"}])
         assert proxy._vlans == [{"id": 42, "name": "VLAN42"}]
         assert proxy.device == "vmk1"
+
+
+class TestManagedObjectProxy:
+    """Tests for _ManagedObjectProxy."""
+
+    def test_extra_attrs_accessible(self):
+        """Extra keyword args passed at construction are accessible on the proxy."""
+        wrapped = MagicMock()
+        proxy = _ManagedObjectProxy(wrapped, _enriched_vnics=["nic1"], _rest_tags={"t": True})
+        assert proxy._enriched_vnics == ["nic1"]
+        assert proxy._rest_tags == {"t": True}
+
+    def test_setattr_stores_in_extra(self):
+        """Setting an attribute on the proxy stores it in extras without touching the wrapped object."""
+        wrapped = MagicMock()
+        proxy = _ManagedObjectProxy(wrapped)
+        proxy.some_attr = "value"
+        assert proxy.some_attr == "value"
+
+    def test_wrapped_attrs_forwarded(self):
+        """Attributes not stored as extras are forwarded to the wrapped object."""
+        wrapped = MagicMock()
+        wrapped.name = "esxi-01"
+        proxy = _ManagedObjectProxy(wrapped)
+        assert proxy.name == "esxi-01"
+
+    def test_wraps_read_only_managed_objects(self):
+        """Proxy avoids AttributeError on objects with a strict __setattr__."""
+
+        class _StrictMO:
+            """Simulates a pyVmomi ManagedObject whose attributes are read-only."""
+
+            def __setattr__(self, name: str, value: object) -> None:  # type: ignore[override]
+                raise AttributeError("Managed object attributes are read-only")
+
+            @property
+            def name(self) -> str:
+                return "host-01"
+
+        strict_obj = _StrictMO()
+        with pytest.raises(AttributeError, match="read-only"):
+            strict_obj._enriched_vnics = []  # type: ignore[attr-defined]
+
+        proxy = _ManagedObjectProxy(strict_obj, _enriched_vnics=[])
+        assert proxy._enriched_vnics == []
+        assert proxy.name == "host-01"
+
+    def test_get_hosts_returns_proxies_with_enriched_vnics(self):
+        """_get_hosts() returns _ManagedObjectProxy instances with _enriched_vnics."""
+        src = VMwareSource()
+        src._api_client = MagicMock()
+        fake_host = _make_managed_obj("esxi-01")
+        view = _make_container_view([fake_host])
+        content = src._api_client.RetrieveContent.return_value
+        content.viewManager.CreateContainerView.return_value = view
+        fake_vnics = [MagicMock()]
+
+        with patch.object(src, "_enrich_host_vnics", return_value=fake_vnics):
+            result = src._get_hosts()
+
+        assert len(result) == 1
+        assert isinstance(result[0], _ManagedObjectProxy)
+        assert result[0]._enriched_vnics is fake_vnics
+
+    def test_get_vms_returns_proxies_with_enriched_net_and_rest_tags(self):
+        """_get_vms() returns _ManagedObjectProxy instances with _enriched_net and _rest_tags."""
+        src = VMwareSource()
+        src._api_client = MagicMock()
+        fake_vm = _make_managed_obj("vm-01", "vm-10")
+        view = _make_container_view([fake_vm])
+        content = src._api_client.RetrieveContent.return_value
+        content.viewManager.CreateContainerView.return_value = view
+        src._rest_session = MagicMock()
+        fake_net = [MagicMock()]
+
+        with patch.object(src, "_enrich_vm_interfaces", return_value=fake_net), \
+             patch.object(src, "_fetch_rest_tags", return_value={"vm-10": {"tag-X": True}}):
+            result = src._get_vms()
+
+        assert len(result) == 1
+        proxy = result[0]
+        assert isinstance(proxy, _ManagedObjectProxy)
+        assert proxy._enriched_net is fake_net
+        assert proxy._rest_tags == {"tag-X": True}
 
 
 # ---------------------------------------------------------------------------

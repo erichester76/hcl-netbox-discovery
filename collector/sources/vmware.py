@@ -49,6 +49,32 @@ class _NicProxy:
         return getattr(object.__getattribute__(self, "_wrapped"), name)
 
 
+class _ManagedObjectProxy:
+    """Thin proxy that attaches extra attributes to a pyVmomi managed object.
+
+    pyVmomi ManagedObjects (e.g. ``vim.HostSystem``, ``vim.VirtualMachine``)
+    use a custom ``__setattr__`` that raises
+    ``AttributeError: Managed object attributes are read-only`` for any
+    attribute not declared in the vSphere schema.  This proxy stores extra
+    attributes (such as ``_enriched_vnics``, ``_enriched_net``,
+    ``_rest_tags``) in its own instance ``__dict__`` while forwarding every
+    other attribute access to the wrapped managed object transparently.
+    """
+
+    def __init__(self, wrapped: Any, **extra: Any) -> None:
+        object.__setattr__(self, "_wrapped", wrapped)
+        object.__setattr__(self, "_extra", extra)
+
+    def __getattr__(self, name: str) -> Any:
+        extra = object.__getattribute__(self, "_extra")
+        if name in extra:
+            return extra[name]
+        return getattr(object.__getattribute__(self, "_wrapped"), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        object.__getattribute__(self, "_extra")[name] = value
+
+
 class VMwareSource(DataSource):
     """pyVmomi-backed source adapter for VMware vCenter."""
 
@@ -167,12 +193,12 @@ class VMwareSource(DataSource):
         view.Destroy()
         logger.debug("VMware: fetched %d hosts", len(hosts))
 
-        # Enrich each host's vNIC objects with VLAN info so that HCL
-        # expressions can reference source('_vlans') on a vnic item.
-        for host in hosts:
-            host._enriched_vnics = self._enrich_host_vnics(host)
-
-        return hosts
+        # Wrap each host in a proxy so we can attach enriched vNIC data without
+        # triggering pyVmomi's read-only managed-object attribute guard.
+        return [
+            _ManagedObjectProxy(host, _enriched_vnics=self._enrich_host_vnics(host))
+            for host in hosts
+        ]
 
     def _get_vms(self) -> list:
         from pyVmomi import vim  # type: ignore[import]
@@ -184,18 +210,20 @@ class VMwareSource(DataSource):
         view.Destroy()
         logger.debug("VMware: fetched %d VMs", len(vms))
 
-        # Optionally attach REST tags to each VM
+        # Optionally fetch REST tags
+        tags_by_moid: dict = {}
         if self._rest_session is not None:
             tags_by_moid = self._fetch_rest_tags()
-            for vm in vms:
-                vm._rest_tags = tags_by_moid.get(getattr(vm, "_moId", None), {})
 
-        # Enrich each VM's guest NIC objects with VLAN info so that HCL
-        # expressions can reference source('_vlans') on a guest.net item.
+        # Wrap each VM in a proxy so we can attach enriched data without
+        # triggering pyVmomi's read-only managed-object attribute guard.
+        result = []
         for vm in vms:
-            vm._enriched_net = self._enrich_vm_interfaces(vm)
-
-        return vms
+            extra: dict[str, Any] = {"_enriched_net": self._enrich_vm_interfaces(vm)}
+            if self._rest_session is not None:
+                extra["_rest_tags"] = tags_by_moid.get(getattr(vm, "_moId", None), {})
+            result.append(_ManagedObjectProxy(vm, **extra))
+        return result
 
     # ------------------------------------------------------------------
     # REST session helpers
