@@ -109,6 +109,18 @@ def rest_config():
     )
 
 
+@pytest.fixture()
+def prometheus_config():
+    return SourceConfig(
+        api_type="prometheus",
+        url="http://prometheus.example.com:9090",
+        username="",
+        password="",
+        verify_ssl=False,
+        extra={"fetch_interfaces": "true"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Resolver context fixture
 # ---------------------------------------------------------------------------
