@@ -188,6 +188,30 @@ class DiskConfig:
 
 
 @dataclass
+class PowerInputConfig:
+    """Describes a ``power_input {}`` sub-block inside a ``module {}`` block.
+
+    When present, the engine will create a ``dcim.power_ports`` record on the
+    installed module after each successful module upsert.
+
+    Both attributes are expression strings evaluated in the same resolver
+    scope as the parent module's field expressions (i.e. ``source()`` accesses
+    the current source item).
+
+    Attributes:
+      name — expression for the power port name
+              (e.g. ``"'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"``).
+      type — expression for the IEC 60320 connector type slug
+              (e.g. ``"when(int(source('outputWatts') or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"``).
+              Defaults to ``"iec-60320-c14"`` when not specified or when the
+              expression evaluates to a falsy value.
+    """
+
+    name: Optional[str] = None
+    type: Optional[str] = None
+
+
+@dataclass
 class ModuleConfig:
     """Describes one ``module {}`` block inside an ``object {}`` block.
 
@@ -204,6 +228,10 @@ class ModuleConfig:
       position     — numeric or string position passed to the bay
       serial       — module serial number
       manufacturer — manufacturer name (resolved to ID automatically)
+
+    Optional sub-blocks:
+      power_input  — if present, a ``dcim.power_ports`` record is created on
+                     the installed module after each upsert.
     """
 
     source_items: str = ""
@@ -211,6 +239,7 @@ class ModuleConfig:
     dedupe_by: Optional[str] = None
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
+    power_input: Optional[PowerInputConfig] = None
 
 
 @dataclass
@@ -339,6 +368,20 @@ def _parse_disks(raw: list) -> list[DiskConfig]:
     return configs
 
 
+def _parse_power_input(raw: list) -> Optional[PowerInputConfig]:
+    """Parse an optional ``power_input {}`` sub-block from a module block."""
+    if not raw:
+        return None
+    bodies = _unlabeled_list(raw)
+    if not bodies:
+        return None
+    pi_body = bodies[0]
+    return PowerInputConfig(
+        name=pi_body.get("name"),
+        type=pi_body.get("type"),
+    )
+
+
 def _parse_modules(raw: list) -> list[ModuleConfig]:
     configs = []
     for body in _unlabeled_list(raw):
@@ -348,6 +391,7 @@ def _parse_modules(raw: list) -> list[ModuleConfig]:
             dedupe_by=body.get("dedupe_by"),
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
+            power_input=_parse_power_input(body.get("power_input", [])),
         ))
     return configs
 

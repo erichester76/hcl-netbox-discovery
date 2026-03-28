@@ -724,3 +724,389 @@ class TestProcessModules:
         ]
         # Only one module should be installed (second is deduplicated)
         assert len(module_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# PowerInputConfig / config parser
+# ---------------------------------------------------------------------------
+
+
+class TestPowerInputConfigParsing:
+    """Verify that power_input {} sub-blocks inside module {} are parsed."""
+
+    def test_power_input_parsed(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "xclarity" {
+              api_type = "rest"
+              url      = "https://xclarity.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            object "node" {
+              source_collection = "nodes"
+              netbox_resource   = "dcim.devices"
+
+              module {
+                source_items = "powerSupplies"
+                profile      = "Power supply"
+
+                field "bay_name" { value = "source('name')" }
+                field "model"    { value = "source('partNumber')" }
+
+                power_input {
+                  name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+                  type = "when(int(source('outputWatts') or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"
+                }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        mod = cfg.objects[0].modules[0]
+        from collector.config import PowerInputConfig
+        assert mod.power_input is not None
+        assert isinstance(mod.power_input, PowerInputConfig)
+        assert "Power Input" in mod.power_input.name
+        assert "iec-60320-c14" in mod.power_input.type
+
+    def test_module_without_power_input_has_none(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "xclarity" {
+              api_type = "rest"
+              url      = "https://xclarity.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            object "node" {
+              source_collection = "nodes"
+              netbox_resource   = "dcim.devices"
+
+              module {
+                source_items = "processors"
+                field "bay_name" { value = "source('socket')" }
+                field "model"    { value = "source('displayName')" }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.objects[0].modules[0].power_input is None
+
+    def test_xclarity_power_supply_module_has_power_input(self):
+        cfg = load_config("mappings/xclarity-modules.hcl")
+        node = next(o for o in cfg.objects if o.name == "node")
+        psu_mod = next(m for m in node.modules if m.profile == "Power supply")
+        assert psu_mod.power_input is not None
+        assert psu_mod.power_input.name is not None
+        assert psu_mod.power_input.type is not None
+
+    def test_xclarity_non_psu_modules_have_no_power_input(self):
+        cfg = load_config("mappings/xclarity-modules.hcl")
+        node = next(o for o in cfg.objects if o.name == "node")
+        non_psu = [m for m in node.modules if m.profile != "Power supply"]
+        assert len(non_psu) > 0
+        for mod in non_psu:
+            assert mod.power_input is None, f"Module {mod.profile!r} should not have power_input"
+
+
+# ---------------------------------------------------------------------------
+# Engine._process_modules — power input port creation
+# ---------------------------------------------------------------------------
+
+
+class TestProcessModulesPowerInput:
+    """Tests for power port creation via the power_input {} sub-block."""
+
+    _DEFAULT_PI_NAME = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+    _DEFAULT_PI_TYPE = (
+        "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0)"
+        " > 1800, 'iec-60320-c20', 'iec-60320-c14')"
+    )
+
+    def _make_engine(self):
+        from collector.engine import Engine
+        return Engine()
+
+    def _make_ctx(self, source_obj, dry_run=False):
+        from collector.config import CollectorOptions
+        from collector.context import RunContext
+
+        opts = CollectorOptions(
+            max_workers=1,
+            dry_run=dry_run,
+            sync_tag="test-sync",
+            regex_dir="/tmp/regex",
+            extra_flags={"sync_modules": True},
+        )
+        nb = MagicMock()
+        return RunContext(
+            nb=nb,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp/regex",
+            prereqs={},
+            source_obj=source_obj,
+            parent_nb_obj=None,
+            dry_run=dry_run,
+        )
+
+    def _make_psu_obj_cfg(self, pi_name=None, pi_type=None):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig, PowerInputConfig
+        mod_cfg = ModuleConfig(
+            source_items="powerSupplies",
+            profile="Power supply",
+            enabled_if="collector.sync_modules",
+            fields=[
+                FieldConfig(name="bay_name", value="source('name')"),
+                FieldConfig(name="model", value="source('partNumber')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+                FieldConfig(name="manufacturer", value="source('manufacturer')"),
+                FieldConfig(name="position", value="str(source('slot'))"),
+            ],
+            power_input=PowerInputConfig(
+                name=pi_name or self._DEFAULT_PI_NAME,
+                type=pi_type or self._DEFAULT_PI_TYPE,
+            ),
+        )
+        return ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+
+    def test_power_port_created_after_module_install(self):
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "Power Supply 1",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU001",
+                    "manufacturer": "Lenovo",
+                    "slot": "1",
+                    "outputWatts": 900,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type_profile ("Power supply")
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        pp_payload = power_port_calls[0][0][1]
+        assert pp_payload["device"] == 99
+        assert pp_payload["module"] == 50
+        assert pp_payload["name"] == "Power Input 1"
+        assert pp_payload["type"] == "iec-60320-c14"
+
+    def test_high_wattage_psu_gets_c20_port(self):
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "Power Supply 2",
+                    "partNumber": "SP57A02000",
+                    "serialNumber": "PSU002",
+                    "manufacturer": "Lenovo",
+                    "slot": "2",
+                    "outputWatts": 2000,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),  # ensure_module_type_profile
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        assert power_port_calls[0][0][1]["type"] == "iec-60320-c20"
+
+    def test_power_port_name_without_slot(self):
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "PSU",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU003",
+                    "manufacturer": "Lenovo",
+                    "slot": None,
+                    "outputWatts": 900,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),  # ensure_module_type_profile
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        # With no slot, name should be just "Power Input"
+        assert power_port_calls[0][0][1]["name"] == "Power Input"
+
+    def test_no_power_port_when_module_upsert_returns_none(self):
+        """If module install fails (returns None), no power port is created."""
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "PSU",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU001",
+                    "slot": "1",
+                    "outputWatts": 900,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=10),  # ensure_module_bay_template (no manufacturer, skip)
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type_profile
+            MagicMock(id=40),  # ensure_module_type
+            None,              # upsert module fails
+        ]
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 0
+
+    def test_no_power_input_config_means_no_power_port(self):
+        """Modules without power_input config do not create power ports."""
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "CPU001",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),
+            MagicMock(id=40),
+        ]
+        mod_cfg = ModuleConfig(
+            source_items="processors",
+            profile="CPU",
+            fields=[
+                FieldConfig(name="bay_name", value="source('socket')"),
+                FieldConfig(name="model", value="source('displayName')"),
+            ],
+            power_input=None,
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 0
+
+    def test_wattage_from_power_allocation_nested_path(self):
+        """outputWatts from nested powerAllocation.totalOutputPower triggers c20."""
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "PSU",
+                    "partNumber": "SP57A02000",
+                    "serialNumber": "PSU004",
+                    "manufacturer": "Lenovo",
+                    "slot": "1",
+                    "powerAllocation": {"totalOutputPower": 2400},
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),  # ensure_module_type_profile
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        assert power_port_calls[0][0][1]["type"] == "iec-60320-c20"

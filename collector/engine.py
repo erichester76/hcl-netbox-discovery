@@ -26,6 +26,7 @@ from .config import (
     InventoryItemConfig,
     ModuleConfig,
     ObjectConfig,
+    PowerInputConfig,
     TaggedVlanConfig,
     load_config,
 )
@@ -34,6 +35,11 @@ from .field_resolvers import Resolver, walk_path
 from .prerequisites import PrerequisiteRunner, extract_id, slugify
 
 logger = logging.getLogger(__name__)
+
+# Default IEC 60320 power-port connector type used when a power_input block
+# does not specify a type expression or when the expression evaluates to a
+# falsy value.
+_DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 
 
 # ---------------------------------------------------------------------------
@@ -1081,9 +1087,37 @@ class Engine:
                 if serial:
                     module_payload["serial"] = str(serial)
 
-                self._upsert(
+                module_record = self._upsert(
                     nested_ctx,
                     "dcim.modules",
                     module_payload,
                     ["device", "module_bay"],
                 )
+
+                # 6. Create power input port if configured
+                if mod_cfg.power_input is not None and module_record is not None:
+                    module_id = extract_id(module_record)
+                    if module_id is not None and parent_id is not None:
+                        pi_cfg = mod_cfg.power_input
+                        pi_name = (
+                            mod_resolver.evaluate(pi_cfg.name)
+                            if pi_cfg.name
+                            else None
+                        )
+                        pi_type = (
+                                mod_resolver.evaluate(pi_cfg.type)
+                                if pi_cfg.type
+                                else _DEFAULT_POWER_PORT_TYPE
+                            ) or _DEFAULT_POWER_PORT_TYPE
+                        if pi_name:
+                            self._upsert(
+                                nested_ctx,
+                                "dcim.power_ports",
+                                {
+                                    "device": parent_id,
+                                    "module": module_id,
+                                    "name": str(pi_name),
+                                    "type": str(pi_type),
+                                },
+                                ["device", "module", "name"],
+                            )
