@@ -384,7 +384,7 @@ class PrerequisiteRunner:
             payload["manufacturer"] = manufacturer_id
         if profile is not None:
             payload["profile"] = profile
-        lookup = ["manufacturer", "slug"] if manufacturer_id is not None else ["slug"]
+        lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
                 "[DRY-RUN] ensure_module_type model=%s manufacturer=%s profile=%s",
