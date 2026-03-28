@@ -154,11 +154,21 @@ class IpAddressConfig:
 
 
 @dataclass
+class TaggedVlanConfig:
+    source_items: str = ""
+    netbox_resource: str = "ipam.vlans"
+    lookup_by: list[str] = field(default_factory=lambda: ["vid"])
+    enabled_if: Optional[str] = None
+    fields: list[FieldConfig] = field(default_factory=list)
+
+
+@dataclass
 class InterfaceConfig:
     source_items: str = ""
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
     ip_addresses: list[IpAddressConfig] = field(default_factory=list)
+    tagged_vlans: list[TaggedVlanConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -249,6 +259,22 @@ def _parse_ip_addresses(raw: list) -> list[IpAddressConfig]:
     return configs
 
 
+def _parse_tagged_vlans(raw: list) -> list[TaggedVlanConfig]:
+    configs = []
+    for body in _unlabeled_list(raw):
+        lookup_by = body.get("lookup_by", ["vid"])
+        if isinstance(lookup_by, str):
+            lookup_by = [lookup_by]
+        configs.append(TaggedVlanConfig(
+            source_items=body.get("source_items", ""),
+            netbox_resource=body.get("netbox_resource", "ipam.vlans"),
+            lookup_by=list(lookup_by),
+            enabled_if=body.get("enabled_if"),
+            fields=_parse_fields(body.get("field", [])),
+        ))
+    return configs
+
+
 def _parse_interfaces(raw: list) -> list[InterfaceConfig]:
     configs = []
     for body in _unlabeled_list(raw):
@@ -257,6 +283,7 @@ def _parse_interfaces(raw: list) -> list[InterfaceConfig]:
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
             ip_addresses=_parse_ip_addresses(body.get("ip_address", [])),
+            tagged_vlans=_parse_tagged_vlans(body.get("tagged_vlan", [])),
         ))
     return configs
 

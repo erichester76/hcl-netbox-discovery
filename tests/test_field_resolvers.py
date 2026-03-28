@@ -484,3 +484,45 @@ class TestVMwareDiskDescription:
         r = _make_resolver(disk)
         result = r.evaluate(_DISK_DESC_EXPR)
         assert len(result) == 200
+# Resolver – mask_to_prefix()
+# ---------------------------------------------------------------------------
+
+
+class TestResolverMaskToPrefix:
+    def test_class_c_mask(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('255.255.255.0')") == 24
+
+    def test_class_b_mask(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('255.255.0.0')") == 16
+
+    def test_class_a_mask(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('255.0.0.0')") == 8
+
+    def test_slash_30_mask(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('255.255.255.252')") == 30
+
+    def test_host_mask_slash_32(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('255.255.255.255')") == 32
+
+    def test_none_returns_none(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix(None)") is None
+
+    def test_invalid_mask_returns_none(self):
+        r = _make_resolver({})
+        assert r.evaluate("mask_to_prefix('not-a-mask')") is None
+
+    def test_used_with_source_in_expression(self):
+        """Simulates the vmware.hcl vNIC ip_address field expression."""
+        from types import SimpleNamespace
+        ip_obj = SimpleNamespace(ipAddress="10.1.2.3", subnetMask="255.255.255.0")
+        r = _make_resolver(ip_obj)
+        result = r.evaluate(
+            "join('/', [source('ipAddress'), str(mask_to_prefix(source('subnetMask')))])"
+        )
+        assert result == "10.1.2.3/24"

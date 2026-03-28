@@ -267,3 +267,176 @@ class TestVMwareRestHelpers:
 
         result = src._fetch_rest_tags()
         assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# VMware VLAN enrichment helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_dvs_portgroup(key: str, name: str, vlan_id: int) -> MagicMock:
+    """Return a mock DVS DistributedVirtualPortgroup and register its type."""
+    pg = MagicMock()
+    pg.key = key
+    pg.name = name
+    pg.config.defaultPortConfig.vlan.vlanId = vlan_id
+    # Make isinstance(pg, vim.dvs.DistributedVirtualPortgroup) return True
+    _fake_vim.dvs.DistributedVirtualPortgroup = type(pg)
+    return pg
+
+
+class TestBuildPortgroupVlanMap:
+    """Tests for VMwareSource._build_portgroup_vlan_map."""
+
+    def test_returns_empty_when_no_networks(self):
+        host = MagicMock()
+        host.network = []
+        host.config.network.portgroup = []
+        src = VMwareSource()
+        result = src._build_portgroup_vlan_map(host)
+        assert result == {}
+
+    def test_dvs_portgroup_indexed_by_key_and_name(self):
+        pg = _make_dvs_portgroup("dvpg-10", "VLAN10-PG", 10)
+
+        host = MagicMock()
+        host.network = [pg]
+        host.config.network.portgroup = []
+
+        src = VMwareSource()
+        result = src._build_portgroup_vlan_map(host)
+
+        assert result.get("dvpg-10") == {"id": 10, "name": "VLAN10-PG"}
+        assert result.get("VLAN10-PG") == {"id": 10, "name": "VLAN10-PG"}
+
+    def test_vlan_id_zero_excluded(self):
+        """VLAN ID 0 means 'no VLAN tag'; should not be included."""
+        pg = _make_dvs_portgroup("dvpg-0", "NoVlan-PG", 0)
+
+        host = MagicMock()
+        host.network = [pg]
+        host.config.network.portgroup = []
+
+        src = VMwareSource()
+        result = src._build_portgroup_vlan_map(host)
+        assert result == {}
+
+    def test_standard_portgroup_included(self):
+        std_pg = MagicMock()
+        std_pg.spec.name = "Management Network"
+        std_pg.spec.vlanId = 100
+
+        host = MagicMock()
+        host.network = []
+        host.config.network.portgroup = [std_pg]
+
+        src = VMwareSource()
+        result = src._build_portgroup_vlan_map(host)
+        assert result.get("Management Network") == {"id": 100, "name": "Management Network"}
+
+
+class TestEnrichHostVnics:
+    """Tests for VMwareSource._enrich_host_vnics."""
+
+    def test_vnic_gets_vlans_from_dvs_portgroup_key(self):
+        vnic = MagicMock()
+        vnic.spec.distributedVirtualPort.portgroupKey = "dvpg-20"
+        vnic.spec.portgroup = None
+
+        host = MagicMock()
+        host.config.network.vnic = [vnic]
+
+        src = VMwareSource()
+        pg_to_vlan = {"dvpg-20": {"id": 20, "name": "VLAN20"}}
+
+        with patch.object(src, "_build_portgroup_vlan_map", return_value=pg_to_vlan):
+            src._enrich_host_vnics(host)
+
+        assert vnic._vlans == [{"id": 20, "name": "VLAN20"}]
+
+    def test_vnic_falls_back_to_portgroup_name(self):
+        vnic = MagicMock()
+        # No DVS port
+        del vnic.spec.distributedVirtualPort
+        vnic.spec.portgroup = "Management Network"
+
+        host = MagicMock()
+        host.config.network.vnic = [vnic]
+
+        src = VMwareSource()
+        pg_to_vlan = {"Management Network": {"id": 100, "name": "Management Network"}}
+
+        with patch.object(src, "_build_portgroup_vlan_map", return_value=pg_to_vlan):
+            src._enrich_host_vnics(host)
+
+        assert vnic._vlans == [{"id": 100, "name": "Management Network"}]
+
+    def test_vnic_with_no_vlan_gets_empty_list(self):
+        vnic = MagicMock()
+        vnic.spec.distributedVirtualPort.portgroupKey = "dvpg-unknown"
+        vnic.spec.portgroup = "UnknownPG"
+
+        host = MagicMock()
+        host.config.network.vnic = [vnic]
+
+        src = VMwareSource()
+        with patch.object(src, "_build_portgroup_vlan_map", return_value={}):
+            src._enrich_host_vnics(host)
+
+        assert vnic._vlans == []
+
+    def test_get_hosts_calls_enrich(self):
+        src = VMwareSource()
+        src._api_client = MagicMock()
+        fake_host = _make_managed_obj("esxi-01")
+        view = _make_container_view([fake_host])
+        content = src._api_client.RetrieveContent.return_value
+        content.viewManager.CreateContainerView.return_value = view
+
+        with patch.object(src, "_enrich_host_vnics") as mock_enrich:
+            src._get_hosts()
+            mock_enrich.assert_called_once_with(fake_host)
+
+
+class TestEnrichVmInterfaces:
+    """Tests for VMwareSource._enrich_vm_interfaces."""
+
+    def test_vm_net_gets_vlans_from_dvs_portgroup(self):
+        net = MagicMock()
+        net.network = "VLAN30-PG"
+
+        pg = _make_dvs_portgroup("dvpg-30", "VLAN30-PG", 30)
+
+        vm = MagicMock()
+        vm.network = [pg]
+        vm.guest.net = [net]
+
+        src = VMwareSource()
+        src._enrich_vm_interfaces(vm)
+
+        assert net._vlans == [{"id": 30, "name": "VLAN30-PG"}]
+
+    def test_vm_net_with_no_matching_portgroup_gets_empty_list(self):
+        net = MagicMock()
+        net.network = "SomeOtherNetwork"
+
+        vm = MagicMock()
+        vm.network = []
+        vm.guest.net = [net]
+
+        src = VMwareSource()
+        src._enrich_vm_interfaces(vm)
+
+        assert net._vlans == []
+
+    def test_get_vms_calls_enrich(self):
+        src = VMwareSource()
+        src._api_client = MagicMock()
+        fake_vm = _make_managed_obj("vm-01", "vm-10")
+        view = _make_container_view([fake_vm])
+        content = src._api_client.RetrieveContent.return_value
+        content.viewManager.CreateContainerView.return_value = view
+
+        with patch.object(src, "_enrich_vm_interfaces") as mock_enrich:
+            src._get_vms()
+            mock_enrich.assert_called_once_with(fake_vm)
