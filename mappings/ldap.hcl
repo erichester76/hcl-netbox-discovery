@@ -4,8 +4,16 @@
 # into NetBox objects.  Customise the search_filter, attributes, and field
 # expressions to match your specific LDAP schema.
 #
-# For the Novell eDirectory / Micro Focus IDM DHCP-lease schema (DirXML
-# "jnsu" attributes), see mappings/jnsu.hcl instead.
+# Schema-specific examples included in this repository:
+#   mappings/active-directory-users.hcl
+#       Query Active Directory for user accounts and sync them as
+#       NetBox contacts (tenancy.contacts).
+#   mappings/active-directory-computers.hcl
+#       Query Active Directory for computer accounts and sync them as
+#       NetBox devices (dcim.devices).
+#   mappings/jnsu.hcl
+#       Novell eDirectory / Micro Focus IDM DHCP-lease schema (DirXML
+#       "jnsu" attributes) → NetBox IP addresses.
 #
 # Required environment variables:
 #   LDAP_SERVER           LDAP server URI (e.g. ldaps://ldap.example.com)
