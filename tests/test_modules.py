@@ -393,7 +393,7 @@ class TestEnsureModuleType:
         payload = nb.upsert.call_args[0][1]
         assert "manufacturer" not in payload
 
-    def test_lookup_fields_include_manufacturer_when_given(self):
+    def test_lookup_uses_manufacturer_and_model(self):
         nb = MagicMock()
         nb.upsert.return_value = MagicMock(id=33)
         runner = self._make_runner(nb)
@@ -402,7 +402,23 @@ class TestEnsureModuleType:
             dry_run=False,
         )
         kwargs = nb.upsert.call_args[1]
-        assert "manufacturer" in kwargs.get("lookup_fields", [])
+        lf = kwargs.get("lookup_fields", [])
+        assert "manufacturer" in lf
+        assert "model" in lf
+        assert "slug" not in lf
+
+    def test_lookup_fields_use_model_without_manufacturer(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=34)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {"model": "Samsung 32GB DDR4"},
+            dry_run=False,
+        )
+        kwargs = nb.upsert.call_args[1]
+        lf = kwargs.get("lookup_fields", [])
+        assert "model" in lf
+        assert "slug" not in lf
 
     def test_dry_run_skips_upsert(self):
         nb = MagicMock()

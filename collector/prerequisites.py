@@ -381,7 +381,7 @@ class PrerequisiteRunner:
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
-        lookup = ["manufacturer", "slug"] if manufacturer_id is not None else ["slug"]
+        lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
                 "[DRY-RUN] ensure_module_type model=%s manufacturer=%s",
