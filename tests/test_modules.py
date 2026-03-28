@@ -413,6 +413,28 @@ class TestEnsureModuleType:
         assert result is None
         nb.upsert.assert_not_called()
 
+    def test_profile_included_in_payload_when_given(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=34)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {"model": "Intel Xeon Gold 6240", "profile": "CPU"},
+            dry_run=False,
+        )
+        payload = nb.upsert.call_args[0][1]
+        assert payload["profile"] == "CPU"
+
+    def test_profile_omitted_when_not_given(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=35)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type(
+            {"model": "Samsung 32GB DDR4"},
+            dry_run=False,
+        )
+        payload = nb.upsert.call_args[0][1]
+        assert "profile" not in payload
+
 
 # ---------------------------------------------------------------------------
 # Engine._process_modules
