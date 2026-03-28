@@ -360,7 +360,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer')"
+      value = "source('manufacturer') or 'Lenovo'"
     }
   }
 }
