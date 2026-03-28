@@ -318,7 +318,7 @@ object "node" {
     }
 
     attribute "type" {
-      value = "coalesce('mediaType', 'type', 'interfaceType')"
+      value = "map_value(upper(coalesce('mediaType', 'type', 'interfaceType')), {'ROTATIONAL': 'HDD', 'FLASH': 'SSD'}, upper(coalesce('mediaType', 'type', 'interfaceType')))"
     }
   }
 
