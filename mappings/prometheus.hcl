@@ -1,0 +1,168 @@
+# Prometheus node-exporter → NetBox collector mapping
+#
+# Discovers Linux hosts being scraped by Prometheus node_exporter and syncs
+# device records, platform information, and optionally network interfaces
+# into NetBox.
+#
+# Required environment variables:
+#   PROMETHEUS_URL        Prometheus server base URL (e.g. http://prometheus:9090)
+#   NETBOX_URL            NetBox base URL
+#   NETBOX_TOKEN          NetBox API token
+#
+# Optional:
+#   PROMETHEUS_USER               HTTP basic auth username (if required)
+#   PROMETHEUS_PASS               HTTP basic auth password (if required)
+#   PROMETHEUS_VERIFY_SSL         true | false  (default: true)
+#   PROMETHEUS_FETCH_INTERFACES   true | false  (default: true)
+#                                 When true the adapter fetches node_network_info
+#                                 and embeds the interface list in each node record
+#                                 so that the interface {} block can sync them to
+#                                 NetBox.
+#   NETBOX_CACHE_BACKEND          Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL              Redis URL or SQLite path
+#   DRY_RUN                       Set to "true" to log payloads without writing
+#   COLLECTOR_SYNC_INTERFACES     true | false  (default: true)
+
+source "prometheus" {
+  api_type         = "prometheus"
+  url              = "env('PROMETHEUS_URL')"
+  username         = "env('PROMETHEUS_USER', '')"
+  password         = "env('PROMETHEUS_PASS', '')"
+  verify_ssl       = "env('PROMETHEUS_VERIFY_SSL', 'true')"
+  fetch_interfaces = "env('PROMETHEUS_FETCH_INTERFACES', 'true')"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers     = 4
+  dry_run         = "env('DRY_RUN', 'false')"
+  sync_tag        = "prometheus-sync"
+  regex_dir       = "./regex"
+  sync_interfaces = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# Linux Nodes (discovered via Prometheus node_exporter)
+#
+# The adapter queries node_uname_info to enumerate hosts, then enriches each
+# node with hardware data from node_dmi_info, node_memory_MemTotal_bytes, and
+# node_cpu_seconds_total.  Nodes are looked up in NetBox by name.
+#
+# Hardware manufacturer and model come from DMI data exposed by node_exporter.
+# If a node has no DMI information the manufacturer defaults to "Generic" and
+# the device type to "Unknown".
+# ---------------------------------------------------------------------------
+
+object "device" {
+  source_collection = "nodes"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["name"]
+  max_workers       = 4
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "coalesce(source('manufacturer'), 'Generic')" }
+    optional = true
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('model'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "'Server'" }
+    optional = false
+  }
+
+  # Nodes are grouped under a shared site; override with a real site lookup
+  # in a customised copy of this file if needed.
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "'prometheus-discovered'" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name         = "coalesce(source('platform'), 'Linux')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce(source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "serial" {
+    value = "source('serial')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "comments" {
+    value = "source('hostname')"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Network Interfaces
+  #
+  # Interface sync requires PROMETHEUS_FETCH_INTERFACES=true (default) so the
+  # adapter fetches node_network_info and embeds interface data in each node
+  # record.  Set COLLECTOR_SYNC_INTERFACES=false to skip this step entirely.
+  # ---------------------------------------------------------------------------
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+  }
+}
