@@ -184,7 +184,7 @@ object "host" {
 
   # Management / VMkernel vNICs
   interface {
-    source_items = "config.network.vnic"
+    source_items = "_enriched_vnics"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
@@ -278,7 +278,7 @@ object "vm" {
 
   # VM Network Interfaces
   interface {
-    source_items = "guest.net"
+    source_items = "_enriched_net"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
