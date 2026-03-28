@@ -16,7 +16,7 @@ RUN export http_proxy=http://proxy.app.clemson.edu:8080 && apt-get update && apt
 
 COPY requirements.txt .
 
-RUN export http_proxy=http://proxy.app.clemson.edu:8080 && python -m venv /opt/venv \
+RUN export https_proxy=http://proxy.app.clemson.edu:8080 && python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
@@ -27,7 +27,7 @@ FROM python:${PYTHON_VER}-slim
 
 # Runtime LDAP libraries required by ldap3
 RUN export http_proxy=http://proxy.app.clemson.edu:8080 && apt-get update && apt-get install -y --no-install-recommends \
-        libldap-2.5-0 \
+        libldap2 \
         libsasl2-2 \
     && rm -rf /var/lib/apt/lists/*
 
