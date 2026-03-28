@@ -1160,6 +1160,54 @@ class TestProcessModulesPowerInput:
         assert pp_payload["name"] == "Power Input 1"
         assert pp_payload["type"] == "iec-60320-c14"
 
+    def test_power_port_lookup_uses_device_and_name_only(self):
+        """Power port upsert must use lookup_fields=['device', 'name'] so that
+        existing ports are found even when the module ID changes (e.g. after a
+        module reinstall).  Using 'module' in the lookup would fail to match the
+        old record and then hit NetBox's (device, name) unique constraint."""
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "Power Supply 1",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU001",
+                    "manufacturer": "Lenovo",
+                    "slot": "1",
+                    "outputWatts": 900,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type_profile ("Power supply")
+            MagicMock(id=40),  # ensure_module_type
+            MagicMock(id=50),  # upsert module
+            MagicMock(id=60),  # upsert power_port
+        ]
+        nb.update.return_value = MagicMock(id=40)
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 1
+        # lookup_fields must NOT include 'module' — NetBox's unique constraint
+        # is (device, name); including module causes misses when the module
+        # record is re-created with a new ID.
+        lookup_fields = power_port_calls[0][1].get("lookup_fields") or power_port_calls[0][0][2]
+        assert "module" not in lookup_fields
+        assert "device" in lookup_fields
+        assert "name" in lookup_fields
+
     def test_attribute_fields_evaluated_and_passed_to_ensure_module_type(self):
         """Attribute sub-blocks are evaluated per source item and forwarded to
         _ensure_module_type as the ``attributes`` dict, which then applies them
