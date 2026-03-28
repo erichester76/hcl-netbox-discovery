@@ -160,6 +160,22 @@ class TestResolverStringHelpers:
         r = _make_resolver({"name": "averylongname"})
         assert r.evaluate("truncate(source('name'), 5)") == "avery"
 
+    def test_split_returns_list(self):
+        r = _make_resolver({"fullName": "VMware ESXi 7.0"})
+        assert r.evaluate("split(source('fullName'))") == ["VMware", "ESXi", "7.0"]
+
+    def test_split_first_word(self):
+        r = _make_resolver({"fullName": "VMware ESXi 7.0"})
+        assert r.evaluate("split(source('fullName'))[0]") == "VMware"
+
+    def test_split_with_sep(self):
+        r = _make_resolver({"version": "7.0.1"})
+        assert r.evaluate("split(source('version'), '.')[1]") == "0"
+
+    def test_split_none_returns_empty_list(self):
+        r = _make_resolver({})
+        assert r.evaluate("split(None)") == []
+
     def test_join(self):
         r = _make_resolver({"tags": ["web", "prod", "linux"]})
         assert r.evaluate("join(',', source('tags'))") == "web,prod,linux"

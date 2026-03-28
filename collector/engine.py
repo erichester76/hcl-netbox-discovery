@@ -383,7 +383,8 @@ class Engine:
             raw = resolver.evaluate(field_cfg.value)
             if not isinstance(raw, list):
                 raw = [raw] if raw else []
-            return [t for t in raw if t]
+            # Normalize plain strings to the dict form NetBox expects.
+            return [{"name": t} if isinstance(t, str) else t for t in raw if t]
 
         # --- FK field ---
         if field_cfg.type == "fk":
@@ -428,8 +429,12 @@ class Engine:
         tags = payload.get("tags", [])
         if not isinstance(tags, list):
             tags = []
-        if sync_tag not in tags:
-            tags.append(sync_tag)
+        tag_dict = {"name": sync_tag}
+        existing_names = {
+            t.get("name") if isinstance(t, dict) else t for t in tags
+        }
+        if sync_tag not in existing_names:
+            tags.append(tag_dict)
         payload["tags"] = tags
 
     # ------------------------------------------------------------------

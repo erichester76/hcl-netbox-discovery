@@ -46,6 +46,10 @@ upper(value) / lower(value)
 truncate(value, n)
     value[:n] as a string.
 
+split(value, sep=None)
+    value.split(sep) — returns a list of parts.  Use indexing to get a
+    specific element, e.g. ``split(source('name'))[0]``.
+
 join(sep, items)
     sep.join(str(i) for i in items if i) — skips falsy items.
 
@@ -284,6 +288,11 @@ class Resolver:
         def truncate(value: Any, n: int) -> Optional[str]:
             return str(value)[:n] if value is not None else None
 
+        def split(value: Any, sep: Optional[str] = None) -> list:
+            if value is None:
+                return []
+            return str(value).split(sep)
+
         def join(sep: str, items: Any) -> str:
             if not hasattr(items, "__iter__") or isinstance(items, str):
                 return str(items) if items else ""
@@ -361,6 +370,7 @@ class Resolver:
             "upper": upper,
             "lower": lower,
             "truncate": truncate,
+            "split": split,
             "join": join,
             "to_gb": to_gb,
             "to_mb": to_mb,
