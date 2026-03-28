@@ -685,11 +685,22 @@ class Engine:
                 try:
                     lookup_fields = [k for k in vlan_cfg.lookup_by if k in vlan_payload]
                     self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag)
-                    nb_vlan = ctx.nb.upsert(
-                        vlan_cfg.netbox_resource,
-                        vlan_payload,
-                        lookup_fields=lookup_fields,
-                    )
+                    # For ipam.vlans with vid lookup, use multi-site aware resolution
+                    # to handle the case where the same vid exists across multiple sites.
+                    if (
+                        vlan_cfg.netbox_resource == "ipam.vlans"
+                        and "vid" in lookup_fields
+                        and vlan_payload.get("vid") is not None
+                    ):
+                        nb_vlan = self._find_or_create_vlan_multisite(
+                            vlan_payload, ctx
+                        )
+                    else:
+                        nb_vlan = ctx.nb.upsert(
+                            vlan_cfg.netbox_resource,
+                            vlan_payload,
+                            lookup_fields=lookup_fields,
+                        )
                     vlan_id = extract_id(nb_vlan)
                     if vlan_id is not None:
                         all_vlan_ids.append(vlan_id)
@@ -713,6 +724,93 @@ class Engine:
                     logger.debug(
                         "Failed to set tagged_vlans on interface %s: %s", iface_id, exc
                     )
+
+    def _find_or_create_vlan_multisite(
+        self,
+        vlan_payload: dict,
+        ctx: RunContext,
+    ) -> Any:
+        """Resolve an ``ipam.vlans`` record when multiple VLANs may share the same vid.
+
+        NetBox allows the same ``vid`` to exist at multiple sites, which causes
+        ``get(vid=…)`` to raise "get() returned more than one result."  This method
+        uses ``list(vid=…)`` instead and applies the same priority logic as the
+        legacy vmware-collector:
+
+        1. A **siteless** VLAN (site=None) is treated as spanning all sites and is
+           preferred – the existing record is updated in-place.
+        2. A **site-matched** VLAN (site == payload's site) is updated in-place.
+           When other-site VLANs also exist the record is kept site-scoped rather
+           than promoted to siteless.
+        3. When the caller provides **no site** but only site-scoped VLANs exist,
+           we refuse to auto-promote to siteless and return ``None``.
+        4. When VLANs exist only at **other sites**, a new site-scoped record is
+           created for the requested site.
+        5. When **no VLANs** exist at all, a new record is created (with or without
+           a site, depending on the payload).
+        """
+        vid = vlan_payload.get("vid")
+        site_id = vlan_payload.get("site")
+
+        existing_vlans = ctx.nb.list("ipam.vlans", vid=vid)
+
+        siteless_vlan = None
+        site_vlan = None
+        other_site_vlans: list[Any] = []
+
+        for existing_vlan in existing_vlans:
+            existing_site = getattr(existing_vlan, "site", None)
+            existing_site_id: Optional[int] = None
+            if existing_site is not None:
+                if isinstance(existing_site, dict):
+                    existing_site_id = existing_site.get("id")
+                elif hasattr(existing_site, "id"):
+                    existing_site_id = existing_site.id
+                elif isinstance(existing_site, int):
+                    existing_site_id = existing_site
+
+            if existing_site_id is None and siteless_vlan is None:
+                siteless_vlan = existing_vlan
+            elif site_id is not None and existing_site_id == site_id and site_vlan is None:
+                site_vlan = existing_vlan
+            else:
+                other_site_vlans.append(existing_vlan)
+
+        if siteless_vlan is not None:
+            # Update the siteless VLAN in-place; remove site so it stays siteless.
+            update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
+            update_payload.pop("site", None)
+            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+        if site_vlan is not None:
+            if other_site_vlans:
+                logger.debug(
+                    "VLAN vid=%s exists in multiple site-scoped records; "
+                    "preserving requested site %s without promoting to siteless",
+                    vid, site_id,
+                )
+            update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
+            if site_id is not None:
+                update_payload["site"] = site_id
+            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+        if site_id is None and existing_vlans:
+            logger.debug(
+                "VLAN vid=%s requested without a site but only site-scoped VLANs "
+                "exist; refusing to auto-promote to siteless",
+                vid,
+            )
+            return None
+
+        if other_site_vlans:
+            logger.debug(
+                "VLAN vid=%s exists at other sites but not site %s; "
+                "creating a new site-scoped VLAN for the requested site",
+                vid, site_id,
+            )
+
+        # Create a new VLAN (with or without site as supplied in payload).
+        return ctx.nb.upsert("ipam.vlans", vlan_payload, lookup_fields=[])
 
     def _process_inventory_items(
         self,
