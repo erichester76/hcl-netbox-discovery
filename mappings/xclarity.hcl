@@ -192,6 +192,50 @@ object "node" {
     }
   }
 
+  # Management / LOM interface — XClarity exposes the BMC/ILOM network
+  # configuration under ipInterfaces on the node detail.  Each entry
+  # carries IPv4assignments with an address and subnet mask.  A single
+  # NetBox interface named "LOM Port 1" (mgmt_only = true) is created or
+  # updated per node and all management IPs are attached to it.  The first
+  # IPv4 address is also promoted to oob_ip on the device so that NetBox
+  # knows which IP reaches the out-of-band management controller.
+  interface {
+    source_items = "ipInterfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "'LOM Port 1'"
+    }
+
+    field "type" {
+      value = "'1000base-t'"
+    }
+
+    field "mgmt_only" {
+      value = "True"
+    }
+
+    ip_address {
+      source_items = "IPv4assignments"
+      oob_if       = "first"
+
+      # Build CIDR notation (e.g. "10.0.0.1/24") from address + dotted-decimal
+      # subnet mask.  Fall back to a bare address when subnet is absent.
+      field "address" {
+        value = "when(source('subnet') != None, join('/', [source('address'), str(mask_to_prefix(source('subnet')))]), source('address'))"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+
+      field "tags" {
+        type  = "tags"
+        value = "['xclarity-sync']"
+      }
+    }
+  }
+
   # CPUs
   inventory_item {
     source_items = "processors"

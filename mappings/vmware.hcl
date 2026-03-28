@@ -202,6 +202,7 @@ object "host" {
     ip_address {
       source_items = "spec.ip"
       primary_if   = "first"
+      oob_if       = "first"
 
       field "address" {
         value = "join('/', [source('ipAddress'), str(mask_to_prefix(source('subnetMask')))])"

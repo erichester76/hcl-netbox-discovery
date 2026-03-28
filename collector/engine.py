@@ -543,6 +543,7 @@ class Engine:
             parent_id = extract_id(parent_nb_obj)
             first_primary_ip4_set = False
             first_primary_ip6_set = False
+            first_oob_set = False
 
             for iface_item in items:
                 nested_ctx = ctx.for_nested(iface_item, parent_nb_obj)
@@ -641,6 +642,35 @@ class Engine:
                                         logger.debug(
                                             "Failed to set primary_ip6: %s", exc
                                         )
+
+                        # Set oob_ip on the parent device for the first IP on
+                        # an interface block configured with oob_if = "first".
+                        # Guarded to dcim.interfaces so that virtual-machine
+                        # interface blocks (virtualization.vminterface) never
+                        # trigger an oob_ip write.
+                        if (
+                            ip_cfg.oob_if == "first"
+                            and first_for_iface
+                            and not first_oob_set
+                            and nb_ip is not None
+                            and parent_nb_obj is not None
+                            and not ip_ctx.dry_run
+                            and iface_resource == "dcim.interfaces"
+                        ):
+                            ip_id = extract_id(nb_ip)
+                            parent_obj_id = extract_id(parent_nb_obj)
+                            if ip_id is not None and parent_obj_id is not None:
+                                try:
+                                    ctx.nb.update(
+                                        obj_cfg.netbox_resource,
+                                        parent_obj_id,
+                                        {"oob_ip": ip_id},
+                                    )
+                                    first_oob_set = True
+                                except Exception as exc:
+                                    logger.debug(
+                                        "Failed to set oob_ip: %s", exc
+                                    )
 
                         first_for_iface = False
 
