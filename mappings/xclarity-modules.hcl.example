@@ -230,7 +230,7 @@ object "node" {
     }
 
     attribute "speed" {
-      value = "float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None else None"
+      value = "int(float(source('speed')) * 100) if source('speed') != None else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None else None)"
     }
 
     attribute "architecture" {
