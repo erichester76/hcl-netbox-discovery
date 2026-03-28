@@ -312,6 +312,71 @@ class TestXclarityModulesHcl:
         names = {o.name for o in cfg.objects}
         assert {"node", "chassis", "switch", "storage"} <= names
 
+    def _get_disk_type_expr(self):
+        """Return the 'type' attribute expression from the Hard disk module block."""
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        hd_mod = next(m for m in node.modules if m.profile == "Hard disk")
+        type_attr = next(a for a in hd_mod.attributes if a.name == "type")
+        return type_attr.value
+
+    def _eval_disk_type(self, source_obj):
+        """Evaluate the Hard disk 'type' expression against a source object."""
+        from collector.config import CollectorOptions
+        from collector.context import RunContext
+        from collector.field_resolvers import Resolver
+
+        opts = CollectorOptions(
+            max_workers=1,
+            dry_run=False,
+            sync_tag="test",
+            regex_dir="/tmp/regex",
+        )
+        ctx = RunContext(
+            nb=None,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp/regex",
+            prereqs={},
+            source_obj=source_obj,
+            parent_nb_obj=None,
+            dry_run=False,
+        )
+        expr = self._get_disk_type_expr()
+        return Resolver(ctx).evaluate(expr)
+
+    def test_hard_disk_type_hdd_from_media_type(self):
+        """When mediaType is 'HDD', the type attribute should be 'HDD'."""
+        result = self._eval_disk_type({"mediaType": "HDD"})
+        assert result == "HDD"
+
+    def test_hard_disk_type_normalises_rotational_to_hdd(self):
+        """When the source reports type='rotational' (and no mediaType), the
+        attribute must be normalised to 'HDD' so it does not flip-flop."""
+        result = self._eval_disk_type({"type": "rotational"})
+        assert result == "HDD"
+
+    def test_hard_disk_type_normalises_flash_to_ssd(self):
+        """When the source reports type='flash' (and no mediaType), the
+        attribute must be normalised to 'SSD'."""
+        result = self._eval_disk_type({"type": "flash"})
+        assert result == "SSD"
+
+    def test_hard_disk_type_ssd_from_media_type(self):
+        """When mediaType is 'SSD', the type attribute should be 'SSD'."""
+        result = self._eval_disk_type({"mediaType": "SSD"})
+        assert result == "SSD"
+
+    def test_hard_disk_type_media_type_takes_priority_over_type(self):
+        """mediaType should take priority over type when both are present."""
+        result = self._eval_disk_type({"mediaType": "HDD", "type": "rotational"})
+        assert result == "HDD"
+
+    def test_hard_disk_type_normalises_case_insensitive(self):
+        """Normalisation must be case-insensitive ('Rotational' → 'HDD')."""
+        result = self._eval_disk_type({"type": "Rotational"})
+        assert result == "HDD"
+
 
 # ---------------------------------------------------------------------------
 # prerequisites — ensure_module_bay_template
