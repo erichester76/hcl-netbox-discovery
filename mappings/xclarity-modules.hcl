@@ -408,7 +408,7 @@ object "chassis" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -529,11 +529,6 @@ object "switch" {
 
   field "status" {
     value = "'active'"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['xclarity-sync']"
   }
 
   # Switch ports
