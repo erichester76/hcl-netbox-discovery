@@ -76,6 +76,11 @@ prereq(name)
     Look up a resolved prerequisite by name.  Use dot notation to access
     attributes on multi-value prerequisites, e.g. prereq("placement.site_id").
 
+getattr(obj, name, default=None)
+    Safe attribute access — equivalent to Python's built-in getattr.  Useful
+    in list comprehensions to filter objects by attribute presence, e.g.
+    ``[d for d in source('devices') if getattr(d, 'capacityInKB', None)]``.
+
 collector.<flag>
     Access a boolean/string flag from the collector {} block.
 """
@@ -398,6 +403,8 @@ class Resolver:
             "int": int_val,
             "prereq": prereq,
             "collector": collector_ns,
+            # Attribute access helper (safe: only reads attributes, no side-effects)
+            "getattr": getattr,
             # Safe literals
             "None": None,
             "True": True,
