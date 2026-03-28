@@ -291,9 +291,11 @@ class PrerequisiteRunner:
                 dry_run,
             )
 
-        if position is not None:
+        if position is not None and result["rack_id"] is not None:
             try:
-                result["rack_position"] = int(position)
+                pos_int = int(position)
+                if pos_int > 0:
+                    result["rack_position"] = pos_int
             except (TypeError, ValueError):
                 result["rack_position"] = position
 

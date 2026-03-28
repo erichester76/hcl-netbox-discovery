@@ -2,6 +2,8 @@
 
 Covers:
 - _ensure_platform race condition: uniqueness error falls back to GET (Fix 3)
+- _resolve_placement: rack_position must be a positive integer and only set
+  when rack_id is resolved
 """
 
 from __future__ import annotations
@@ -166,3 +168,107 @@ class TestEnsurePlatformManufacturerName:
         nb.upsert.assert_called_once()
         payload = nb.upsert.call_args[0][1]
         assert "manufacturer" not in payload
+
+
+class TestResolvePlacement:
+    """_resolve_placement must guard against invalid position values."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def _mock_upsert_side_effect(self, resource, payload, lookup_fields=None):
+        """Return a mock NetBox object whose id depends on the resource type."""
+        obj = MagicMock()
+        if resource == "dcim.sites":
+            obj.id = 1
+        elif resource == "dcim.locations":
+            obj.id = 2
+        elif resource == "dcim.racks":
+            obj.id = 3
+        else:
+            obj.id = 99
+        return obj
+
+    def test_position_zero_is_treated_as_none(self):
+        """lowestRackUnit=0 must not be forwarded to NetBox (position >= 0.5 required)."""
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+
+        runner = self._make_runner(nb)
+        result = runner._resolve_placement(
+            {"site": "DC1", "rack": "Rack-01", "position": "0"},
+            dry_run=False,
+        )
+
+        assert result["rack_id"] == 3
+        assert result["rack_position"] is None
+
+    def test_position_negative_is_treated_as_none(self):
+        """A negative lowestRackUnit must never be forwarded to NetBox."""
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+
+        runner = self._make_runner(nb)
+        result = runner._resolve_placement(
+            {"site": "DC1", "rack": "Rack-01", "position": "-1"},
+            dry_run=False,
+        )
+
+        assert result["rack_id"] == 3
+        assert result["rack_position"] is None
+
+    def test_valid_position_is_set_when_rack_resolved(self):
+        """A positive rack unit position must be stored when rack_id is present."""
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+
+        runner = self._make_runner(nb)
+        result = runner._resolve_placement(
+            {"site": "DC1", "rack": "Rack-01", "position": "5"},
+            dry_run=False,
+        )
+
+        assert result["rack_id"] == 3
+        assert result["rack_position"] == 5
+
+    def test_position_not_set_when_rack_unresolved(self):
+        """rack_position must remain None when rack_id could not be resolved."""
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+
+        runner = self._make_runner(nb)
+        # No rack name supplied → rack_id stays None → rack_position must be None
+        result = runner._resolve_placement(
+            {"site": "DC1", "position": "5"},
+            dry_run=False,
+        )
+
+        assert result["rack_id"] is None
+        assert result["rack_position"] is None
+
+    def test_position_none_input_leaves_rack_position_none(self):
+        """Passing position=None explicitly keeps rack_position as None."""
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+
+        runner = self._make_runner(nb)
+        result = runner._resolve_placement(
+            {"site": "DC1", "rack": "Rack-01", "position": None},
+            dry_run=False,
+        )
+
+        assert result["rack_position"] is None
+
+    def test_all_none_when_no_site(self):
+        """Without a site, every placement field must be None."""
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._resolve_placement({}, dry_run=False)
+
+        assert result == {
+            "site_id": None,
+            "location_id": None,
+            "rack_id": None,
+            "rack_position": None,
+        }
+        nb.upsert.assert_not_called()
