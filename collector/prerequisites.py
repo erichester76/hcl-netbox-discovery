@@ -373,22 +373,38 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
+    def _ensure_module_type_profile(self, args: dict, dry_run: bool) -> Optional[int]:
+        """Ensure a ModuleTypeProfile exists and return its numeric ID."""
+        name = args.get("name") or "Unknown"
+        slug = slugify(name)
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_module_type_profile name=%s", name)
+            return None
+        obj = self.nb.upsert(
+            "dcim.module_type_profiles",
+            {"name": name, "slug": slug},
+            lookup_fields=["slug"],
+        )
+        return extract_id(obj)
+
     def _ensure_module_type(self, args: dict, dry_run: bool) -> Optional[int]:
         """Ensure a ModuleType exists (model + optional manufacturer + optional profile)."""
         model = args.get("model") or "Unknown"
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
-        profile = args.get("profile")
+        profile_name = args.get("profile")
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
-        if profile is not None:
-            payload["profile"] = profile
+        if profile_name is not None:
+            profile_id = self._ensure_module_type_profile({"name": profile_name}, dry_run)
+            if profile_id is not None:
+                payload["profile"] = profile_id
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
                 "[DRY-RUN] ensure_module_type model=%s manufacturer=%s profile=%s",
-                model, manufacturer_id, profile,
+                model, manufacturer_id, profile_name,
             )
             return None
         obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)

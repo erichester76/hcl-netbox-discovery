@@ -349,6 +349,50 @@ class TestEnsureModuleBay:
 
 
 # ---------------------------------------------------------------------------
+# prerequisites — ensure_module_type_profile
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureModuleTypeProfile:
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=99)
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile({"name": "CPU"}, dry_run=False)
+        assert result == 99
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "dcim.module_type_profiles"
+        assert payload["name"] == "CPU"
+        assert payload["slug"] == "cpu"
+
+    def test_slug_derived_from_name(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=100)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type_profile({"name": "Power supply"}, dry_run=False)
+        payload = nb.upsert.call_args[0][1]
+        assert payload["slug"] == "power-supply"
+
+    def test_dry_run_skips_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile({"name": "Fan"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_lookup_by_slug(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=101)
+        runner = self._make_runner(nb)
+        runner._ensure_module_type_profile({"name": "Memory"}, dry_run=False)
+        kwargs = nb.upsert.call_args[1]
+        assert kwargs.get("lookup_fields") == ["slug"]
+
+
+# ---------------------------------------------------------------------------
 # prerequisites — ensure_module_type
 # ---------------------------------------------------------------------------
 
@@ -430,15 +474,24 @@ class TestEnsureModuleType:
         nb.upsert.assert_not_called()
 
     def test_profile_included_in_payload_when_given(self):
+        # First upsert call resolves the profile (returns id=99),
+        # second upsert call creates/updates the module_type (returns id=34).
         nb = MagicMock()
-        nb.upsert.return_value = MagicMock(id=34)
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=34)]
         runner = self._make_runner(nb)
-        runner._ensure_module_type(
+        result = runner._ensure_module_type(
             {"model": "Intel Xeon Gold 6240", "profile": "CPU"},
             dry_run=False,
         )
-        payload = nb.upsert.call_args[0][1]
-        assert payload["profile"] == "CPU"
+        assert result == 34
+        # The first upsert should be for the profile
+        profile_call = nb.upsert.call_args_list[0]
+        assert profile_call[0][0] == "dcim.module_type_profiles"
+        assert profile_call[0][1]["name"] == "CPU"
+        # The second upsert should be for the module_type with the numeric profile ID
+        module_type_call = nb.upsert.call_args_list[1]
+        payload = module_type_call[0][1]
+        assert payload["profile"] == 99
 
     def test_profile_omitted_when_not_given(self):
         nb = MagicMock()
