@@ -233,8 +233,13 @@ object "vm" {
     value = "source('config.hardware.memoryMB')"
   }
 
-  field "platform" {
-    value = "prereq('platform')"
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+       name              = "coalesce(source('config.product.fullName'), 'Unknown')"
+       manufacturer_name = "split(source('config.product.fullName'))[0]"
+    }
+    optional = true
   }
 
   field "tags" {
