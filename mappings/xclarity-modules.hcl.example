@@ -402,7 +402,7 @@ object "node" {
     }
 
     attribute "wattage" {
-      value = "int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or None"
+      value = "int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower'))) or None"
     }
   }
 
