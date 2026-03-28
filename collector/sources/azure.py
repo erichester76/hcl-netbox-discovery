@@ -14,6 +14,13 @@ use an explicit service principal, set the following source extras:
   tenant_id   = env("AZURE_TENANT_ID")   # client_id via source.username
                                            # client_secret via source.password
 
+Subscription filtering
+----------------------
+To limit collection to specific subscriptions, set ``subscription_ids``
+in source extras to a comma-separated list of subscription IDs:
+
+  subscription_ids = env("AZURE_SUBSCRIPTION_IDS", "")
+
 Supported collections
 ---------------------
 ``"vms"``
@@ -23,6 +30,8 @@ Supported collections
     - subscription_name, subscription_id  (used for tenant prerequisite)
     - location                             (used for cluster prerequisite)
     - platform_publisher, platform_offer, platform_sku, platform_name
+    - image_reference                      (formatted image string)
+    - custom_fields                        (dict: instance_type, image_reference)
     - nics  – list of ``{name, mac_address, ips: [{address}]}``
     - disks – list of ``{name, size_mb}``
 
@@ -38,6 +47,28 @@ Supported collections
 ``"subscriptions"``
     Raw subscription records (id, display_name).  Useful for building
     tenant prerequisites in a dedicated object block.
+
+``"appliances"``
+    Azure network appliances (NSGs, Application Gateways, Load Balancers,
+    Azure Firewalls, VPN Gateways) represented as virtual-machine-like dicts
+    so they can be imported into NetBox as VMs.  Each dict contains:
+
+    - name, status, location, cluster_name
+    - role_name                  (e.g. "Azure App Gateway")
+    - appliance_type             (nsg | app_gateway | load_balancer | firewall | vpn_gateway)
+    - instance_type              (SKU / tier string when available)
+    - subscription_name, subscription_id
+    - nics  – list of ``{name, mac_address, ips: [{address}]}``
+
+``"standalone_nics"``
+    Azure network interfaces that are **not** attached to a VM.  Includes
+    orphaned NICs, private-endpoint NICs, and private-link-service NICs.
+    Each dict has the same shape as appliance dicts so they can be handled
+    by the same HCL ``object`` block pattern.  ``role_name`` will be one of:
+
+    - "Azure Orphaned NIC"
+    - "Azure Private Endpoint"
+    - "Azure Private Link Service"
 """
 
 from __future__ import annotations
@@ -67,6 +98,19 @@ class AzureSource(DataSource):
         self._config = config
         self._credential = self._build_credential(config)
         self._subscriptions = self._list_subscriptions()
+        # Apply optional subscription ID filter
+        filter_ids_raw = (config.extra or {}).get("subscription_ids", "")
+        if filter_ids_raw:
+            filter_ids = {s.strip() for s in filter_ids_raw.split(",") if s.strip()}
+            if filter_ids:
+                self._subscriptions = [
+                    s for s in self._subscriptions
+                    if s.subscription_id in filter_ids
+                ]
+                logger.info(
+                    "AzureSource: subscription filter applied — %d subscription(s) after filtering",
+                    len(self._subscriptions),
+                )
         logger.info(
             "AzureSource connected: %d subscription(s) visible",
             len(self._subscriptions),
@@ -78,9 +122,11 @@ class AzureSource(DataSource):
             raise RuntimeError("AzureSource: connect() has not been called")
 
         collectors = {
-            "vms":           self._get_vms,
-            "prefixes":      self._get_prefixes,
-            "subscriptions": self._get_subscriptions,
+            "vms":            self._get_vms,
+            "prefixes":       self._get_prefixes,
+            "subscriptions":  self._get_subscriptions,
+            "appliances":     self._get_appliances,
+            "standalone_nics": self._get_standalone_nics,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -293,6 +339,7 @@ class AzureSource(DataSource):
         platform_sku       = ""
         platform_name      = "Unknown"
         instance_type      = ""
+        image_reference    = ""
 
         hw = vm.hardware_profile
         if hw:
@@ -301,11 +348,18 @@ class AzureSource(DataSource):
         sp = vm.storage_profile
         if sp and sp.image_reference:
             img = sp.image_reference
-            platform_publisher = (img.publisher or "").replace("-", " ").title()
-            platform_publisher = platform_publisher.replace("Microsoftwindowsserver", "Microsoft")
-            platform_offer     = img.offer or ""
-            platform_sku       = img.sku or ""
-            platform_name      = f"{platform_offer} {platform_sku}".strip() or "Unknown"
+            # Resolve Shared Gallery images to their definition metadata
+            img, image_reference = self._resolve_image_reference(
+                img, sub_id, compute, vm_name
+            )
+            if img is not None:
+                platform_publisher = (getattr(img, "publisher", "") or "").replace("-", " ").title()
+                platform_publisher = platform_publisher.replace("Microsoftwindowsserver", "Microsoft")
+                platform_offer     = getattr(img, "offer", "") or ""
+                platform_sku       = getattr(img, "sku", "") or ""
+                platform_name      = f"{platform_offer} {platform_sku}".strip() or "Unknown"
+                if not image_reference:
+                    image_reference = f"Marketplace: {platform_publisher} / {platform_name}".strip(" /")
 
         # NICs and IPs
         nics_data  = self._get_vm_nics(vm, network, all_nics)
@@ -328,6 +382,7 @@ class AzureSource(DataSource):
             "vcpus":               vcpus,
             "memory":              memory_mb,
             "instance_type":       instance_type,
+            "image_reference":     image_reference,
             "subscription_name":   sub_name,
             "subscription_id":     sub_id,
             "location":            location,
@@ -338,6 +393,10 @@ class AzureSource(DataSource):
             "platform_name":       platform_name,
             "nics":                nics_data,
             "disks":               disks_data,
+            "custom_fields":       {
+                "instance_type":   instance_type,
+                "image_reference": image_reference,
+            },
         }
 
     # ------------------------------------------------------------------
@@ -427,6 +486,351 @@ class AzureSource(DataSource):
                     "size_mb": size_gb * 1024,
                 })
         return disks
+
+    def _resolve_image_reference(
+        self, img: Any, sub_id: str, compute: Any, vm_name: str
+    ) -> tuple:
+        """Resolve an image reference, handling Shared Gallery images.
+
+        Returns ``(image_ref_obj, image_reference_str)``.  For marketplace
+        images ``image_ref_obj`` is the original ``img`` object.  For gallery
+        images it is the ``GalleryImageIdentifier`` of the gallery definition.
+        ``image_reference_str`` is a human-readable string or empty string if
+        a marketplace label will be built by the caller.
+        """
+        img_id = getattr(img, "id", None) or ""
+        if img_id and "galleries" in img_id.lower():
+            # Shared Image Gallery reference — resolve to gallery definition
+            parts = img_id.split("/")
+            try:
+                gallery_sub_id = parts[parts.index("subscriptions") + 1]
+                rg_name        = parts[parts.index("resourceGroups") + 1]
+                gallery_name   = parts[parts.index("galleries") + 1]
+                image_def_name = parts[parts.index("images") + 1]
+            except (ValueError, IndexError):
+                logger.debug("Could not parse gallery image ID for %s: %s", vm_name, img_id)
+                return img, ""
+
+            try:
+                gallery_compute = compute
+                if gallery_sub_id != sub_id:
+                    # Import lazily to avoid hard dependency at module level
+                    from azure.mgmt.compute import ComputeManagementClient  # type: ignore[import]
+                    gallery_compute = ComputeManagementClient(self._credential, gallery_sub_id)
+                gallery_image_def = gallery_compute.gallery_images.get(
+                    resource_group_name=rg_name,
+                    gallery_name=gallery_name,
+                    gallery_image_name=image_def_name,
+                )
+                identifier = gallery_image_def.identifier
+                label = f"Gallery: {gallery_name} / {image_def_name}"
+                logger.debug("Resolved gallery image for %s: %s", vm_name, label)
+                return identifier, label
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve gallery image %s/%s for %s: %s",
+                    gallery_name, image_def_name, vm_name, exc,
+                )
+                return img, f"Gallery: {img_id.split('/')[-1]}"
+
+        return img, ""
+
+    # ------------------------------------------------------------------
+    # Collection: appliances
+    # ------------------------------------------------------------------
+
+    def _get_appliances(self) -> list[dict]:
+        """Return Azure network appliances as pseudo-VM dicts.
+
+        Covers NSGs, Application Gateways, Load Balancers, Azure Firewalls,
+        and VPN Gateways.  Each returned dict has the same top-level shape as
+        a VM dict so the HCL object block can treat them uniformly.
+        """
+        try:
+            from azure.mgmt.network import NetworkManagementClient  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "azure-mgmt-network is required. "
+                "Install it with: pip install azure-mgmt-network"
+            ) from exc
+
+        try:
+            from azure.mgmt.resource import ResourceManagementClient  # type: ignore[import]
+        except ImportError:
+            ResourceManagementClient = None  # type: ignore[assignment,misc]
+
+        result: list[dict] = []
+        for sub in self._subscriptions:
+            sub_id   = sub.subscription_id
+            sub_name = sub.display_name or sub_id[:8]
+            network  = NetworkManagementClient(self._credential, sub_id)
+
+            # NSGs
+            try:
+                for nsg in network.network_security_groups.list_all():
+                    result.append(self._build_appliance_dict(
+                        name=nsg.name,
+                        appliance_type="nsg",
+                        role_name="Azure NSG",
+                        location=nsg.location or "",
+                        sub_id=sub_id,
+                        sub_name=sub_name,
+                        instance_type="",
+                        nics=[],
+                    ))
+            except Exception as exc:
+                logger.warning("Failed to list NSGs in %s: %s", sub_id[:8], exc)
+
+            # Application Gateways
+            try:
+                for appgw in network.application_gateways.list_all():
+                    sku_name = getattr(getattr(appgw, "sku", None), "name", None) or ""
+                    sku_tier = getattr(getattr(appgw, "sku", None), "tier", None) or ""
+                    instance_type = f"App Gateway {sku_name} {sku_tier}".strip()
+                    nics = self._extract_appliance_nics_from_frontend_ips(
+                        appgw.frontend_ip_configurations or [],
+                        network,
+                    )
+                    result.append(self._build_appliance_dict(
+                        name=appgw.name,
+                        appliance_type="app_gateway",
+                        role_name="Azure App Gateway",
+                        location=appgw.location or "",
+                        sub_id=sub_id,
+                        sub_name=sub_name,
+                        instance_type=instance_type,
+                        nics=nics,
+                    ))
+            except Exception as exc:
+                logger.warning("Failed to list App Gateways in %s: %s", sub_id[:8], exc)
+
+            # Load Balancers
+            try:
+                for lb in network.load_balancers.list_all():
+                    sku_name = getattr(getattr(lb, "sku", None), "name", None) or ""
+                    instance_type = f"Load Balancer {sku_name}".strip()
+                    nics = self._extract_appliance_nics_from_frontend_ips(
+                        lb.frontend_ip_configurations or [],
+                        network,
+                    )
+                    result.append(self._build_appliance_dict(
+                        name=lb.name,
+                        appliance_type="load_balancer",
+                        role_name="Azure Load Balancer",
+                        location=lb.location or "",
+                        sub_id=sub_id,
+                        sub_name=sub_name,
+                        instance_type=instance_type,
+                        nics=nics,
+                    ))
+            except Exception as exc:
+                logger.warning("Failed to list Load Balancers in %s: %s", sub_id[:8], exc)
+
+            # Azure Firewalls
+            try:
+                for fw in network.azure_firewalls.list_all():
+                    tier = getattr(getattr(fw, "sku", None), "name", None) or "Standard"
+                    instance_type = f"Firewall {tier}".strip()
+                    nics: list[dict] = []
+                    for cfg in (fw.ip_configurations or []):
+                        priv_ip = getattr(cfg, "private_ip_address", None)
+                        if priv_ip:
+                            nics.append({
+                                "name":        "azure-firewall-subnet",
+                                "mac_address": "",
+                                "ips":         [{"address": f"{priv_ip}/32"}],
+                            })
+                    result.append(self._build_appliance_dict(
+                        name=fw.name,
+                        appliance_type="firewall",
+                        role_name="Azure Firewall",
+                        location=fw.location or "",
+                        sub_id=sub_id,
+                        sub_name=sub_name,
+                        instance_type=instance_type,
+                        nics=nics,
+                    ))
+            except Exception as exc:
+                logger.warning("Failed to list Firewalls in %s: %s", sub_id[:8], exc)
+
+            # VPN Gateways (listed per resource group)
+            try:
+                rg_iter = []
+                if ResourceManagementClient is not None:
+                    try:
+                        resource_client = ResourceManagementClient(self._credential, sub_id)
+                        rg_iter = list(resource_client.resource_groups.list())
+                    except Exception as exc:
+                        logger.debug("Failed to list resource groups in %s: %s", sub_id[:8], exc)
+                for rg in rg_iter:
+                    try:
+                        for vpn in network.virtual_network_gateways.list(rg.name):
+                            sku_name = getattr(getattr(vpn, "sku", None), "name", None) or ""
+                            nics = []
+                            for cfg in (vpn.ip_configurations or []):
+                                pub_ip_ref = getattr(cfg, "public_ip_address", None)
+                                if pub_ip_ref and pub_ip_ref.id:
+                                    try:
+                                        pip_parts = pub_ip_ref.id.split("/")
+                                        pip = network.public_ip_addresses.get(pip_parts[4], pip_parts[-1])
+                                        if pip.ip_address:
+                                            nics.append({
+                                                "name":        "gateway-subnet",
+                                                "mac_address": "",
+                                                "ips":         [{"address": f"{pip.ip_address}/32"}],
+                                            })
+                                    except Exception:
+                                        pass
+                            result.append(self._build_appliance_dict(
+                                name=vpn.name,
+                                appliance_type="vpn_gateway",
+                                role_name="Azure VPN Gateway",
+                                location=vpn.location or "",
+                                sub_id=sub_id,
+                                sub_name=sub_name,
+                                instance_type=sku_name,
+                                nics=nics,
+                            ))
+                    except Exception as exc:
+                        logger.debug("Failed to list VPN Gateways in RG %s: %s", rg.name, exc)
+            except Exception as exc:
+                logger.warning("Failed to enumerate VPN Gateways in %s: %s", sub_id[:8], exc)
+
+        logger.debug("AzureSource: returning %d appliance records", len(result))
+        return result
+
+    def _build_appliance_dict(
+        self,
+        name: str,
+        appliance_type: str,
+        role_name: str,
+        location: str,
+        sub_id: str,
+        sub_name: str,
+        instance_type: str,
+        nics: list[dict],
+    ) -> dict:
+        """Return a normalized appliance dict suitable for HCL field mapping."""
+        return {
+            "name":              _truncate(name, 64),
+            "status":            "active",
+            "role_name":         role_name,
+            "appliance_type":    appliance_type,
+            "instance_type":     instance_type,
+            "location":          location,
+            "cluster_name":      f"Azure {location}".strip(),
+            "subscription_name": sub_name,
+            "subscription_id":   sub_id,
+            "nics":              nics,
+            "custom_fields":     {"instance_type": instance_type},
+        }
+
+    def _extract_appliance_nics_from_frontend_ips(
+        self, frontend_configs: list, network: Any
+    ) -> list[dict]:
+        """Build NIC dicts from an appliance's frontend IP configuration list."""
+        nics: list[dict] = []
+        for frontend in frontend_configs:
+            nic_name = getattr(frontend, "name", None) or "frontend"
+            ips: list[dict] = []
+            pub_ip_ref = getattr(frontend, "public_ip_address", None)
+            if pub_ip_ref and getattr(pub_ip_ref, "id", None):
+                try:
+                    parts = pub_ip_ref.id.split("/")
+                    pip = network.public_ip_addresses.get(parts[4], parts[-1])
+                    if pip.ip_address:
+                        ips.append({"address": f"{pip.ip_address}/32"})
+                except Exception:
+                    pass
+            priv_ip = getattr(frontend, "private_ip_address", None)
+            if priv_ip:
+                ips.append({"address": f"{priv_ip}/32"})
+            nics.append({"name": nic_name, "mac_address": "", "ips": ips})
+        return nics
+
+    # ------------------------------------------------------------------
+    # Collection: standalone_nics
+    # ------------------------------------------------------------------
+
+    def _get_standalone_nics(self) -> list[dict]:
+        """Return unattached NICs (orphans, private endpoints, PLS) as pseudo-VM dicts."""
+        try:
+            from azure.mgmt.network import NetworkManagementClient  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError(
+                "azure-mgmt-network is required. "
+                "Install it with: pip install azure-mgmt-network"
+            ) from exc
+
+        result: list[dict] = []
+        for sub in self._subscriptions:
+            sub_id   = sub.subscription_id
+            sub_name = sub.display_name or sub_id[:8]
+            network  = NetworkManagementClient(self._credential, sub_id)
+
+            try:
+                all_nics = list(network.network_interfaces.list_all())
+            except Exception as exc:
+                logger.warning("Failed to list NICs in %s: %s", sub_id[:8], exc)
+                continue
+
+            for nic in all_nics:
+                # Skip NICs that are attached to VMs
+                if getattr(nic, "virtual_machine", None):
+                    continue
+
+                location = getattr(nic, "location", "") or ""
+                nic_name = _truncate(nic.name, 64)
+
+                # Classify the NIC
+                if getattr(nic, "private_endpoint", None):
+                    role_name = "Azure Private Endpoint"
+                    nic_type  = "private_endpoint"
+                elif getattr(nic, "private_link_service", None):
+                    role_name = "Azure Private Link Service"
+                    nic_type  = "private_link_service"
+                else:
+                    role_name = "Azure Orphaned NIC"
+                    nic_type  = "orphaned"
+
+                # Build IP list
+                ips: list[dict] = []
+                for cfg in (nic.ip_configurations or []):
+                    priv = getattr(cfg, "private_ip_address", None)
+                    if priv:
+                        ips.append({"address": f"{priv}/32"})
+                    pub_ref = getattr(cfg, "public_ip_address", None)
+                    if pub_ref and getattr(pub_ref, "id", None):
+                        try:
+                            parts = pub_ref.id.split("/")
+                            pip = network.public_ip_addresses.get(parts[4], parts[-1])
+                            if pip.ip_address:
+                                ips.append({"address": f"{pip.ip_address}/32"})
+                        except Exception:
+                            pass
+
+                nics = [{
+                    "name":        "primary",
+                    "mac_address": nic.mac_address or "",
+                    "ips":         ips,
+                }]
+
+                result.append({
+                    "name":              nic_name,
+                    "status":            "active",
+                    "role_name":         role_name,
+                    "nic_type":          nic_type,
+                    "instance_type":     f"NIC ({nic_type})",
+                    "location":          location,
+                    "cluster_name":      f"Azure {location}".strip(),
+                    "subscription_name": sub_name,
+                    "subscription_id":   sub_id,
+                    "nics":              nics,
+                    "custom_fields":     {"instance_type": f"NIC ({nic_type})"},
+                })
+
+        logger.debug("AzureSource: returning %d standalone NIC records", len(result))
+        return result
 
     # VM size cache: {(location, size_name): {vcpus, memory_mb}}
     _size_cache: dict = {}

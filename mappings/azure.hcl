@@ -17,6 +17,7 @@
 #   DRY_RUN                 Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES  true | false  (default: true)
 #   COLLECTOR_SYNC_DISKS       true | false  (default: true)
+#   COLLECTOR_SYNC_APPLIANCES  true | false  (default: true)
 
 source "azure" {
   api_type   = "azure"
@@ -27,8 +28,12 @@ source "azure" {
 
   # Set auth_method = "service_principal" to use client_id / client_secret.
   # Omit (or set to "default") to use DefaultAzureCredential.
-  auth_method = "env('AZURE_AUTH_METHOD', 'default')"
-  tenant_id   = "env('AZURE_TENANT_ID', '')"
+  auth_method      = "env('AZURE_AUTH_METHOD', 'default')"
+  tenant_id        = "env('AZURE_TENANT_ID', '')"
+
+  # Optional: comma-separated list of subscription IDs to collect from.
+  # Leave empty to collect from all visible subscriptions.
+  subscription_ids = "env('AZURE_SUBSCRIPTION_IDS', '')"
 }
 
 netbox {
@@ -40,12 +45,13 @@ netbox {
 }
 
 collector {
-  max_workers       = 4
-  dry_run           = "env('DRY_RUN', 'false')"
-  sync_tag          = "azure-sync"
-  regex_dir         = "./regex"
-  sync_interfaces   = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
-  sync_disks        = "env('COLLECTOR_SYNC_DISKS', 'true')"
+  max_workers        = 4
+  dry_run            = "env('DRY_RUN', 'false')"
+  sync_tag           = "azure-sync"
+  regex_dir          = "./regex"
+  sync_interfaces    = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+  sync_disks         = "env('COLLECTOR_SYNC_DISKS', 'true')"
+  sync_appliances    = "env('COLLECTOR_SYNC_APPLIANCES', 'true')"
 }
 
 # ---------------------------------------------------------------------------
@@ -125,10 +131,13 @@ object "vm" {
     optional = false
   }
 
-  # Platform (OS image)
+  # Platform (OS image) — include manufacturer (publisher) for richer metadata
   prerequisite "platform" {
     method   = "ensure_platform"
-    args     = { name = "coalesce(source('platform_name'), 'Unknown')" }
+    args     = {
+      name              = "source('platform_name') or 'Unknown'"
+      manufacturer_name = "source('platform_publisher') or 'Unknown'"
+    }
     optional = true
   }
 
@@ -169,6 +178,10 @@ object "vm" {
 
   field "memory" {
     value = "source('memory')"
+  }
+
+  field "custom_fields" {
+    value = "source('custom_fields')"
   }
 
   field "tags" {
@@ -218,6 +231,242 @@ object "vm" {
 
     field "size" {
       value = "source('size_mb')"
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Network Appliances
+# (NSGs, Application Gateways, Load Balancers, Azure Firewalls, VPN Gateways)
+# ---------------------------------------------------------------------------
+
+object "appliance" {
+  source_collection = "appliances"
+  netbox_resource   = "virtualization.virtual_machines"
+  lookup_by         = ["name"]
+  max_workers       = 4
+  enabled_if        = "collector.sync_appliances"
+
+  # Tenant per Azure subscription
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = {
+      name        = "source('subscription_name')"
+      description = "join('', ['Azure Subscription: ', source('subscription_id')])"
+    }
+    optional = true
+  }
+
+  # Cluster per Azure region
+  prerequisite "cluster_type" {
+    method   = "ensure_cluster_type"
+    args     = { name = "'Azure'" }
+    optional = false
+  }
+
+  prerequisite "cluster" {
+    method   = "ensure_cluster"
+    args     = {
+      name = "source('cluster_name')"
+      type = "prereq('cluster_type')"
+    }
+    optional = false
+  }
+
+  # Platform — generic "Azure Appliance" platform
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name              = "'Azure Appliance'"
+      manufacturer_name = "'Microsoft'"
+    }
+    optional = true
+  }
+
+  # Role — sourced per-item from the appliance record (e.g. "Azure App Gateway")
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "source('role_name')" }
+    optional = false
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "cluster" {
+    value = "prereq('cluster')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "custom_fields" {
+    value = "source('custom_fields')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['azure-sync']"
+  }
+
+  # Network interfaces (frontend IPs / management IPs)
+  interface {
+    source_items = "nics"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "'virtual'"
+    }
+
+    ip_address {
+      source_items = "ips"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Standalone / Unattached NICs
+# (Orphaned NICs, Private Endpoints, Private Link Services)
+# ---------------------------------------------------------------------------
+
+object "standalone_nic" {
+  source_collection = "standalone_nics"
+  netbox_resource   = "virtualization.virtual_machines"
+  lookup_by         = ["name"]
+  max_workers       = 4
+  enabled_if        = "collector.sync_appliances"
+
+  # Tenant per Azure subscription
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = {
+      name        = "source('subscription_name')"
+      description = "join('', ['Azure Subscription: ', source('subscription_id')])"
+    }
+    optional = true
+  }
+
+  # Cluster per Azure region
+  prerequisite "cluster_type" {
+    method   = "ensure_cluster_type"
+    args     = { name = "'Azure'" }
+    optional = false
+  }
+
+  prerequisite "cluster" {
+    method   = "ensure_cluster"
+    args     = {
+      name = "source('cluster_name')"
+      type = "prereq('cluster_type')"
+    }
+    optional = false
+  }
+
+  # Platform — generic "Azure Network Interface"
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name              = "'Azure Network Interface'"
+      manufacturer_name = "'Microsoft'"
+    }
+    optional = true
+  }
+
+  # Role — per-item (e.g. "Azure Orphaned NIC", "Azure Private Endpoint")
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "source('role_name')" }
+    optional = false
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "cluster" {
+    value = "prereq('cluster')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "custom_fields" {
+    value = "source('custom_fields')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['azure-sync']"
+  }
+
+  # Network interface
+  interface {
+    source_items = "nics"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "mac_address" {
+      value = "upper(source('mac_address'))"
+    }
+
+    field "type" {
+      value = "'virtual'"
+    }
+
+    ip_address {
+      source_items = "ips"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
     }
   }
 }
