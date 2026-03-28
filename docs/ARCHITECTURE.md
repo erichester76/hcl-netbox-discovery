@@ -15,9 +15,9 @@ The engine reads the HCL file, connects to both systems, and orchestrates the fu
 ## Package Layout
 
 ```
-netbox-collector/
+hcl-netbox-discovery/
 ├── lib/
-│   └── pynetbox2.py               # NetBox client library (unchanged)
+│   └── pynetbox2.py               # NetBox client library
 ├── archive/
 │   ├── README.md                  # Explains the archived scripts
 │   ├── vmware-collector.py        # Original monolithic VMware collector
@@ -34,10 +34,31 @@ netbox-collector/
 │   └── sources/
 │       ├── base.py                # Abstract DataSource interface
 │       ├── rest.py                # Generic REST adapter — no Python needed per source
-│       └── vmware.py              # pyVmomi adapter (SDK requires Python; fixed built-in)
-├── mappings/
-│   ├── vmware.hcl                 # VMware collector definition
-│   └── xclarity.hcl               # XClarity collector definition (uses rest adapter)
+│       ├── vmware.py              # pyVmomi adapter (SDK requires Python; fixed built-in)
+│       ├── azure.py               # Microsoft Azure SDK adapter
+│       ├── ldap.py                # LDAP directory adapter (ldap3)
+│       ├── catc.py                # Cisco Catalyst Center adapter (dnacentersdk)
+│       ├── nexus.py               # Cisco Nexus Dashboard Fabric Controller adapter
+│       ├── f5.py                  # F5 BIG-IP iControl REST adapter
+│       ├── prometheus.py          # Prometheus node-exporter adapter
+│       ├── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
+│       └── tenable.py             # Tenable One / Nessus adapter
+├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
+│   ├── vmware.hcl.example
+│   ├── xclarity.hcl.example
+│   ├── xclarity-modules.hcl.example
+│   ├── azure.hcl.example
+│   ├── catc.hcl.example
+│   ├── nexus.hcl.example
+│   ├── f5.hcl.example
+│   ├── prometheus.hcl.example
+│   ├── juniper-snmp.hcl.example
+│   ├── linux-snmp.hcl.example
+│   ├── ldap.hcl.example
+│   ├── jnsu.hcl.example
+│   ├── active-directory-computers.hcl.example
+│   ├── active-directory-users.hcl.example
+│   └── tenable.hcl.example
 ├── regex/                         # Pattern files consumed by regex_file() expressions
 ├── main.py                        # CLI entry point
 └── requirements.txt
@@ -50,9 +71,10 @@ netbox-collector/
 Any HTTP/REST source can be supported by creating a single `.hcl` file.
 No Python code is needed.
 
-1. Add `collection {}` sub-blocks to the `source` block describing each API endpoint.
+1. Copy the relevant `.hcl.example` template from `mappings/` and rename it to `.hcl`.
 2. Set `api_type = "rest"` and choose an `auth` scheme (`basic`, `bearer`, or `header`).
-3. Write `object {}` blocks as normal — `source_collection` refers to the collection label.
+3. Add `collection {}` sub-blocks to the `source` block describing each API endpoint.
+4. Write `object {}` blocks as normal — `source_collection` refers to the collection label.
 
 ```hcl
 source "my_api" {
@@ -69,9 +91,10 @@ source "my_api" {
 }
 ```
 
-For `vmware`, a dedicated `sources/vmware.py` is still required because pyVmomi
-uses a proprietary SOAP/VMOMI protocol rather than plain HTTP REST.  It is a
-fixed, internal component — no changes are needed to add new VMware deployments.
+For `vmware`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, and `tenable` sources,
+dedicated adapters in `sources/` are required because they use proprietary SDKs or
+protocols rather than plain HTTP REST.  These are fixed, internal components — no
+changes are needed to add new deployments of these source types.
 
 ---
 
@@ -131,10 +154,15 @@ Evaluates field expressions at runtime against a source object and an execution 
 | `when(cond, true_val, false_val)` | Conditional expression |
 | `coalesce(a, b, c, …)` | First non-`None`/non-empty result |
 | `replace(value, old, new)` | String `str.replace` |
+| `regex_replace(value, pattern, replacement)` | Regex substitution |
+| `regex_extract(value, pattern, group=1)` | Return a capture group from a regex match |
 | `upper(value)` / `lower(value)` | Case conversion |
 | `truncate(value, n)` | Enforce max-length string |
 | `join(sep, [a, b, …])` | Join non-empty strings |
 | `to_gb(bytes_value)` | Convert bytes → GB (integer) |
+| `to_mb(kb_value)` | Convert kilobytes → MB (integer) |
+| `mask_to_prefix(mask)` | Convert dotted-decimal subnet mask to prefix length |
+| `str(value)` / `int(value)` | Cast to string / integer |
 | `prereq("name")` | Reference a resolved prerequisite value by name |
 | `prereq("name.attr")` | Reference a named attribute on a multi-value prerequisite (e.g., `prereq("placement.site_id")`) |
 
@@ -159,7 +187,10 @@ Evaluates `prerequisite` blocks in declaration order before the main field paylo
 | `ensure_location` | `nb.upsert("dcim.locations", …)` |
 | `ensure_rack` | `nb.upsert("dcim.racks", …)` |
 | `ensure_platform` | `nb.upsert("dcim.platforms", …)` |
+| `ensure_cluster_type` | `nb.upsert("virtualization.cluster-types", …)` |
+| `ensure_cluster_group` | `nb.upsert("virtualization.cluster-groups", …)` |
 | `ensure_inventory_item_role` | `nb.upsert("dcim.inventory-item-roles", …)` |
+| `ensure_tenant` | `nb.upsert("tenancy.tenants", …)` |
 | `resolve_placement` | Site → location → rack → position chain; returns named dict |
 | `lookup_tenant` | Pattern-based tenant lookup (project-ID or regex) |
 
@@ -178,7 +209,7 @@ Top-level orchestrator per HCL file:
    a. Call `source.get_objects(source_collection)` → list of raw items
    b. Fan out to `ThreadPoolExecutor(max_workers=object.max_workers or collector.max_workers)`
    c. Per item: resolve prerequisites → evaluate fields → `nb.upsert(resource, payload, lookup_fields=[…])`
-   d. For each nested collection (`interface`, `inventory_item`, `disk`): inner loop with same pattern
+   d. For each nested collection (`interface`, `inventory_item`, `disk`, `module`): inner loop with same pattern
 5. Emit summary log: objects processed, created, updated, skipped, errored
 
 Dry-run mode (when `collector.dry_run = true`) logs the payloads that *would* be sent but makes no writes.
@@ -212,6 +243,90 @@ Wraps `pyVmomi`'s `SmartConnect`/`Disconnect` lifecycle. Implements `get_objects
 | `"vms"` | `vim.VirtualMachine` container view |
 
 Returns raw pyVmomi managed objects. The field resolver's `source()` function handles `getattr` traversal on them transparently.
+
+---
+
+### `collector/sources/azure.py`
+
+Uses the Azure SDK (`azure-identity`, `azure-mgmt-compute`, `azure-mgmt-network`, `azure-mgmt-subscription`) to enumerate resources across one or more Azure subscriptions.
+
+Supports `api_type = "azure"` with `AZURE_AUTH_METHOD` selecting between `"default"` (DefaultAzureCredential) and `"service_principal"`. Subscription scope can be limited with `subscription_ids` (comma-separated) in the source `extra` block.
+
+Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"`, `"prefixes"`, `"appliances"`, `"standalone_nics"`. VM records include `image_reference` and `custom_fields` (instance_type, image_reference). Shared Gallery images are resolved to their definition metadata.
+
+---
+
+### `collector/sources/ldap.py`
+
+Generic LDAP adapter using `ldap3`. Supports any collection name; maps it to an LDAP search using `extra.search_base`, `extra.search_filter`, and `extra.attributes`. Returns raw LDAP entry dicts.
+
+Because Active Directory exposes its data over the standard LDAP protocol, `api_type = "ldap"` also covers Active Directory. The included `active-directory-computers.hcl.example` and `active-directory-users.hcl.example` templates demonstrate syncing AD computer accounts as NetBox devices and AD user accounts as NetBox contacts respectively.
+
+---
+
+### `collector/sources/catc.py`
+
+Cisco Catalyst Center (DNA Center) adapter using `dnacentersdk`. Authenticates with user credentials and wraps the Device Inventory API.
+
+Implements `get_objects` for collection `"devices"`. When `fetch_interfaces = "true"` is set in the source block, per-device interface lists are fetched and embedded so the `interface {}` HCL block can sync them. Records include `management_ip_address` and the `dnac_device_type` mapped to a NetBox device-type slug.
+
+---
+
+### `collector/sources/nexus.py`
+
+Cisco Nexus Dashboard Fabric Controller (NDFC) adapter. Uses token-based authentication (tries `/login` then the NDFC API token endpoint). Optionally fetches per-switch interface lists when `fetch_interfaces = "true"` and embeds them in each switch record.
+
+Implements `get_objects` for collection `"switches"`.
+
+---
+
+### `collector/sources/f5.py`
+
+F5 BIG-IP iControl REST adapter. Authenticates with user credentials and fetches device identity from `sys/hardware` (with fallback to `identified-devices`), software version from `sys/version`, and management IP from `sys/management-ip`. Optionally fetches physical interfaces and self-IPs.
+
+Implements `get_objects` for collection `"devices"`.
+
+---
+
+### `collector/sources/prometheus.py`
+
+Prometheus HTTP API adapter. Queries `node_uname_info` to enumerate Linux hosts, then enriches each with `node_dmi_info`, `node_memory_MemTotal_bytes`, and `node_cpu_seconds_total`. Optionally fetches `node_network_info` for interface data.
+
+Implements `get_objects` for collection `"nodes"`.
+
+---
+
+### `collector/sources/snmp.py`
+
+Vendor-agnostic SNMP adapter using `pysnmp ≥ 7.1` async API (via `asyncio.run()`). Polls a comma-separated list of hosts from `url`/`SNMP_HOSTS`. Supports SNMPv2c (community string = `username`) and SNMPv3 (parameters from `extra`). Exposes `sys_object_id` and `if_type` (raw integers) so vendor-specific logic can live entirely in HCL.
+
+Additional OIDs can be fetched per device using `extra_oids = { field_name = "oid" }` in the source block.
+
+Implements `get_objects` for collection `"devices"` (with nested `"interfaces"` and `"ip_addresses"`).
+
+Included example mappings:
+- `juniper-snmp.hcl.example` — Juniper routers (Juniper enterprise OIDs, model/version via regex, interface type mapping)
+- `linux-snmp.hcl.example` — Linux servers running `net-snmp` (kernel version extraction, standard interface types)
+
+---
+
+### `collector/sources/tenable.py`
+
+Tenable One (cloud) and Nessus (on-premise) adapter. Supports `api_type = "tenable"`.
+
+Authentication:
+- **Tenable.io / Tenable One**: `X-ApiKeys` header using `username` (access key) and `password` (secret key).
+- **Nessus**: POST `/session` token via `username`/`password` (set `extra.platform = "nessus"`).
+
+Implements `get_objects` for collections:
+
+| Collection | Description |
+|---|---|
+| `"assets"` | Network assets / hosts from Tenable |
+| `"vulnerabilities"` | Vulnerability records |
+| `"findings"` | Per-asset vulnerability lists (requires `extra.include_asset_details = "true"`) |
+
+The `extra.date_range` key (default `30`) limits results to the last N days. Use `extra.verify_ssl = "false"` for self-signed Nessus certs.
 
 ---
 
@@ -263,8 +378,8 @@ HCL file
    ▼
 config.py ──► CollectorConfig
    │
-   ├──► sources/vmware.py (or xclarity.py)
-   │        └── get_objects("hosts") → [raw_obj, …]
+   ├──► sources/<adapter>.py (vmware, azure, ldap, catc, nexus, f5, prometheus, snmp, tenable, rest)
+   │        └── get_objects("collection") → [raw_obj, …]
    │
    └──► engine.py
            │
@@ -276,7 +391,7 @@ config.py ──► CollectorConfig
            │       │
            │       └── pynetbox2.upsert(resource, payload, lookup_fields)
            │
-           └── For each nested collection (interfaces, inventory_items, …):
+           └── For each nested collection (interfaces, inventory_items, disks, modules):
                    └── same inner loop, parent_id injected automatically
 ```
 

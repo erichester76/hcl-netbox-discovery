@@ -7,6 +7,14 @@ Usage
   python main.py --mapping mappings/xclarity.hcl --dry-run
   python main.py                              # auto-discovers all mappings/*.hcl
 
+Getting started
+---------------
+  Mapping files ship as ``*.hcl.example`` templates.  Copy and rename to
+  ``*.hcl`` before running::
+
+      cp mappings/vmware.hcl.example mappings/vmware.hcl
+      # edit mappings/vmware.hcl to add your environment variables
+
 Options
 -------
   --mapping PATH        Path to a specific HCL mapping file.  May be repeated
@@ -92,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         if not mapping_paths:
             logging.error(
                 "No mapping files found.  Use --mapping PATH or place *.hcl "
-                "files in the mappings/ directory."
+                "files in the mappings/ directory.  "
+                "(Tip: copy a *.hcl.example template and rename it to *.hcl first.)"
             )
             return 1
         logging.info("Auto-discovered %d mapping(s): %s", len(mapping_paths), mapping_paths)
