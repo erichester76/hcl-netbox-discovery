@@ -1,4 +1,4 @@
-"""Tests for the LDAP source adapter (collector/sources/ldap.py).
+"""Tests for the generic LDAP source adapter (collector/sources/ldap.py).
 
 All ldap3 calls are mocked — no real LDAP/AD server is required.
 """
@@ -12,110 +12,75 @@ import pytest
 
 from collector.sources.ldap import (
     LDAPSource,
-    _attr,
-    _format_description,
-    _is_ap,
-    _is_static,
+    _entry_to_dict,
 )
 
 
 # ---------------------------------------------------------------------------
-# _is_ap()
+# _entry_to_dict()
 # ---------------------------------------------------------------------------
 
 
-class TestIsAP:
-    @pytest.mark.parametrize(
-        "description, expected",
-        [
-            ("Office-AP-101 Wireless", True),
-            ("Lobby-WAP controller", True),
-            ("Desktop-PC-042", False),
-            ("Laptop Device", False),
-            ("KAPTAN-ap-201", True),
-            ("", False),
-        ],
-    )
-    def test_is_ap(self, description, expected):
-        assert _is_ap(description) == expected
+class TestEntryToDict:
+    def test_single_value_returned_as_string(self):
+        entry = SimpleNamespace(cn="johndoe", mail="john@example.com")
+        result = _entry_to_dict(entry)
+        assert result["cn"] == "johndoe"
+        assert result["mail"] == "john@example.com"
 
+    def test_none_value_returned_as_empty_string(self):
+        entry = SimpleNamespace(cn=None)
+        result = _entry_to_dict(entry)
+        assert result["cn"] == ""
 
-# ---------------------------------------------------------------------------
-# _format_description()
-# ---------------------------------------------------------------------------
+    def test_list_single_item_returned_as_string(self):
+        entry = SimpleNamespace(cn=["johndoe"])
+        result = _entry_to_dict(entry)
+        assert result["cn"] == "johndoe"
 
+    def test_list_multi_item_returned_as_list(self):
+        entry = SimpleNamespace(memberOf=["cn=GroupA,dc=ex,dc=com", "cn=GroupB,dc=ex,dc=com"])
+        result = _entry_to_dict(entry)
+        assert result["memberOf"] == ["cn=GroupA,dc=ex,dc=com", "cn=GroupB,dc=ex,dc=com"]
 
-class TestFormatDescription:
-    def test_static_lease_uses_description_directly(self):
-        result = _format_description("cn=jsmith,ou=people,dc=example,dc=com", "John's Laptop", "Static")
-        assert result == "John's Laptop"
+    def test_empty_list_returned_as_empty_string(self):
+        entry = SimpleNamespace(memberOf=[])
+        result = _entry_to_dict(entry)
+        assert result["memberOf"] == ""
 
-    def test_dhcp_lease_prepends_upn(self):
-        result = _format_description("cn=jsmith,ou=people,dc=clemson,dc=edu", "Gaming PC", "Registered")
-        assert result == "JSMITH@CLEMSON.EDU: Gaming PC"
+    def test_entry_attributes_used_when_present(self):
+        entry = SimpleNamespace(cn="alice", mail="alice@example.com")
+        # Restrict to only 'cn' via entry_attributes
+        entry.entry_attributes = ["cn"]
+        result = _entry_to_dict(entry)
+        assert "cn" in result
+        assert "mail" not in result
 
-    def test_description_truncated_to_64_chars(self):
-        long_desc = "X" * 100
-        result = _format_description("", long_desc, "Static")
-        assert len(result) == 64
+    def test_ldap3_attribute_with_values_property(self):
+        """Simulate a real ldap3 Attribute object that exposes .values."""
+        attr = MagicMock()
+        attr.values = ["10.0.0.1"]
+        entry = MagicMock()
+        entry.entry_attributes = ["ipAddress"]
+        entry.ipAddress = attr
+        result = _entry_to_dict(entry)
+        assert result["ipAddress"] == "10.0.0.1"
 
-    def test_strips_connected_to_prefix(self):
-        result = _format_description("", "Connected to switch-01", "Static")
-        assert not result.startswith("Connected to")
+    def test_ldap3_multi_value_attribute(self):
+        attr = MagicMock()
+        attr.values = ["addr1", "addr2"]
+        entry = MagicMock()
+        entry.entry_attributes = ["aliases"]
+        entry.aliases = attr
+        result = _entry_to_dict(entry)
+        assert result["aliases"] == ["addr1", "addr2"]
 
-    def test_newlines_replaced_with_space(self):
-        result = _format_description("", "line1\nline2", "Static")
-        assert "\n" not in result
-
-    def test_unknown_upn_for_no_dn_match(self):
-        result = _format_description("invalid-dn", "My device", "Registered")
-        assert "INVALID-DN" in result
-
-    def test_double_spaces_collapsed(self):
-        result = _format_description("", "word1  word2", "Static")
-        assert "  " not in result
-
-
-# ---------------------------------------------------------------------------
-# _attr()
-# ---------------------------------------------------------------------------
-
-
-class TestAttr:
-    def test_returns_string_value(self):
-        entry = SimpleNamespace(DirXMLjnsuDHCPAddress="10.1.2.3")
-        assert _attr(entry, "DirXMLjnsuDHCPAddress") == "10.1.2.3"
-
-    def test_returns_empty_for_missing_attr(self):
-        entry = SimpleNamespace()
-        assert _attr(entry, "DirXMLjnsuDHCPAddress") == ""
-
-    def test_returns_empty_for_none_attr(self):
-        entry = SimpleNamespace(DirXMLjnsuDHCPAddress=None)
-        assert _attr(entry, "DirXMLjnsuDHCPAddress") == ""
-
-
-# ---------------------------------------------------------------------------
-# _is_static()
-# ---------------------------------------------------------------------------
-
-
-class TestIsStatic:
-    def test_static_with_non_empty_value(self):
-        entry = SimpleNamespace(DirXMLjnsuStaticAddrs=["10.1.2.3"])
-        assert _is_static(entry) is True
-
-    def test_not_static_when_no_attr(self):
-        entry = SimpleNamespace()
-        assert _is_static(entry) is False
-
-    def test_not_static_when_empty_list(self):
-        entry = SimpleNamespace(DirXMLjnsuStaticAddrs=[])
-        assert _is_static(entry) is False
-
-    def test_not_static_when_none(self):
-        entry = SimpleNamespace(DirXMLjnsuStaticAddrs=None)
-        assert _is_static(entry) is False
+    def test_exception_in_attribute_returns_empty_string(self):
+        entry = MagicMock()
+        entry.entry_attributes = ["badAttr"]
+        type(entry).badAttr = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+        result = _entry_to_dict(entry)
+        assert result["badAttr"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -166,112 +131,104 @@ class TestLDAPGetObjects:
     def test_raises_without_connect(self):
         src = LDAPSource()
         with pytest.raises(RuntimeError, match="connect\\(\\) has not been called"):
-            src.get_objects("dhcp_leases")
-
-    def test_raises_for_unknown_collection(self, ldap_config):
-        src = self._connected_source(ldap_config)
-        with pytest.raises(ValueError, match="unknown collection"):
             src.get_objects("users")
+
+    def test_accepts_any_collection_name(self, ldap_config):
+        src = self._connected_source(ldap_config)
+        src._conn.entries = []
+        # Any name should be accepted (no ValueError)
+        result = src.get_objects("users")
+        assert result == []
+        result2 = src.get_objects("dhcp_leases")
+        assert result2 == []
+        result3 = src.get_objects("ip_registrations")
+        assert result3 == []
 
     def test_requires_search_base(self, ldap_config):
         ldap_config.extra["search_base"] = ""
         src = self._connected_source(ldap_config)
         with pytest.raises(ValueError, match="search_base"):
-            src.get_objects("dhcp_leases")
+            src.get_objects("objects")
 
-    def test_returns_normalised_records(self, ldap_config):
+    def test_returns_raw_attribute_dicts(self, ldap_config):
         src = self._connected_source(ldap_config)
 
         entry = SimpleNamespace(
-            DirXMLjnsuDHCPAddress="10.1.2.3",
-            DirXMLjnsuDeviceName="laptop-01",
-            DirXMLjnsuHWAddress="aa:bb:cc:dd:ee:ff",
-            DirXMLjnsuDescription="Staff Laptop",
-            DirXMLjnsuUserDN="cn=jsmith,ou=people,dc=clemson,dc=edu",
-            DirXMLJnsuDisabled=None,
-            DirXMLjnsuStaticAddrs=None,
+            cn="johndoe",
+            mail="john@example.com",
+            telephoneNumber="+1-555-1234",
         )
         src._conn.entries = [entry]
 
-        result = src.get_objects("dhcp_leases")
+        result = src.get_objects("users")
 
         assert len(result) == 1
         r = result[0]
-        assert r["address"] == "10.1.2.3"
-        assert r["mac_address"] == "AA:BB:CC:DD:EE:FF"
-        assert r["device_name"] == "laptop-01"
-        assert r["status"] == "dhcp"
-        assert r["lease_type"] == "Registered"
+        assert r["cn"] == "johndoe"
+        assert r["mail"] == "john@example.com"
+        assert r["telephoneNumber"] == "+1-555-1234"
 
-    def test_skips_ap_entries(self, ldap_config):
+    def test_configured_attributes_passed_to_search(self, ldap_config):
+        ldap_config.extra["attributes"] = "cn,mail"
         src = self._connected_source(ldap_config)
+        src._conn.entries = []
 
+        src.get_objects("users")
+
+        call_kwargs = src._conn.search.call_args
+        assert call_kwargs is not None
+        passed_attrs = call_kwargs.kwargs.get("attributes") or call_kwargs.args[2]
+        assert "cn" in passed_attrs
+        assert "mail" in passed_attrs
+
+    def test_no_attributes_config_uses_wildcard(self, ldap_config):
+        ldap_config.extra.pop("attributes", None)
+        src = self._connected_source(ldap_config)
+        src._conn.entries = []
+
+        src.get_objects("users")
+
+        call_kwargs = src._conn.search.call_args
+        passed_attrs = call_kwargs.kwargs.get("attributes") or call_kwargs.args[2]
+        assert passed_attrs == ["*"]
+
+    def test_multi_value_attribute_returned_as_list(self, ldap_config):
+        src = self._connected_source(ldap_config)
         entry = SimpleNamespace(
-            DirXMLjnsuDHCPAddress="10.1.2.4",
-            DirXMLjnsuDeviceName="ap-floor-2",
-            DirXMLjnsuHWAddress="",
-            DirXMLjnsuDescription="Floor-2-AP-Wireless",
-            DirXMLjnsuUserDN="",
-            DirXMLJnsuDisabled=None,
-            DirXMLjnsuStaticAddrs=None,
+            cn="jsmith",
+            memberOf=["cn=GroupA,dc=ex,dc=com", "cn=GroupB,dc=ex,dc=com"],
         )
         src._conn.entries = [entry]
 
-        result = src.get_objects("dhcp_leases")
+        result = src.get_objects("users")
+
+        assert result[0]["memberOf"] == ["cn=GroupA,dc=ex,dc=com", "cn=GroupB,dc=ex,dc=com"]
+
+    def test_absent_attribute_returned_as_empty_string(self, ldap_config):
+        src = self._connected_source(ldap_config)
+        entry = SimpleNamespace(cn="alice", mail=None)
+        src._conn.entries = [entry]
+
+        result = src.get_objects("users")
+        assert result[0]["mail"] == ""
+
+    def test_search_filter_from_extra(self, ldap_config):
+        ldap_config.extra["search_filter"] = "(cn=test*)"
+        src = self._connected_source(ldap_config)
+        src._conn.entries = []
+
+        src.get_objects("users")
+
+        call_kwargs = src._conn.search.call_args
+        passed_filter = call_kwargs.kwargs.get("search_filter") or call_kwargs.args[1]
+        assert passed_filter == "(cn=test*)"
+
+    def test_empty_result_set(self, ldap_config):
+        src = self._connected_source(ldap_config)
+        src._conn.entries = []
+
+        result = src.get_objects("users")
         assert result == []
-
-    def test_skips_entries_without_ip(self, ldap_config):
-        src = self._connected_source(ldap_config)
-
-        entry = SimpleNamespace(
-            DirXMLjnsuDHCPAddress="",
-            DirXMLjnsuDeviceName="device-01",
-            DirXMLjnsuHWAddress="",
-            DirXMLjnsuDescription="",
-            DirXMLjnsuUserDN="",
-            DirXMLJnsuDisabled=None,
-            DirXMLjnsuStaticAddrs=None,
-        )
-        src._conn.entries = [entry]
-
-        result = src.get_objects("dhcp_leases")
-        assert result == []
-
-    def test_prefix_length_appended(self, ldap_config):
-        ldap_config.extra["default_prefix_length"] = "24"
-        src = self._connected_source(ldap_config)
-
-        entry = SimpleNamespace(
-            DirXMLjnsuDHCPAddress="10.1.2.5",
-            DirXMLjnsuDeviceName="device",
-            DirXMLjnsuHWAddress="",
-            DirXMLjnsuDescription="Test",
-            DirXMLjnsuUserDN="",
-            DirXMLJnsuDisabled=None,
-            DirXMLjnsuStaticAddrs=None,
-        )
-        src._conn.entries = [entry]
-
-        result = src.get_objects("dhcp_leases")
-        assert result[0]["address"] == "10.1.2.5/24"
-
-    def test_static_lease_status(self, ldap_config):
-        src = self._connected_source(ldap_config)
-
-        entry = SimpleNamespace(
-            DirXMLjnsuDHCPAddress="10.1.2.6",
-            DirXMLjnsuDeviceName="static-device",
-            DirXMLjnsuHWAddress="",
-            DirXMLjnsuDescription="Static PC",
-            DirXMLjnsuUserDN="",
-            DirXMLJnsuDisabled=None,
-            DirXMLjnsuStaticAddrs=["10.1.2.6"],
-        )
-        src._conn.entries = [entry]
-
-        result = src.get_objects("dhcp_leases")
-        assert result[0]["status"] == "active"
-        assert result[0]["lease_type"] == "Static"
 
 
 # ---------------------------------------------------------------------------

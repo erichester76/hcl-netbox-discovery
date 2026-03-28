@@ -64,9 +64,9 @@ def ldap_config():
         password="secret",
         verify_ssl=True,
         extra={
-            "search_base": "ou=dhcp,dc=example,dc=com",
-            "search_filter": "(DirXMLjnsuDHCPAddress=*)",
-            "skip_aps": "true",
+            "search_base": "ou=people,dc=example,dc=com",
+            "search_filter": "(objectClass=inetOrgPerson)",
+            "attributes": "cn,mail,telephoneNumber",
         },
     )
 

@@ -1,0 +1,131 @@
+# Novell eDirectory / Micro Focus IDM — "jnsu" DHCP-lease schema
+# → NetBox IP Address collector mapping
+#
+# This file implements the Juniper Network Services Unit (jnsu) LDAP schema
+# used by Novell eDirectory / Micro Focus IDM for tracking DHCP leases and
+# static IP registrations via DirXML attributes.
+#
+# All schema-specific normalisation (UPN extraction, static vs DHCP detection,
+# description formatting) is expressed directly in HCL field expressions so
+# that no Python code is required beyond the generic LDAPSource adapter.
+#
+# Required environment variables:
+#   LDAP_SERVER           LDAP server URI (e.g. ldaps://ldap.example.com)
+#   LDAP_USER             Bind DN (e.g. cn=admin,dc=example,dc=com)
+#   LDAP_PASS             Bind password
+#   LDAP_SEARCH_BASE      LDAP search base (e.g. ou=DHCP,o=example)
+#   NETBOX_URL            NetBox base URL
+#   NETBOX_TOKEN          NetBox API token
+#
+# Optional:
+#   LDAP_FILTER           LDAP search filter
+#                         Default: "(DirXMLjnsuDHCPAddress=*)"
+#                         To also exclude access-point entries at the LDAP
+#                         level, use a compound filter such as:
+#                         "(&(DirXMLjnsuDHCPAddress=*)(!(DirXMLjnsuDescription=*-ap*))(!(DirXMLjnsuDescription=*WAP*)))"
+#   LDAP_PREFIX_LENGTH    Default prefix length appended to IPs (e.g. "24").
+#                         Leave empty to store bare IPs without a prefix.
+#   LDAP_UPN_DOMAIN       Domain appended to the UPN for DHCP descriptions
+#                         (default: "CLEMSON.EDU")
+#   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL      Redis URL or SQLite path
+#   DRY_RUN               Set to "true" to log payloads without writing
+
+source "ldap" {
+  api_type   = "ldap"
+  url        = "env('LDAP_SERVER')"
+  username   = "env('LDAP_USER')"
+  password   = "env('LDAP_PASS')"
+  verify_ssl = true
+
+  # jnsu schema search parameters
+  search_base   = "env('LDAP_SEARCH_BASE')"
+  search_filter = "env('LDAP_FILTER', '(DirXMLjnsuDHCPAddress=*)')"
+
+  # Fetch only the jnsu attributes needed for IP-address records
+  attributes = "DirXMLjnsuDHCPAddress,DirXMLjnsuDeviceName,DirXMLjnsuHWAddress,DirXMLjnsuDescription,DirXMLjnsuUserDN,DirXMLJnsuDisabled,DirXMLjnsuStaticAddrs"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers = 8
+  dry_run     = "env('DRY_RUN', 'false')"
+  sync_tag    = "jnsu-sync"
+  regex_dir   = "./regex"
+}
+
+# ---------------------------------------------------------------------------
+# IP Addresses (DHCP leases and static registrations)
+#
+# Field expression notes
+# ----------------------
+# address
+#   Bare IP from DirXMLjnsuDHCPAddress with an optional prefix length
+#   appended from the LDAP_PREFIX_LENGTH environment variable.
+#
+# status
+#   "active"  — DirXMLjnsuStaticAddrs is non-empty  → static registration
+#   "dhcp"    — DirXMLjnsuStaticAddrs is empty/absent → DHCP lease
+#
+# description
+#   Static entries:  DirXMLjnsuDescription (cleaned, max 64 chars)
+#   DHCP entries:    "<UPN>@<DOMAIN>: <description>" (max 64 chars)
+#                    where UPN is the CN extracted from DirXMLjnsuUserDN.
+# ---------------------------------------------------------------------------
+
+object "ip_address" {
+  source_collection = "ip_registrations"
+  netbox_resource   = "ipam.ip-addresses"
+  lookup_by         = ["address"]
+  max_workers       = 8
+
+  # IP address — append /prefix when LDAP_PREFIX_LENGTH is set
+  field "address" {
+    value = "when(env('LDAP_PREFIX_LENGTH'), source('DirXMLjnsuDHCPAddress') + '/' + env('LDAP_PREFIX_LENGTH'), source('DirXMLjnsuDHCPAddress'))"
+  }
+
+  # Status — static registration or DHCP lease
+  field "status" {
+    value = "when(source('DirXMLjnsuStaticAddrs'), 'active', 'dhcp')"
+  }
+
+  # Description
+  #
+  # The expression branches on whether DirXMLjnsuStaticAddrs is non-empty:
+  #
+  # Static branch (true):
+  #   1. strip "Connected to " prefix from the raw description
+  #   2. collapse CR/LF and runs of spaces into a single space
+  #   3. truncate to 64 characters
+  #
+  # DHCP branch (false):
+  #   1. extract the CN component from DirXMLjnsuUserDN using a regex
+  #      ('^cn=(.+?),.*$' → capture group 1); fall back to the raw DN value
+  #      or "UNKNOWN" when the DN is empty
+  #   2. upper-case the CN and append '@<LDAP_UPN_DOMAIN>' (default CLEMSON.EDU)
+  #   3. concatenate with the raw description: "<UPN>@<DOMAIN>: <description>"
+  #   4. collapse CR/LF and runs of spaces into a single space
+  #   5. truncate to 64 characters
+  #
+  # Regex escape note: '\\\\1' in HCL → Python string '\\1' → regex replacement \1
+  field "description" {
+    value = "when(source('DirXMLjnsuStaticAddrs'), truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), '[\\r\\n]|[ ]{2,}', ' '), 64), truncate(regex_replace(upper(coalesce(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1'), source('DirXMLjnsuUserDN'), 'UNKNOWN')) + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + source('DirXMLjnsuDescription'), '[\\r\\n]|[ ]{2,}', ' '), 64))"
+  }
+
+  # MAC address — uppercase, sourced from DirXMLjnsuHWAddress
+  field "custom_fields" {
+    value = "{'mac_address': upper(source('DirXMLjnsuHWAddress'))}"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['jnsu-sync']"
+  }
+}
