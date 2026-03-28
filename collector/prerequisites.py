@@ -383,7 +383,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert(
             "dcim.module_type_profiles",
             {"name": name, "slug": slug},
-            lookup_fields=["slug"],
+            lookup_fields=["name"],
         )
         return extract_id(obj)
 
