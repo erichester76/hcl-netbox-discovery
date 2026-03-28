@@ -666,22 +666,25 @@ class Engine:
                 if not vlan_payload:
                     continue
 
-                vid = vlan_payload.get("vid")
-                if not vid:
+                # Require at least the first lookup field to be present
+                primary_key = vlan_cfg.lookup_by[0] if vlan_cfg.lookup_by else None
+                if not primary_key or not vlan_payload.get(primary_key):
                     continue
 
                 if ctx.dry_run:
                     logger.info(
-                        "[DRY-RUN] tagged_vlan  vid=%s  payload=%s",
-                        vid,
+                        "[DRY-RUN] tagged_vlan  resource=%s  lookup=%s  payload=%s",
+                        vlan_cfg.netbox_resource,
+                        vlan_cfg.lookup_by,
                         sorted(vlan_payload.keys()),
                     )
                     continue
 
                 try:
-                    lookup_fields = [k for k in ("vid", "site") if k in vlan_payload]
+                    lookup_fields = [k for k in vlan_cfg.lookup_by if k in vlan_payload]
+                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag)
                     nb_vlan = ctx.nb.upsert(
-                        "ipam.vlans",
+                        vlan_cfg.netbox_resource,
                         vlan_payload,
                         lookup_fields=lookup_fields,
                     )
@@ -689,7 +692,11 @@ class Engine:
                     if vlan_id is not None:
                         all_vlan_ids.append(vlan_id)
                 except Exception as exc:
-                    logger.debug("Failed to find/create VLAN vid=%s: %s", vid, exc)
+                    logger.debug(
+                        "Failed to find/create %s %s=%s: %s",
+                        vlan_cfg.netbox_resource, primary_key,
+                        vlan_payload.get(primary_key), exc,
+                    )
 
         if all_vlan_ids and nb_iface is not None:
             iface_id = extract_id(nb_iface)

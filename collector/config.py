@@ -156,6 +156,8 @@ class IpAddressConfig:
 @dataclass
 class TaggedVlanConfig:
     source_items: str = ""
+    netbox_resource: str = "ipam.vlans"
+    lookup_by: list[str] = field(default_factory=lambda: ["vid"])
     enabled_if: Optional[str] = None
     fields: list[FieldConfig] = field(default_factory=list)
 
@@ -260,8 +262,13 @@ def _parse_ip_addresses(raw: list) -> list[IpAddressConfig]:
 def _parse_tagged_vlans(raw: list) -> list[TaggedVlanConfig]:
     configs = []
     for body in _unlabeled_list(raw):
+        lookup_by = body.get("lookup_by", ["vid"])
+        if isinstance(lookup_by, str):
+            lookup_by = [lookup_by]
         configs.append(TaggedVlanConfig(
             source_items=body.get("source_items", ""),
+            netbox_resource=body.get("netbox_resource", "ipam.vlans"),
+            lookup_by=list(lookup_by),
             enabled_if=body.get("enabled_if"),
             fields=_parse_fields(body.get("field", [])),
         ))

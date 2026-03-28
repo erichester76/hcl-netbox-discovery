@@ -198,6 +198,35 @@ object "host" {
     field "type" {
       value = "'virtual'"
     }
+
+    ip_address {
+      source_items = "spec.ip"
+      primary_if   = "first"
+
+      field "address" {
+        value = "join('/', [source('ipAddress'), str(mask_to_prefix(source('subnetMask')))])"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+
+    tagged_vlan {
+      source_items = "_vlans"
+
+      field "vid" {
+        value = "source('id')"
+      }
+
+      field "name" {
+        value = "source('name')"
+      }
+
+      field "site" {
+        value = "prereq('site')"
+      }
+    }
   }
 }
 
@@ -274,6 +303,18 @@ object "vm" {
 
       field "status" {
         value = "'active'"
+      }
+    }
+
+    tagged_vlan {
+      source_items = "_vlans"
+
+      field "vid" {
+        value = "source('id')"
+      }
+
+      field "name" {
+        value = "source('name')"
       }
     }
   }
