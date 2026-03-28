@@ -14,3 +14,5 @@ azure-identity>=1.15.0
 azure-mgmt-compute>=30.0.0
 azure-mgmt-network>=25.0.0
 azure-mgmt-subscription>=3.1.1
+# SNMP
+pysnmp>=7.1

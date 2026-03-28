@@ -68,6 +68,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.catc import CatalystCenterSource
     from .sources.ldap import LDAPSource
     from .sources.rest import RestSource
+    from .sources.snmp import SNMPSource
     from .sources.vmware import VMwareSource
 
     registry = {
@@ -76,6 +77,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "catc":   CatalystCenterSource,
         "ldap":   LDAPSource,
         "azure":  AzureSource,
+        "snmp":   SNMPSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:
