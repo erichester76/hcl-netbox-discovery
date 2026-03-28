@@ -68,6 +68,11 @@ int(value, default=0)
 regex_replace(value, pattern, replacement)
     Apply ``re.sub(pattern, replacement, str(value))``.
 
+regex_extract(value, pattern, group=1)
+    Return the captured group *group* from the first match of *pattern* in
+    *value*.  Returns ``None`` when there is no match.  Useful for extracting
+    tokens from vendor sysDescr strings without complex backreference escaping.
+
 mask_to_prefix(mask)
     Convert a dotted-decimal IPv4 subnet mask (e.g. ``'255.255.255.0'``) to its
     CIDR prefix length integer (e.g. ``24``).  Returns ``None`` on any error.
@@ -346,6 +351,30 @@ class Resolver:
                 return ""
             return _re.sub(pattern, replacement, str(value))
 
+        def regex_extract(value: Any, pattern: str, group: int = 1) -> Optional[str]:
+            """Return a captured group from the first regex match in *value*.
+
+            *group* selects the capture group (default: 1).  Returns ``None``
+            when *value* is ``None``, when there is no match, or when the
+            requested group does not exist.  Useful in HCL to extract
+            vendor-specific tokens from free-text fields such as ``sysDescr``
+            without needing backslash-heavy replacement strings.
+
+            Example (extract Juniper model from sysDescr)::
+
+                regex_extract(source('description'),
+                              '(?i)Juniper Networks.+?Inc\\\\. (\\\\S+)')
+            """
+            if value is None:
+                return None
+            m = _re.search(pattern, str(value))
+            if not m:
+                return None
+            try:
+                return m.group(group)
+            except IndexError:
+                return None
+
         # ---- network helpers ----
         def mask_to_prefix(mask: Any) -> Optional[int]:
             """Convert a dotted-decimal IPv4 subnet mask to a CIDR prefix length.
@@ -387,6 +416,7 @@ class Resolver:
             "env": env,
             "regex_file": regex_file,
             "regex_replace": regex_replace,
+            "regex_extract": regex_extract,
             "mask_to_prefix": mask_to_prefix,
             "map_value": map_value,
             "when": when,

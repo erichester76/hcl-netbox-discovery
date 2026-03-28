@@ -3,6 +3,10 @@
 # Polls one or more Juniper routers via SNMP and syncs device records,
 # interfaces and IP addresses into NetBox.
 #
+# Vendor-specific logic (Juniper OID detection, model/version extraction,
+# interface type mapping) is handled entirely in this HCL file so that the
+# SNMP source adapter remains vendor-agnostic.
+#
 # Required environment variables:
 #   SNMP_HOSTS       Comma-separated list of router hostnames / IP addresses
 #   SNMP_COMMUNITY   SNMP v2c community string (default: public)
@@ -37,6 +41,13 @@ source "juniper" {
   port     = "env('SNMP_PORT', '161')"
   timeout  = "env('SNMP_TIMEOUT', '5')"
   retries  = "env('SNMP_RETRIES', '1')"
+
+  # Juniper-specific enterprise OIDs to fetch per device.
+  # The values are added to the device dict under the given field names.
+  extra_oids = {
+    jnx_model  = "1.3.6.1.4.1.2636.3.1.2.0"
+    jnx_serial = "1.3.6.1.4.1.2636.3.1.3.0"
+  }
 }
 
 netbox {
@@ -58,8 +69,12 @@ collector {
 # ---------------------------------------------------------------------------
 # Network Devices (Juniper routers / switches)
 #
-# The SNMP source adapter normalises Juniper-specific OIDs so that the
-# mapping below works with standard field expressions.
+# Vendor detection and field extraction are done here in HCL using:
+#   sys_object_id — raw sysObjectID OID string (contains Juniper prefix when
+#                   the device is a Juniper product)
+#   jnx_model     — model string from JUNIPER-MIB jnxBoxDescr (extra_oid)
+#   jnx_serial    — serial number from JUNIPER-MIB jnxBoxSerialNo (extra_oid)
+#   description   — raw sysDescr string (parsed for model/version fallback)
 # ---------------------------------------------------------------------------
 
 object "device" {
@@ -72,14 +87,19 @@ object "device" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(source('manufacturer'), 'Juniper Networks')" }
+    args     = {
+      # Detect Juniper by checking the Juniper enterprise OID prefix in
+      # sysObjectID.  Extend or replace this expression for other vendors.
+      name = "when('1.3.6.1.4.1.2636' in source('sys_object_id'), 'Juniper Networks', source('manufacturer') or 'Unknown')"
+    }
     optional = false
   }
 
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('model'), 'Unknown')"
+      # Prefer the dedicated Juniper MIB OID; fall back to sysDescr parsing.
+      model        = "source('jnx_model') or regex_extract(source('description'), '(?i)Juniper Networks.+?Inc\\\\. (\\\\S+)') or 'Unknown'"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -100,7 +120,10 @@ object "device" {
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform'), 'Junos')"
+      # Extract Junos version from sysDescr and build a platform name.
+      # join() skips None (no match) so the result is 'Junos' when the
+      # pattern is not found and 'Junos <version>' when it is.
+      name         = "join(' ', ['Junos', regex_extract(source('description'), '(?i)kernel JUNOS (\\\\S+)')])"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
@@ -129,7 +152,10 @@ object "device" {
   }
 
   field "serial" {
-    value = "source('serial')"
+    # Prefer the dedicated Juniper MIB serial OID; fall back to the generic
+    # serial field (which the SNMP source populates when extra_oids are not
+    # configured).
+    value = "source('jnx_serial') or source('serial')"
   }
 
   field "comments" {
@@ -148,9 +174,17 @@ object "device" {
   # -------------------------------------------------------------------------
   # Interfaces
   #
-  # The source adapter returns ifName (with ifAlias as label), the NetBox
-  # type slug determined from the interface name/ifType, and the admin/oper
-  # status booleans.
+  # The source adapter exposes:
+  #   name         — ifName (falls back to ifDescr)
+  #   label        — ifAlias
+  #   if_type      — raw SNMP ifType integer
+  #   type         — standard ifType-mapped slug (may be "other" for Ethernet)
+  #   mac_address  — formatted MAC address
+  #   admin_status — "up" | "down" | "testing"
+  #
+  # The interface type field uses regex_file() to apply Juniper-specific
+  # name-prefix mappings (see regex/juniper-interface-types.csv), falling
+  # back to the standard ifType-derived slug for unrecognised names.
   # -------------------------------------------------------------------------
 
   interface {
@@ -166,7 +200,10 @@ object "device" {
     }
 
     field "type" {
-      value = "source('type')"
+      # Apply Juniper name-prefix → type mapping via regex_file.
+      # The CSV returns an empty string for non-Juniper names so that
+      # `or` falls back to the standard ifType-mapped slug.
+      value = "regex_file(lower(source('name')), 'juniper-interface-types.csv') or source('type')"
     }
 
     field "mac_address" {
