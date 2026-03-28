@@ -230,7 +230,7 @@ object "node" {
     }
 
     attribute "speed" {
-      value = "int(float(source('speed')) * 100) if source('speed') != None else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None else None)"
+      value = "int(float(source('speed')) * 1000) if source('speed') != None else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None else None)"
     }
 
     attribute "architecture" {
@@ -386,9 +386,9 @@ object "node" {
 
     power_input {
       name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
-      type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"  
+      type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"
     }
-    
+
     attribute "hot_swappable" {
       value = "coalesce('hotSwappable', 'isHotSwappable')"
     }
@@ -402,7 +402,7 @@ object "node" {
     }
 
     attribute "wattage" {
-      value = "int(source('outputWatts')) if source('outputWatts') != None else None"
+      value = "int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or None"
     }
   }
 
