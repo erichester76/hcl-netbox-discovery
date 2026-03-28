@@ -9,6 +9,7 @@ engine.run("mappings/vmware.hcl")
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import sys
@@ -521,7 +522,8 @@ class Engine:
                 parent_field = "device"
 
             parent_id = extract_id(parent_nb_obj)
-            first_primary_set = False
+            first_primary_ip4_set = False
+            first_primary_ip6_set = False
 
             for iface_item in items:
                 nested_ctx = ctx.for_nested(iface_item, parent_nb_obj)
@@ -575,29 +577,51 @@ class Engine:
                         self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
                         nb_ip = self._upsert(ip_ctx, "ipam.ip_addresses", ip_payload, ["address"])
 
-                        # Set primary IP4 on parent object
+                        # Set primary IPv4 or IPv6 on parent object based on address version
                         if (
                             ip_cfg.primary_if == "first"
                             and first_for_iface
-                            and not first_primary_set
                             and nb_ip is not None
                             and parent_nb_obj is not None
                             and not ip_ctx.dry_run
                         ):
+                            raw_address = ip_payload.get("address", "")
+                            try:
+                                ip_version = ipaddress.ip_interface(raw_address).version
+                            except ValueError:
+                                logger.debug(
+                                    "Could not determine IP version for address %r; skipping primary IP assignment",
+                                    raw_address,
+                                )
+                                ip_version = None
+
                             ip_id = extract_id(nb_ip)
                             parent_obj_id = extract_id(parent_nb_obj)
                             if ip_id is not None and parent_obj_id is not None:
-                                try:
-                                    ctx.nb.update(
-                                        obj_cfg.netbox_resource,
-                                        parent_obj_id,
-                                        {"primary_ip4": ip_id},
-                                    )
-                                    first_primary_set = True
-                                except Exception as exc:
-                                    logger.debug(
-                                        "Failed to set primary_ip4: %s", exc
-                                    )
+                                if ip_version == 4 and not first_primary_ip4_set:
+                                    try:
+                                        ctx.nb.update(
+                                            obj_cfg.netbox_resource,
+                                            parent_obj_id,
+                                            {"primary_ip4": ip_id},
+                                        )
+                                        first_primary_ip4_set = True
+                                    except Exception as exc:
+                                        logger.debug(
+                                            "Failed to set primary_ip4: %s", exc
+                                        )
+                                elif ip_version == 6 and not first_primary_ip6_set:
+                                    try:
+                                        ctx.nb.update(
+                                            obj_cfg.netbox_resource,
+                                            parent_obj_id,
+                                            {"primary_ip6": ip_id},
+                                        )
+                                        first_primary_ip6_set = True
+                                    except Exception as exc:
+                                        logger.debug(
+                                            "Failed to set primary_ip6: %s", exc
+                                        )
 
                         first_for_iface = False
 
