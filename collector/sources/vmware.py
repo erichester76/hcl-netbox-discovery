@@ -30,6 +30,25 @@ from .base import DataSource
 logger = logging.getLogger(__name__)
 
 
+class _NicProxy:
+    """Thin proxy that attaches a ``_vlans`` list to a pyVmomi NIC data object.
+
+    pyVmomi DataObjects (e.g. ``HostVirtualNic``, ``GuestNicInfo``) use a
+    custom ``__setattr__`` that rejects attribute names not declared in the
+    vSphere schema.  Attempting ``vnic._vlans = [...]`` therefore raises
+    ``AttributeError: _vlans``.  This proxy stores ``_vlans`` in its own
+    instance ``__dict__`` while forwarding every other attribute access to the
+    wrapped object transparently.
+    """
+
+    def __init__(self, wrapped: Any, vlans: list) -> None:
+        object.__setattr__(self, "_wrapped", wrapped)
+        object.__setattr__(self, "_vlans", vlans)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(object.__getattribute__(self, "_wrapped"), name)
+
+
 class VMwareSource(DataSource):
     """pyVmomi-backed source adapter for VMware vCenter."""
 
@@ -151,7 +170,7 @@ class VMwareSource(DataSource):
         # Enrich each host's vNIC objects with VLAN info so that HCL
         # expressions can reference source('_vlans') on a vnic item.
         for host in hosts:
-            self._enrich_host_vnics(host)
+            host._enriched_vnics = self._enrich_host_vnics(host)
 
         return hosts
 
@@ -174,7 +193,7 @@ class VMwareSource(DataSource):
         # Enrich each VM's guest NIC objects with VLAN info so that HCL
         # expressions can reference source('_vlans') on a guest.net item.
         for vm in vms:
-            self._enrich_vm_interfaces(vm)
+            vm._enriched_net = self._enrich_vm_interfaces(vm)
 
         return vms
 
@@ -226,15 +245,20 @@ class VMwareSource(DataSource):
 
         return pg_to_vlan
 
-    def _enrich_host_vnics(self, host: Any) -> None:
-        """Attach a ``_vlans`` list to each VMkernel NIC on *host*.
+    def _enrich_host_vnics(self, host: Any) -> "list[_NicProxy]":
+        """Return a list of :class:`_NicProxy` objects for the VMkernel NICs on *host*.
 
-        Each element of ``_vlans`` is a ``{"id": <vid>, "name": <name>}`` dict.
-        When the vNIC portgroup has no VLAN (or the VLAN ID is 0) the list is
-        empty.  This lets HCL ``tagged_vlan`` blocks reference
+        Each proxy wraps the original pyVmomi ``HostVirtualNic`` and exposes a
+        ``_vlans`` attribute containing a list of ``{"id": <vid>, "name": <name>}``
+        dicts.  When the vNIC portgroup has no VLAN (or the VLAN ID is 0) the
+        list is empty.  This lets HCL ``tagged_vlan`` blocks reference
         ``source_items = "_vlans"`` on the vNIC item.
+
+        The caller stores the returned list as ``host._enriched_vnics`` so that
+        HCL can reach it via ``source_items = "_enriched_vnics"``.
         """
         pg_to_vlan = self._build_portgroup_vlan_map(host)
+        enriched: list[_NicProxy] = []
 
         try:
             for vnic in getattr(
@@ -255,21 +279,27 @@ class VMwareSource(DataSource):
                     if pg_name:
                         vlan_info = pg_to_vlan.get(pg_name)
 
-                vnic._vlans = [vlan_info] if vlan_info else []
+                enriched.append(_NicProxy(vnic, [vlan_info] if vlan_info else []))
         except Exception as exc:
-            logger.debug("Could not enrich vNIC VLAN info for host: %s", exc)
+            logger.debug("Could not enrich vNIC VLAN info: %s", exc)
 
-    def _enrich_vm_interfaces(self, vm: Any) -> None:
-        """Attach a ``_vlans`` list to each ``guest.net`` NIC entry on *vm*.
+        return enriched
 
-        Mirrors :meth:`_enrich_host_vnics`: each element of ``_vlans`` is a
-        ``{"id": <vid>, "name": <name>}`` dict so HCL ``tagged_vlan`` blocks
-        can reference ``source_items = "_vlans"`` on a VM guest NIC item.
+    def _enrich_vm_interfaces(self, vm: Any) -> "list[_NicProxy]":
+        """Return a list of :class:`_NicProxy` objects for the guest NICs on *vm*.
+
+        Mirrors :meth:`_enrich_host_vnics`: each proxy wraps the original
+        ``GuestNicInfo`` object and exposes a ``_vlans`` attribute containing a
+        list of ``{"id": <vid>, "name": <name>}`` dicts so HCL ``tagged_vlan``
+        blocks can reference ``source_items = "_vlans"`` on a VM guest NIC item.
+
+        The caller stores the returned list as ``vm._enriched_net`` so that HCL
+        can reach it via ``source_items = "_enriched_net"``.
         """
         try:
             from pyVmomi import vim  # type: ignore[import]
         except ImportError:
-            return
+            return []
 
         # Build portgroup-name → VLAN info from the VM's attached networks
         network_to_vlan: dict = {}
@@ -287,14 +317,17 @@ class VMwareSource(DataSource):
         except Exception as exc:
             logger.debug("Could not read VM network info: %s", exc)
 
-        # Enrich each GuestNicInfo with the resolved VLAN info
+        # Build enriched NIC proxy list
+        enriched: list[_NicProxy] = []
         try:
             for net in getattr(getattr(vm, "guest", None), "net", []):
                 network_name = getattr(net, "network", None)
                 vlan_info = network_to_vlan.get(network_name) if network_name else None
-                net._vlans = [vlan_info] if vlan_info else []
+                enriched.append(_NicProxy(net, [vlan_info] if vlan_info else []))
         except Exception as exc:
             logger.debug("Could not enrich VM interface VLAN info: %s", exc)
+
+        return enriched
 
     def _connect_rest(self, config: Any) -> Any:
         """Authenticate to the vSphere REST API and return the session."""

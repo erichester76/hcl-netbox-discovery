@@ -32,7 +32,7 @@ sys.modules.setdefault("pyVim", _fake_pyvim)
 sys.modules.setdefault("pyVim.connect", _fake_pyvim_connect)
 sys.modules.setdefault("pyVmomi", _fake_pyvmomi)
 
-from collector.sources.vmware import VMwareSource  # noqa: E402 (after sys.modules setup)
+from collector.sources.vmware import VMwareSource, _NicProxy  # noqa: E402 (after sys.modules setup)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +269,59 @@ class TestVMwareRestHelpers:
         assert result == {}
 
 
+class TestNicProxy:
+    """Tests for _NicProxy."""
+
+    def test_vlans_accessible(self):
+        """_vlans is available directly on the proxy."""
+        wrapped = MagicMock()
+        proxy = _NicProxy(wrapped, [{"id": 10, "name": "VLAN10"}])
+        assert proxy._vlans == [{"id": 10, "name": "VLAN10"}]
+
+    def test_empty_vlans(self):
+        """Proxy with an empty _vlans list returns an empty list."""
+        wrapped = MagicMock()
+        proxy = _NicProxy(wrapped, [])
+        assert proxy._vlans == []
+
+    def test_other_attrs_forwarded_to_wrapped_object(self):
+        """Non-_vlans attributes are forwarded to the wrapped object."""
+        wrapped = MagicMock()
+        wrapped.device = "vmk0"
+        proxy = _NicProxy(wrapped, [])
+        assert proxy.device == "vmk0"
+
+    def test_nested_attr_forwarding(self):
+        """Nested attributes (e.g. spec.mac) are forwarded via the wrapped object."""
+        wrapped = MagicMock()
+        wrapped.spec.mac = "AA:BB:CC:DD:EE:FF"
+        proxy = _NicProxy(wrapped, [])
+        assert proxy.spec.mac == "AA:BB:CC:DD:EE:FF"
+
+    def test_wraps_objects_without_dynamic_attr_support(self):
+        """Proxy works even if the wrapped object rejects attribute setting."""
+
+        class _Strict:
+            """Simulates a pyVmomi DataObject that rejects unknown attributes."""
+
+            def __setattr__(self, name: str, value: object) -> None:  # type: ignore[override]
+                raise AttributeError(name)
+
+            @property
+            def device(self) -> str:
+                return "vmk1"
+
+        strict_obj = _Strict()
+        # Direct assignment would raise AttributeError
+        with pytest.raises(AttributeError):
+            strict_obj._vlans = []  # type: ignore[attr-defined]
+
+        # Proxy avoids setting on the wrapped object
+        proxy = _NicProxy(strict_obj, [{"id": 42, "name": "VLAN42"}])
+        assert proxy._vlans == [{"id": 42, "name": "VLAN42"}]
+        assert proxy.device == "vmk1"
+
+
 # ---------------------------------------------------------------------------
 # VMware VLAN enrichment helpers
 # ---------------------------------------------------------------------------
@@ -350,9 +403,12 @@ class TestEnrichHostVnics:
         pg_to_vlan = {"dvpg-20": {"id": 20, "name": "VLAN20"}}
 
         with patch.object(src, "_build_portgroup_vlan_map", return_value=pg_to_vlan):
-            src._enrich_host_vnics(host)
+            enriched = src._enrich_host_vnics(host)
 
-        assert vnic._vlans == [{"id": 20, "name": "VLAN20"}]
+        assert len(enriched) == 1
+        assert enriched[0]._vlans == [{"id": 20, "name": "VLAN20"}]
+        # Proxy must forward other attributes to the original vnic
+        assert enriched[0].spec is vnic.spec
 
     def test_vnic_falls_back_to_portgroup_name(self):
         vnic = MagicMock()
@@ -367,9 +423,10 @@ class TestEnrichHostVnics:
         pg_to_vlan = {"Management Network": {"id": 100, "name": "Management Network"}}
 
         with patch.object(src, "_build_portgroup_vlan_map", return_value=pg_to_vlan):
-            src._enrich_host_vnics(host)
+            enriched = src._enrich_host_vnics(host)
 
-        assert vnic._vlans == [{"id": 100, "name": "Management Network"}]
+        assert len(enriched) == 1
+        assert enriched[0]._vlans == [{"id": 100, "name": "Management Network"}]
 
     def test_vnic_with_no_vlan_gets_empty_list(self):
         vnic = MagicMock()
@@ -381,9 +438,28 @@ class TestEnrichHostVnics:
 
         src = VMwareSource()
         with patch.object(src, "_build_portgroup_vlan_map", return_value={}):
-            src._enrich_host_vnics(host)
+            enriched = src._enrich_host_vnics(host)
 
-        assert vnic._vlans == []
+        assert len(enriched) == 1
+        assert enriched[0]._vlans == []
+
+    def test_enriched_vnics_stored_on_host(self):
+        """_get_hosts stores the enriched proxies as host._enriched_vnics."""
+        vnic = MagicMock()
+        vnic.spec.distributedVirtualPort.portgroupKey = "dvpg-20"
+        vnic.spec.portgroup = None
+
+        host = MagicMock()
+        host.config.network.vnic = [vnic]
+
+        src = VMwareSource()
+        pg_to_vlan = {"dvpg-20": {"id": 20, "name": "VLAN20"}}
+
+        with patch.object(src, "_build_portgroup_vlan_map", return_value=pg_to_vlan):
+            enriched = src._enrich_host_vnics(host)
+
+        host._enriched_vnics = enriched
+        assert host._enriched_vnics[0]._vlans == [{"id": 20, "name": "VLAN20"}]
 
     def test_get_hosts_calls_enrich(self):
         src = VMwareSource()
@@ -412,9 +488,12 @@ class TestEnrichVmInterfaces:
         vm.guest.net = [net]
 
         src = VMwareSource()
-        src._enrich_vm_interfaces(vm)
+        enriched = src._enrich_vm_interfaces(vm)
 
-        assert net._vlans == [{"id": 30, "name": "VLAN30-PG"}]
+        assert len(enriched) == 1
+        assert enriched[0]._vlans == [{"id": 30, "name": "VLAN30-PG"}]
+        # Proxy must forward other attributes to the original net object
+        assert enriched[0].network == "VLAN30-PG"
 
     def test_vm_net_with_no_matching_portgroup_gets_empty_list(self):
         net = MagicMock()
@@ -425,9 +504,27 @@ class TestEnrichVmInterfaces:
         vm.guest.net = [net]
 
         src = VMwareSource()
-        src._enrich_vm_interfaces(vm)
+        enriched = src._enrich_vm_interfaces(vm)
 
-        assert net._vlans == []
+        assert len(enriched) == 1
+        assert enriched[0]._vlans == []
+
+    def test_enriched_net_stored_on_vm(self):
+        """_get_vms stores the enriched proxies as vm._enriched_net."""
+        net = MagicMock()
+        net.network = "VLAN30-PG"
+
+        pg = _make_dvs_portgroup("dvpg-30", "VLAN30-PG", 30)
+
+        vm = MagicMock()
+        vm.network = [pg]
+        vm.guest.net = [net]
+
+        src = VMwareSource()
+        enriched = src._enrich_vm_interfaces(vm)
+
+        vm._enriched_net = enriched
+        assert vm._enriched_net[0]._vlans == [{"id": 30, "name": "VLAN30-PG"}]
 
     def test_get_vms_calls_enrich(self):
         src = VMwareSource()
