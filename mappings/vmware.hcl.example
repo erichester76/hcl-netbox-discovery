@@ -121,8 +121,8 @@ object "host" {
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-       name              = "coalesce(source('config.product.fullName'), 'Unknown')"
-       manufacturer_name = "split(source('config.product.fullName'))[0]"
+       name              = "source('config.product.fullName') or 'Unknown'"
+       manufacturer_name = "split(source('config.product.fullName') or 'Unknown')[0]"
     }
     optional = true
   }
@@ -265,8 +265,8 @@ object "vm" {
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-       name              = "coalesce(source('config.product.fullName'), 'Unknown')"
-       manufacturer_name = "split(source('config.product.fullName'))[0]"
+       name              = "source('config.product.fullName') or 'Unknown'"
+       manufacturer_name = "split(source('config.product.fullName') or 'Unknown')[0]"
     }
     optional = true
   }

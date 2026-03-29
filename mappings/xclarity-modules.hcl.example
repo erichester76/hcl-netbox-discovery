@@ -21,6 +21,9 @@
 #
 # Optional:
 #   XCLARITY_VERIFY_SSL       true | false  (default: true)
+#   XCLARITY_DEFAULT_SITE     Fallback NetBox site name used when a device's
+#                             location cannot be mapped via xclarity_location_to_site
+#                             (default: "Unknown")
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
 #   DRY_RUN                   Set to "true" to log payloads without writing
@@ -115,6 +118,13 @@ object "node" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -127,7 +137,7 @@ object "node" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -143,7 +153,7 @@ object "node" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -422,7 +432,7 @@ object "node" {
     }
 
     power_input {
-      name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+      name = "'Power Input ' + str(source('slot') or source('name') or source('description'))"
       type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"
     }
 
@@ -506,6 +516,13 @@ object "chassis" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -518,7 +535,7 @@ object "chassis" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -534,7 +551,7 @@ object "chassis" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -555,6 +572,11 @@ object "chassis" {
 
   field "status" {
     value = "'active'"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['xclarity-sync']"
   }
 
 }
@@ -590,6 +612,13 @@ object "switch" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -602,7 +631,7 @@ object "switch" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -618,7 +647,7 @@ object "switch" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -639,6 +668,11 @@ object "switch" {
 
   field "status" {
     value = "'active'"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['xclarity-sync']"
   }
 
   # Switch ports
@@ -691,6 +725,13 @@ object "storage" {
     optional = false
   }
 
+  # Fallback site used when placement cannot resolve a site from location data.
+  prerequisite "default_site" {
+    method   = "ensure_site"
+    args     = { name = "env('XCLARITY_DEFAULT_SITE', 'Unknown')" }
+    optional = false
+  }
+
   prerequisite "placement" {
     method   = "resolve_placement"
     args     = {
@@ -703,7 +744,7 @@ object "storage" {
   }
 
   field "name" {
-    value = "regex_replace(coalesce('name', 'hostname'), '-sp.*$', '')"
+    value = "regex_replace(coalesce('name', 'hostname', 'uuid'), '-sp.*$', '')"
   }
 
   field "device_type" {
@@ -719,7 +760,7 @@ object "storage" {
   }
 
   field "site" {
-    value = "prereq('placement.site_id')"
+    value = "prereq('placement.site_id') or prereq('default_site')"
   }
 
   field "location" {
@@ -740,6 +781,11 @@ object "storage" {
 
   field "status" {
     value = "'active'"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['xclarity-sync']"
   }
 
 }
