@@ -400,7 +400,7 @@ object "node" {
     }
 
     power_input {
-      name = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+      name = "'Power Input ' + str(source('slot') or source('name') or source('description'))"
       type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"
     }
 

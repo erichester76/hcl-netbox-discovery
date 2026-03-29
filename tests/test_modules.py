@@ -1125,7 +1125,7 @@ class TestPowerInputConfigParsing:
 class TestProcessModulesPowerInput:
     """Tests for power port creation via the power_input {} sub-block."""
 
-    _DEFAULT_PI_NAME = "'Power Input' + when(source('slot'), ' ' + str(source('slot')), '')"
+    _DEFAULT_PI_NAME = "'Power Input ' + str(source('slot') or source('name') or source('description'))"
     _DEFAULT_PI_TYPE = (
         "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0)"
         " > 1800, 'iec-60320-c20', 'iec-60320-c14')"
@@ -1409,8 +1409,65 @@ class TestProcessModulesPowerInput:
             if c[0][0] == "dcim.power_ports"
         ]
         assert len(power_port_calls) == 1
-        # With no slot, name should be just "Power Input"
-        assert power_port_calls[0][0][1]["name"] == "Power Input"
+        # With no slot, name falls back to the PSU name field
+        assert power_port_calls[0][0][1]["name"] == "Power Input PSU"
+
+    def test_two_psus_without_slot_get_unique_names(self):
+        """Two PSUs with no slot number must each create their own power port."""
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "Power Supply 1",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU001",
+                    "manufacturer": "Lenovo",
+                    "slot": None,
+                    "outputWatts": 900,
+                },
+                {
+                    "name": "Power Supply 2",
+                    "partNumber": "SP57A01228",
+                    "serialNumber": "PSU002",
+                    "manufacturer": "Lenovo",
+                    "slot": None,
+                    "outputWatts": 900,
+                },
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),    # ensure_manufacturer (PSU 1)
+            MagicMock(id=10),   # ensure_module_bay_template (PSU 1)
+            MagicMock(id=20),   # ensure_module_bay (PSU 1)
+            MagicMock(id=30),   # ensure_module_type_profile (PSU 1)
+            MagicMock(id=40),   # ensure_module_type (PSU 1)
+            MagicMock(id=50),   # upsert module (PSU 1)
+            MagicMock(id=60),   # upsert power_port (PSU 1)
+            MagicMock(id=2),    # ensure_manufacturer (PSU 2)
+            MagicMock(id=11),   # ensure_module_bay_template (PSU 2)
+            MagicMock(id=21),   # ensure_module_bay (PSU 2)
+            MagicMock(id=31),   # ensure_module_type_profile (PSU 2)
+            MagicMock(id=41),   # ensure_module_type (PSU 2)
+            MagicMock(id=51),   # upsert module (PSU 2)
+            MagicMock(id=61),   # upsert power_port (PSU 2)
+        ]
+        nb.update.return_value = MagicMock(id=40)
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_psu_obj_cfg()
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        power_port_calls = [
+            c for c in nb.upsert.call_args_list
+            if c[0][0] == "dcim.power_ports"
+        ]
+        assert len(power_port_calls) == 2, (
+            "Expected one power port per PSU; got %d" % len(power_port_calls)
+        )
+        names = {c[0][1]["name"] for c in power_port_calls}
+        assert names == {"Power Input Power Supply 1", "Power Input Power Supply 2"}
 
     def test_no_power_port_when_module_upsert_returns_none(self):
         """If module install fails (returns None), no power port is created."""
