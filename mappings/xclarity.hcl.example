@@ -182,56 +182,44 @@ object "node" {
     value = "['xclarity-sync']"
   }
 
-  # Network interfaces — sourced from onboard controller ports reported by
-  # XClarity.  portSpeed is in Gbps (integer).  10 G maps to 10gbase-t
-  # (BaseT copper) which is standard for Lenovo onboard NICs.
+  # Network interfaces — one block covers all physical ports from onboard
+  # controllers and add-in cards.  Each port dict is enriched inline with:
+  #   _card_name  — parent card/controller name (e.g. "Intel X722 LOM")
+  #   _ip_ifaces  — node-level ipInterfaces list so LOM ports can attach IPs
+  # Legacy firmware exposed ports directly as onboardControllers[*].ports;
+  # current firmware nests them under portInfo.physicalPorts.  Both paths are
+  # tried so a single block works across firmware versions.
   interface {
-    source_items = "adapterSettings.onboardControllers[*].ports"
+    source_items = "[{**port, '_card_name': card.get('name',''), '_ip_ifaces': source('ipInterfaces') or []} for card in ((source('adapterSettings') or {}).get('onboardControllers',[]) + (source('adapterSettings') or {}).get('addinCards',[])) for port in ((card.get('portInfo') or {}).get('physicalPorts',[]) or card.get('ports',[]))]"
     enabled_if   = "collector.sync_interfaces"
 
+    # Use legacy portName when present, otherwise build "{card} Port {index}".
     field "name" {
-      value = "coalesce('portName', 'physicalPortIndex')"
+      value = "coalesce('portName') or (source('_card_name') + ' Port ' + str(source('physicalPortIndex')))"
     }
 
+    # New firmware: MAC is in logicalPorts[0].addresses; legacy: port.address.
     field "mac_address" {
-      value = "upper(source('address'))"
+      value = "upper((source('logicalPorts') or [{}])[0].get('addresses','') or source('address') or '')"
     }
 
+    # New firmware uses speed (Gbps int); legacy uses portSpeed.
     field "type" {
-      value = "map_value(source('portSpeed'), {1: '1000base-t', 10: '10gbase-t', 25: '25gbase-x-sfp28', 40: '40gbase-x-qsfpp', 100: '100gbase-x-qsfp28'}, 'other')"
-    }
-  }
-
-  # Management / LOM interfaces — XClarity exposes the BMC/ILOM network
-  # configuration under ipInterfaces on the node detail.  Each entry has a
-  # name (e.g. "LOM Port 1") and carries IPv4assignments.  We create one
-  # NetBox interface per ipInterfaces entry using its real name (mgmt_only).
-  # IP addresses and the device oob_ip are only set for the entry whose name
-  # matches "LOM Port 1" so that the canonical management address is always
-  # promoted to oob_ip without polluting other ipInterface entries.
-  interface {
-    source_items = "ipInterfaces"
-    enabled_if   = "collector.sync_interfaces"
-
-    field "name" {
-      value = "source('name')"
+      value = "map_value(coalesce('portSpeed','speed'), {1: '1000base-t', 10: '10gbase-t', 25: '25gbase-x-sfp28', 40: '40gbase-x-qsfpp', 100: '100gbase-x-qsfp28'}, 'other')"
     }
 
-    field "type" {
-      value = "'1000base-t'"
-    }
-
+    # Mark management-only for any card whose name contains "LOM".
     field "mgmt_only" {
-      value = "True"
+      value = "True if regex_extract(source('_card_name'), 'LOM') is not None else None"
     }
 
+    # Attach management IPs only to the first physical LOM port (index 1).
+    # IPv4 data comes from the node-level ipInterfaces stored in _ip_ifaces.
+    # The first IP is promoted to device.oob_ip via oob_if = "first".
     ip_address {
-      source_items = "IPv4assignments"
+      source_items = "[ip for iface in (source('_ip_ifaces') or []) for ip in (iface.get('IPv4assignments') or [])]"
       oob_if       = "first"
-      # Only attach IPs (and promote oob_ip) for the port actually named
-      # "LOM Port 1"; other ipInterface entries are created as interfaces
-      # but left without IP addresses.
-      enabled_if   = "regex_extract(source('name'), 'LOM Port 1') != None"
+      enabled_if   = "regex_extract(source('_card_name'), 'LOM') != None and source('physicalPortIndex') == 1"
 
       # Build CIDR notation (e.g. "10.0.0.1/24") from address + dotted-decimal
       # subnet mask.  Fall back to a bare address when subnet is absent.
