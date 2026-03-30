@@ -270,7 +270,6 @@ class RedisCacheBackend(CacheBackend):
 
         self._redis_module = redis
         self.client = redis.from_url(url, decode_responses=False)
-        self.client.ping()
         self.key_prefix = key_prefix
         self.default_ttl = max(int(default_ttl), 1)
         self._failure_lock = threading.Lock()
@@ -281,6 +280,15 @@ class RedisCacheBackend(CacheBackend):
             int(os.getenv("NETBOX_CACHE_DISABLE_ON_FAILURES", "5")),
             1,
         )
+        try:
+            self.client.ping()
+        except redis.RedisError as exc:
+            logging.getLogger(__name__).warning(
+                "Redis cache unavailable at %s (%s); cache disabled for this run.",
+                url,
+                exc,
+            )
+            self._disabled = True
 
     def _record_success(self) -> None:
         with self._failure_lock:
