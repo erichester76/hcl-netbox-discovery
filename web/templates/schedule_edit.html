@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Edit Schedule – HCL NetBox Discovery{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-header card-header-cu fw-semibold">
+        Edit Schedule: {{ sched.name }}
+      </div>
+      <div class="card-body">
+        <form method="POST" action="/schedules/{{ sched.id }}/edit">
+
+          <div class="mb-3">
+            <label for="name" class="form-label">Schedule Name</label>
+            <input type="text" class="form-control" id="name" name="name"
+                   value="{{ sched.name }}" required />
+          </div>
+
+          <div class="mb-3">
+            <label for="hcl_file" class="form-label">HCL Mapping File</label>
+            {% if mapping_files %}
+            <select class="form-select" id="hcl_file" name="hcl_file" required>
+              {% for f in mapping_files %}
+              <option value="{{ f }}"
+                {% if sched.hcl_file.endswith(f) or f == sched.hcl_file %}selected{% endif %}>
+                {{ f }}
+              </option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" class="form-control" id="hcl_file" name="hcl_file"
+                   value="{{ sched.hcl_file }}" required />
+            {% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label for="cron_expr" class="form-label">Cron Expression</label>
+            <input type="text" class="form-control font-monospace" id="cron_expr" name="cron_expr"
+                   value="{{ sched.cron_expr }}" required />
+            <div class="form-text">
+              Format: <code>minute hour day month weekday</code><br>
+              <strong>Presets:</strong>
+              <a href="#" class="cron-preset" data-expr="0 * * * *">Hourly</a> ·
+              <a href="#" class="cron-preset" data-expr="0 2 * * *">Daily 2am</a> ·
+              <a href="#" class="cron-preset" data-expr="0 2 * * 0">Weekly Sun 2am</a> ·
+              <a href="#" class="cron-preset" data-expr="0 2 1 * *">Monthly 1st 2am</a>
+            </div>
+            <div id="cron-preview" class="form-text text-info mt-1"></div>
+          </div>
+
+          <div class="mb-3 form-check">
+            <input type="checkbox" class="form-check-input" id="dry_run" name="dry_run" value="1"
+                   {% if sched.dry_run %}checked{% endif %}>
+            <label class="form-check-label" for="dry_run">Dry-run (no writes to NetBox)</label>
+          </div>
+
+          <div class="mb-3 form-check">
+            <input type="checkbox" class="form-check-input" id="enabled" name="enabled" value="1"
+                   {% if sched.enabled %}checked{% endif %}>
+            <label class="form-check-label" for="enabled">Enabled</label>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary flex-grow-1"
+                    style="background-color:#522D80;border-color:#522D80;">
+              Save Changes
+            </button>
+            <a href="/schedules" class="btn btn-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll('.cron-preset').forEach(function (el) {
+    el.addEventListener('click', function (e) {
+      e.preventDefault();
+      document.getElementById('cron_expr').value = el.getAttribute('data-expr');
+      updatePreview(el.getAttribute('data-expr'));
+    });
+  });
+
+  var cronInput = document.getElementById('cron_expr');
+  if (cronInput) {
+    cronInput.addEventListener('input', function () {
+      updatePreview(cronInput.value.trim());
+    });
+    updatePreview(cronInput.value.trim());
+  }
+
+  function updatePreview(expr) {
+    var preview = document.getElementById('cron-preview');
+    if (!preview) return;
+    if (!expr) { preview.textContent = ''; return; }
+    var parts = expr.trim().split(/\s+/);
+    if (parts.length === 5) {
+      preview.textContent = '✓ 5-field cron expression';
+      preview.className = 'form-text text-success mt-1';
+    } else {
+      preview.textContent = '⚠ Expected 5 fields (minute hour day month weekday)';
+      preview.className = 'form-text text-warning mt-1';
+    }
+  }
+})();
+</script>
+{% endblock %}

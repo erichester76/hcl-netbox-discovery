@@ -158,3 +158,58 @@ def test_main_missing_mapping_does_not_create_db_job(tmp_db):
     rc = main(["--mapping", "/nonexistent/path.hcl"])
     assert rc == 1
     assert get_jobs() == []
+
+
+def test_main_no_args_returns_error(tmp_db):
+    """main() without --mapping and without --run-scheduler must return exit code 1."""
+    from main import main  # noqa: PLC0415
+    rc = main([])
+    assert rc == 1
+
+
+def test_parse_args_run_scheduler_flag():
+    """--run-scheduler flag must be parsed correctly."""
+    from main import _parse_args  # noqa: PLC0415
+    args = _parse_args(["--run-scheduler"])
+    assert args.run_scheduler is True
+
+
+def test_parse_args_run_scheduler_default():
+    """--run-scheduler must default to False."""
+    from main import _parse_args  # noqa: PLC0415
+    args = _parse_args([])
+    assert args.run_scheduler is False
+
+
+def test_check_and_fire_due_schedules_fires_job(tmp_path, tmp_db):
+    """_check_and_fire_due_schedules() must create a job for a due schedule."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")
+
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    # Create a schedule with next_run_at in the past
+    past = "2000-01-01T00:00:00"
+    db_module.create_schedule("test-sched", str(hcl), "0 * * * *", next_run_at=past)
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    import main as main_mod  # noqa: PLC0415
+
+    # Reset the active schedule set between tests
+    main_mod._active_schedule_ids.clear()
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import _check_and_fire_due_schedules  # noqa: PLC0415
+        _check_and_fire_due_schedules()
+
+    # Give the background thread a moment to finish
+    _time.sleep(0.5)
+
+    jobs = get_jobs()
+    assert len(jobs) >= 1

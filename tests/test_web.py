@@ -210,3 +210,101 @@ def test_cache_status_page(app):
 def test_404(app):
     resp = app.get("/this-does-not-exist")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Scheduler routes
+# ---------------------------------------------------------------------------
+
+
+def test_schedules_page_empty(app):
+    resp = app.get("/schedules")
+    assert resp.status_code == 200
+    assert b"Scheduler" in resp.data or b"Schedules" in resp.data
+
+
+def test_schedules_page_shows_entry(app):
+    from collector.db import create_schedule  # noqa: PLC0415
+    create_schedule("nightly-test", "mappings/test.hcl", "0 2 * * *", next_run_at="2099-01-01T02:00:00")
+    resp = app.get("/schedules")
+    assert resp.status_code == 200
+    assert b"nightly-test" in resp.data
+
+
+def test_schedule_create(app):
+    resp = app.post("/schedules/create", data={
+        "name": "my-schedule",
+        "hcl_file": "mappings/test.hcl",
+        "cron_expr": "0 3 * * *",
+    })
+    assert resp.status_code == 302
+    # Should redirect to /schedules
+    from collector.db import get_schedules  # noqa: PLC0415
+    schedules = get_schedules()
+    assert any(s["name"] == "my-schedule" for s in schedules)
+
+
+def test_schedule_create_missing_fields(app):
+    """Creating a schedule without required fields should redirect without creating."""
+    resp = app.post("/schedules/create", data={"name": "", "hcl_file": "", "cron_expr": ""})
+    assert resp.status_code == 302
+    from collector.db import get_schedules  # noqa: PLC0415
+    assert get_schedules() == []
+
+
+def test_schedule_delete(app):
+    from collector.db import create_schedule, get_schedules  # noqa: PLC0415
+    sid = create_schedule("to-delete", "mappings/x.hcl", "0 * * * *")
+    assert len(get_schedules()) == 1
+    resp = app.post(f"/schedules/{sid}/delete")
+    assert resp.status_code == 302
+    assert get_schedules() == []
+
+
+def test_schedule_toggle(app):
+    from collector.db import create_schedule, get_schedule  # noqa: PLC0415
+    sid = create_schedule("toggleable", "mappings/x.hcl", "0 * * * *")
+    # Initially enabled
+    assert get_schedule(sid)["enabled"] is True
+    # Toggle to disabled
+    resp = app.post(f"/schedules/{sid}/toggle")
+    assert resp.status_code == 302
+    assert get_schedule(sid)["enabled"] is False
+    # Toggle back to enabled
+    app.post(f"/schedules/{sid}/toggle")
+    assert get_schedule(sid)["enabled"] is True
+
+
+def test_schedule_edit_get(app):
+    from collector.db import create_schedule  # noqa: PLC0415
+    sid = create_schedule("editable", "mappings/x.hcl", "0 * * * *")
+    resp = app.get(f"/schedules/{sid}/edit")
+    assert resp.status_code == 200
+    assert b"editable" in resp.data
+
+
+def test_schedule_edit_post(app):
+    from collector.db import create_schedule, get_schedule  # noqa: PLC0415
+    sid = create_schedule("old-name", "mappings/x.hcl", "0 * * * *")
+    resp = app.post(f"/schedules/{sid}/edit", data={
+        "name": "new-name",
+        "hcl_file": "mappings/y.hcl",
+        "cron_expr": "0 4 * * *",
+        "enabled": "1",
+    })
+    assert resp.status_code == 302
+    s = get_schedule(sid)
+    assert s["name"] == "new-name"
+    assert s["cron_expr"] == "0 4 * * *"
+
+
+def test_schedule_edit_not_found(app):
+    resp = app.get("/schedules/99999/edit")
+    assert resp.status_code == 404
+
+
+def test_schedule_run_now_missing_file(app):
+    from collector.db import create_schedule  # noqa: PLC0415
+    sid = create_schedule("bad-file", "/nonexistent/path.hcl", "0 * * * *")
+    resp = app.post(f"/schedules/{sid}/run-now")
+    assert resp.status_code == 302

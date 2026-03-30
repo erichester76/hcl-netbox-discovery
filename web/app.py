@@ -2,7 +2,7 @@
 File: web/app.py
 Purpose: Flask web application for monitoring and triggering HCL sync jobs.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #add-prewarm-cache-button
+Last Changed: Copilot 2026-03-30 Issue: #scheduler
 """
 
 from __future__ import annotations
@@ -27,13 +27,19 @@ if _LIB not in sys.path:
 from collector.db import (  # noqa: E402
     add_log,
     create_job,
+    create_schedule,
+    delete_schedule,
     finish_job,
     get_job,
     get_job_logs,
     get_jobs,
     get_running_jobs,
+    get_schedule,
+    get_schedules,
     init_db,
     start_job,
+    update_schedule,
+    update_schedule_run,
 )
 from collector.job_log_handler import JobLogHandler  # noqa: E402
 
@@ -157,6 +163,117 @@ def create_app() -> Flask:
         resource = request.form.get("resource", "").strip() or None
         _prewarm_cache(resource)
         return redirect(url_for("cache_status"))
+
+    # ------------------------------------------------------------------
+    # Scheduler routes
+    # ------------------------------------------------------------------
+
+    @app.route("/schedules")
+    def schedules():
+        all_schedules = get_schedules()
+        mapping_files = _discover_mappings()
+        return render_template(
+            "schedules.html",
+            schedules=all_schedules,
+            mapping_files=mapping_files,
+        )
+
+    @app.route("/schedules/create", methods=["POST"])
+    def schedule_create():
+        name = request.form.get("name", "").strip()
+        hcl_file = request.form.get("hcl_file", "").strip()
+        cron_expr = request.form.get("cron_expr", "").strip()
+        dry_run = request.form.get("dry_run") == "1"
+
+        if not name or not hcl_file or not cron_expr:
+            return redirect(url_for("schedules"))
+
+        # Resolve relative paths
+        if not os.path.isabs(hcl_file):
+            hcl_file = os.path.join(_ROOT, hcl_file)
+
+        next_run = _compute_next_run(cron_expr)
+        create_schedule(name, hcl_file, cron_expr, dry_run=dry_run, next_run_at=next_run)
+        return redirect(url_for("schedules"))
+
+    @app.route("/schedules/<int:schedule_id>/edit", methods=["GET", "POST"])
+    def schedule_edit(schedule_id: int):
+        sched = get_schedule(schedule_id)
+        if sched is None:
+            return render_template("404.html"), 404
+
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            hcl_file = request.form.get("hcl_file", "").strip()
+            cron_expr = request.form.get("cron_expr", "").strip()
+            dry_run = request.form.get("dry_run") == "1"
+            enabled = request.form.get("enabled") == "1"
+
+            if not name or not hcl_file or not cron_expr:
+                return redirect(url_for("schedule_edit", schedule_id=schedule_id))
+
+            if not os.path.isabs(hcl_file):
+                hcl_file = os.path.join(_ROOT, hcl_file)
+
+            next_run = _compute_next_run(cron_expr)
+            update_schedule(schedule_id, name, hcl_file, cron_expr, dry_run, enabled, next_run)
+            return redirect(url_for("schedules"))
+
+        mapping_files = _discover_mappings()
+        return render_template(
+            "schedule_edit.html",
+            sched=sched,
+            mapping_files=mapping_files,
+        )
+
+    @app.route("/schedules/<int:schedule_id>/delete", methods=["POST"])
+    def schedule_delete(schedule_id: int):
+        delete_schedule(schedule_id)
+        return redirect(url_for("schedules"))
+
+    @app.route("/schedules/<int:schedule_id>/toggle", methods=["POST"])
+    def schedule_toggle(schedule_id: int):
+        sched = get_schedule(schedule_id)
+        if sched:
+            next_run = _compute_next_run(sched["cron_expr"]) if not sched["enabled"] else sched["next_run_at"]
+            update_schedule(
+                schedule_id,
+                sched["name"],
+                sched["hcl_file"],
+                sched["cron_expr"],
+                sched["dry_run"],
+                not sched["enabled"],
+                next_run,
+            )
+        return redirect(url_for("schedules"))
+
+    @app.route("/schedules/<int:schedule_id>/run-now", methods=["POST"])
+    def schedule_run_now(schedule_id: int):
+        """Trigger an immediate (on-demand) execution of a schedule."""
+        sched = get_schedule(schedule_id)
+        if sched is None:
+            return render_template("404.html"), 404
+
+        hcl_file = sched["hcl_file"]
+        if not os.path.isabs(hcl_file):
+            hcl_file = os.path.join(_ROOT, hcl_file)
+
+        if not os.path.isfile(hcl_file):
+            job_id = create_job(hcl_file)
+            start_job(job_id)
+            finish_job(job_id, success=False)
+            add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
+            return redirect(url_for("job_detail", job_id=job_id))
+
+        job_id = create_job(hcl_file)
+        t = threading.Thread(
+            target=_run_job_background,
+            args=(job_id, hcl_file, sched.get("dry_run", False)),
+            daemon=True,
+            name=f"sync-job-{job_id}",
+        )
+        t.start()
+        return redirect(url_for("job_detail", job_id=job_id))
 
     # ------------------------------------------------------------------
     # 404 handler
@@ -329,3 +446,19 @@ def _discover_mappings() -> list[str]:
     return sorted(
         os.path.relpath(p, _ROOT) for p in glob.glob(pattern)
     )
+
+
+def _compute_next_run(cron_expr: str) -> str | None:
+    """Return the ISO-formatted next run time for *cron_expr*, or None on error."""
+    try:
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        from croniter import croniter  # noqa: PLC0415
+
+        now = datetime.now(timezone.utc)
+        cron = croniter(cron_expr, now)
+        next_dt = cron.get_next(datetime)
+        return next_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        logger.warning("Invalid cron expression: %r", cron_expr)
+        return None

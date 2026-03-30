@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Modular NetBox collector — CLI entry point.
+"""
+File: main.py
+Purpose: Modular NetBox collector — CLI entry point.
+Created: 2026-03-30
+Last Changed: Copilot 2026-03-30 Issue: #scheduler
 
 Usage
 -----
   python main.py --mapping mappings/vmware.hcl
   python main.py --mapping mappings/xclarity.hcl --dry-run
-  python main.py                              # auto-discovers all mappings/*.hcl
+  python main.py --run-scheduler
 
 Getting started
 ---------------
@@ -24,15 +28,19 @@ Options
   --log-level LEVEL     Logging verbosity: DEBUG, INFO, WARNING, ERROR.
                         Defaults to the LOG_LEVEL environment variable, or
                         INFO if that is not set.
+  --run-scheduler       Run the scheduler loop, executing HCL jobs per their
+                        stored cron schedules.  This is the default mode used
+                        by the Docker container.
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import logging
 import os
 import sys
+import threading
+import time
 from typing import Any
 
 
@@ -63,6 +71,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Choices: DEBUG, INFO, WARNING, ERROR."
         ),
     )
+    parser.add_argument(
+        "--run-scheduler",
+        action="store_true",
+        default=False,
+        help=(
+            "Run the scheduler loop.  Checks the database for due cron schedules "
+            "every 60 seconds and executes them.  Runs until interrupted."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -74,14 +91,6 @@ def _setup_logging(level: str | None = None) -> None:
         format="%(asctime)s [%(threadName)s] [%(levelname)s] [%(name)s] %(message)s",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
-
-
-def _discover_mappings() -> list[str]:
-    """Return all ``mappings/*.hcl`` files relative to this script's directory."""
-    base = os.path.dirname(os.path.abspath(__file__))
-    pattern = os.path.join(base, "mappings", "*.hcl")
-    found = sorted(glob.glob(pattern))
-    return found
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,18 +110,22 @@ def main(argv: list[str] | None = None) -> int:
 
     init_db()
 
-    # Determine which mapping files to run
+    # ------------------------------------------------------------------
+    # Scheduler mode: run continuously, firing jobs per cron schedule.
+    # ------------------------------------------------------------------
+    if args.run_scheduler:
+        return _run_scheduler()
+
+    # ------------------------------------------------------------------
+    # Manual mode: run one or more explicitly specified mapping files.
+    # ------------------------------------------------------------------
     mapping_paths: list[str] = args.mappings or []
     if not mapping_paths:
-        mapping_paths = _discover_mappings()
-        if not mapping_paths:
-            logging.error(
-                "No mapping files found.  Use --mapping PATH or place *.hcl "
-                "files in the mappings/ directory.  "
-                "(Tip: copy a *.hcl.example template and rename it to *.hcl first.)"
-            )
-            return 1
-        logging.info("Auto-discovered %d mapping(s): %s", len(mapping_paths), mapping_paths)
+        logging.error(
+            "No mapping files specified.  Use --mapping PATH to run a specific HCL file, "
+            "or --run-scheduler to execute jobs from the schedule database."
+        )
+        return 1
 
     from collector.engine import Engine  # noqa: PLC0415
 
@@ -159,6 +172,125 @@ def main(argv: list[str] | None = None) -> int:
             finish_job(job_id, success=success, summary=summary if summary else None)
 
     return exit_code
+
+
+# ---------------------------------------------------------------------------
+# Scheduler loop
+# ---------------------------------------------------------------------------
+
+# Set of schedule IDs whose jobs are currently running (prevents double-fire).
+_active_schedule_ids: set[int] = set()
+_active_lock = threading.Lock()
+
+
+def _run_scheduler(poll_interval: int = 60) -> int:
+    """Run the scheduler loop indefinitely, checking for due jobs every *poll_interval* seconds."""
+    logging.info("Scheduler started.  Polling for due jobs every %d s.", poll_interval)
+    while True:
+        try:
+            _check_and_fire_due_schedules()
+        except Exception as exc:
+            logging.exception("Scheduler poll error: %s", exc)
+        time.sleep(poll_interval)
+
+
+def _check_and_fire_due_schedules() -> None:
+    from collector.db import get_due_schedules, update_schedule_run  # noqa: PLC0415
+
+    due = get_due_schedules()
+    if not due:
+        return
+
+    for sched in due:
+        sid = sched["id"]
+        with _active_lock:
+            if sid in _active_schedule_ids:
+                continue  # already running
+            _active_schedule_ids.add(sid)
+
+        # Advance next_run_at immediately so that concurrent scheduler instances
+        # (or a fast second poll) don't double-fire the same schedule.
+        now_str, next_str = _advance_schedule(sched)
+        update_schedule_run(sid, now_str, next_str)
+
+        t = threading.Thread(
+            target=_run_scheduled_job,
+            args=(sched,),
+            daemon=True,
+            name=f"sched-{sid}",
+        )
+        t.start()
+        logging.info(
+            "Fired scheduled job for '%s' (%s).  Next run: %s",
+            sched["name"],
+            sched["hcl_file"],
+            next_str,
+        )
+
+
+def _advance_schedule(sched: dict[str, Any]) -> tuple[str, str]:
+    """Return (now_str, next_run_str) for the given schedule."""
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from croniter import croniter  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%dT%H:%M:%S")
+    cron = croniter(sched["cron_expr"], now)
+    next_dt = cron.get_next(datetime)
+    next_str = next_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    return now_str, next_str
+
+
+def _run_scheduled_job(sched: dict[str, Any]) -> None:
+    """Execute a single scheduled HCL mapping file, recording the job in the DB."""
+    from collector.db import create_job, finish_job, start_job  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+
+    hcl_file = sched["hcl_file"]
+    dry_run: bool = sched.get("dry_run", False)
+
+    if not os.path.isfile(hcl_file):
+        logging.error("Scheduled mapping file not found: %s", hcl_file)
+        with _active_lock:
+            _active_schedule_ids.discard(sched["id"])
+        return
+
+    job_id = create_job(hcl_file)
+    start_job(job_id)
+
+    handler = JobLogHandler(job_id)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
+    )
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+
+    summary: dict[str, Any] = {}
+    success = False
+    try:
+        from collector.engine import Engine  # noqa: PLC0415
+
+        engine = Engine()
+        all_stats = engine.run(hcl_file, dry_run_override=dry_run if dry_run else None)
+        summary = {
+            s.object_name: {
+                "processed": s.processed,
+                "created": s.created,
+                "updated": s.updated,
+                "skipped": s.skipped,
+                "errored": s.errored,
+            }
+            for s in all_stats
+        }
+        success = True
+    except Exception as exc:
+        logging.exception("Scheduled job failed for %s: %s", hcl_file, exc)
+    finally:
+        root_logger.removeHandler(handler)
+        finish_job(job_id, success=success, summary=summary if summary else None)
+        with _active_lock:
+            _active_schedule_ids.discard(sched["id"])
 
 
 if __name__ == "__main__":

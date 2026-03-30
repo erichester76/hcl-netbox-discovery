@@ -10,6 +10,8 @@ The modular collector is a declarative, source-agnostic framework for syncing ex
 
 The engine reads the HCL file, connects to both systems, and orchestrates the full sync — including prerequisite creation, field evaluation, parallel threading, tag management, and error isolation — without any source-specific code.
 
+A web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs, a cron-based scheduler for unattended operation, and a cache management panel. All job history, logs, and schedules are stored in a local SQLite database.
+
 ---
 
 ## Package Layout
@@ -18,17 +20,14 @@ The engine reads the HCL file, connects to both systems, and orchestrates the fu
 hcl-netbox-discovery/
 ├── lib/
 │   └── pynetbox2.py               # NetBox client library
-├── archive/
-│   ├── README.md                  # Explains the archived scripts
-│   ├── vmware-collector.py        # Original monolithic VMware collector
-│   ├── xclarity-collector.py      # Original monolithic XClarity collector
-│   └── cache-warmer.py            # Original standalone cache pre-warmer
 ├── collector/
 │   ├── __init__.py
 │   ├── engine.py                  # Top-level orchestrator
 │   ├── config.py                  # HCL parser + config model
 │   ├── context.py                 # Per-run state: NB client, source client, prereq cache
+│   ├── db.py                      # SQLite job/schedule store (shared by CLI and web UI)
 │   ├── field_resolvers.py         # Expression evaluator (source(), coalesce(), etc.)
+│   ├── job_log_handler.py         # logging.Handler that writes to the jobs DB
 │   ├── prerequisites.py           # Drives ensure_* chains from HCL prerequisite blocks
 │   ├── parallel.py                # Shared ThreadPoolExecutor wrapper
 │   └── sources/
@@ -43,6 +42,19 @@ hcl-netbox-discovery/
 │       ├── prometheus.py          # Prometheus node-exporter adapter
 │       ├── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
 │       └── tenable.py             # Tenable One / Nessus adapter
+├── web/
+│   ├── __init__.py
+│   ├── app.py                     # Flask application factory + all route handlers
+│   └── templates/
+│       ├── base.html              # Shared layout (navbar, Bootstrap 5)
+│       ├── index.html             # Dashboard: run a job, view active/recent jobs
+│       ├── job_detail.html        # Live-streaming log viewer for a single job
+│       ├── schedules.html         # Scheduler management: add/list/edit/delete schedules
+│       ├── schedule_edit.html     # Edit form for an existing schedule
+│       ├── cache.html             # Cache backend stats and flush controls
+│       └── 404.html               # Error page
+├── data/                          # Runtime data directory (created automatically)
+│   └── collector_jobs.sqlite3     # SQLite database (jobs, logs, schedules)
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example
@@ -59,9 +71,183 @@ hcl-netbox-discovery/
 │   ├── active-directory-users.hcl.example
 │   └── tenable.hcl.example
 ├── regex/                         # Pattern files consumed by regex_file() expressions
-├── main.py                        # CLI entry point
+├── docs/
+│   ├── ARCHITECTURE.md            # This document
+│   └── HCL_REFERENCE.md          # HCL mapping file syntax reference
+├── main.py                        # CLI entry point (manual run + scheduler loop)
+├── web_server.py                  # Web UI entry point
+├── Dockerfile
+├── docker-compose.yml
 └── requirements.txt
 ```
+
+---
+
+## Running Modes
+
+### Manual one-shot run (CLI)
+
+Run a single HCL mapping file explicitly:
+
+```
+python main.py --mapping mappings/vmware.hcl [--dry-run] [--log-level LEVEL]
+```
+
+The `--mapping` flag may be repeated to run multiple files in sequence. Omitting it (without `--run-scheduler`) is an error — there is no automatic discovery of `*.hcl` files.
+
+### Scheduler mode (long-running process)
+
+```
+python main.py --run-scheduler [--log-level LEVEL]
+```
+
+Polls the database every 60 seconds for cron schedules that are due and fires them in background threads. This is the default mode used by the Docker container (`CMD ["--run-scheduler"]`).
+
+### Web UI
+
+```
+python web_server.py [--port PORT] [--host HOST] [--debug]
+```
+
+Serves the Flask dashboard on port 5000 (default). The web server and the scheduler process share the same SQLite database, so jobs started from either surface appear together in the dashboard.
+
+---
+
+## SQLite Database
+
+`collector/db.py` owns the single SQLite file (`data/collector_jobs.sqlite3` by default, overridden by `COLLECTOR_DB_PATH`). It is opened in **WAL mode** with **foreign key enforcement** enabled on every connection. A module-level `threading.Lock` serialises writes from the multi-threaded engine and from concurrent web requests.
+
+The path is created automatically (`os.makedirs`) on first use.
+
+### Schema
+
+#### `jobs`
+
+Tracks every sync execution, whether started from the CLI or the web UI.
+
+```sql
+CREATE TABLE jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    hcl_file    TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | failed
+    created_at  TEXT    NOT NULL,   -- ISO-8601 UTC timestamp
+    started_at  TEXT,               -- set by start_job()
+    finished_at TEXT,               -- set by finish_job()
+    summary     TEXT                -- JSON blob: {object_name: {processed, created, ...}}
+);
+```
+
+Status lifecycle:
+
+```
+queued  →  running  →  success
+                    →  failed
+```
+
+#### `job_logs`
+
+Stores captured log records for each job (written by `JobLogHandler`).
+
+```sql
+CREATE TABLE job_logs (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id    INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    timestamp TEXT    NOT NULL,
+    level     TEXT    NOT NULL,   -- DEBUG | INFO | WARNING | ERROR
+    logger    TEXT,
+    message   TEXT    NOT NULL
+);
+
+CREATE INDEX idx_job_logs_job_id ON job_logs(job_id);
+```
+
+#### `schedules`
+
+Stores cron-based schedules managed through the web UI.
+
+```sql
+CREATE TABLE schedules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,        -- human-readable label
+    hcl_file    TEXT    NOT NULL,        -- absolute path to the HCL mapping file
+    cron_expr   TEXT    NOT NULL,        -- 5-field cron: "minute hour day month weekday"
+    dry_run     INTEGER NOT NULL DEFAULT 0,   -- 0 = live, 1 = dry-run
+    enabled     INTEGER NOT NULL DEFAULT 1,   -- 0 = paused, 1 = active
+    created_at  TEXT    NOT NULL,
+    last_run_at TEXT,                    -- UTC timestamp of the last successful fire
+    next_run_at TEXT                     -- UTC timestamp of the next scheduled fire
+);
+```
+
+`next_run_at` is computed by `croniter` when a schedule is created or edited, and advanced immediately when it fires so that a second poll in the same minute cannot double-fire the same schedule.
+
+### Public API (`collector/db.py`)
+
+| Function | Description |
+|---|---|
+| `init_db()` | Create tables (idempotent — safe to call on every startup) |
+| `create_job(hcl_file)` → `int` | Insert a new queued job; return its id |
+| `start_job(job_id)` | Mark job as running; set `started_at` |
+| `finish_job(job_id, success, summary)` | Mark job as success/failed; store JSON summary |
+| `get_job(job_id)` → `dict\|None` | Fetch a single job record |
+| `get_jobs(limit)` → `list` | Most-recent jobs, newest first |
+| `get_running_jobs()` → `list` | All queued/running jobs (no limit) |
+| `add_log(job_id, level, logger, message)` | Append one log line |
+| `get_job_logs(job_id)` → `list` | All log lines for a job, chronological |
+| `create_schedule(name, hcl_file, cron_expr, ...)` → `int` | Insert a new schedule |
+| `get_schedules()` → `list` | All schedules ordered by name |
+| `get_schedule(id)` → `dict\|None` | Single schedule or None |
+| `update_schedule(id, ...)` | Update name, file, cron, flags, next_run_at |
+| `delete_schedule(id)` | Remove a schedule |
+| `get_due_schedules()` → `list` | Enabled schedules whose `next_run_at ≤ now()` |
+| `update_schedule_run(id, last_run_at, next_run_at)` | Advance timestamps after a fire |
+
+---
+
+## Web UI
+
+`web/app.py` is a Flask application factory (`create_app()`). It imports `collector.db` directly for all data access and spawns background `threading.Thread` instances for on-demand job runs triggered from the UI.
+
+### Routes
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Dashboard: active jobs panel (auto-polls `/api/running-jobs`) + recent history table + run-job form |
+| `GET` | `/jobs/<id>` | Job detail page with live-streaming log viewer (polls `/jobs/<id>/logs`) |
+| `GET` | `/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status |
+| `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling) |
+| `POST` | `/jobs/run` | Trigger an on-demand job from the dashboard form |
+| `GET` | `/schedules` | Scheduler management page: list all schedules + add-schedule form |
+| `POST` | `/schedules/create` | Create a new schedule (computes initial `next_run_at` via `croniter`) |
+| `GET/POST` | `/schedules/<id>/edit` | Edit an existing schedule |
+| `POST` | `/schedules/<id>/delete` | Delete a schedule |
+| `POST` | `/schedules/<id>/toggle` | Enable or disable a schedule |
+| `POST` | `/schedules/<id>/run-now` | Fire a schedule's mapping file immediately as a one-off job |
+| `GET` | `/cache` | Cache backend stats (entry counts by resource) |
+| `POST` | `/cache/flush` | Flush all cache entries or entries for a specific resource |
+
+### Scheduler UI features
+
+- Cron expression editor with preset buttons (hourly, daily 2am, weekly, monthly)
+- Inline 5-field validation feedback (client-side)
+- Cron expression reference table (field ranges + special characters)
+- Enable/disable toggle without deleting the schedule
+- "Run Now" button to trigger an immediate one-off execution of any schedule
+
+---
+
+## Scheduler
+
+`main.py --run-scheduler` runs an infinite loop:
+
+1. Sleep 60 seconds
+2. Call `db.get_due_schedules()` — returns enabled schedules where `next_run_at ≤ now()`
+3. For each due schedule not already running (tracked in `_active_schedule_ids`):
+   - Immediately advance `next_run_at` via `croniter` and write it to the DB (prevents double-fire)
+   - Spawn a `daemon=True` background thread calling `_run_scheduled_job(sched)`
+4. `_run_scheduled_job` creates a job row, attaches a `JobLogHandler`, runs the engine, then marks the job success/failed
+
+The `_active_schedule_ids` set (guarded by a `threading.Lock`) prevents a slow-running job from being re-fired on the next poll while it is still in progress.
 
 ---
 
@@ -215,6 +401,18 @@ Dry-run mode (when `collector.dry_run = true`) logs the payloads that *would* be
 
 ---
 
+### `collector/db.py`
+
+See [SQLite Database](#sqlite-database) above for the full schema and public API reference.
+
+---
+
+### `collector/job_log_handler.py`
+
+A `logging.Handler` subclass that writes formatted log records to the `job_logs` table via `db.add_log()`. It is attached to the root logger for the duration of each job run (CLI or web-triggered) and removed immediately afterwards so logs from other concurrent jobs are not cross-contaminated.
+
+---
+
 ### `collector/sources/base.py`
 
 Minimal interface every source adapter must implement:
@@ -357,41 +555,95 @@ When `detail_endpoint` is set the adapter fetches each item's detail and deep-me
 
 ### `main.py`
 
-CLI entry point:
+CLI entry point. Supports three operating modes:
 
 ```
-usage: main.py [--mapping PATH] [--dry-run] [--log-level LEVEL]
+python main.py --mapping PATH [--mapping PATH ...] [--dry-run] [--log-level LEVEL]
+    Run one or more HCL mapping files explicitly.  No automatic file discovery.
 
-  --mapping   PATH to an HCL mapping file (default: auto-discover mappings/*.hcl)
-  --dry-run   Log payloads without writing to NetBox
-  --log-level DEBUG / INFO / WARNING (default: INFO)
+python main.py --run-scheduler [--log-level LEVEL]
+    Run the scheduler loop.  Polls the DB every 60 s for due cron schedules.
+    This is the default Docker container mode (CMD ["--run-scheduler"]).
+
+python main.py
+    Error — at least --mapping or --run-scheduler is required.
 ```
+
+Every job run (whether from CLI or the web UI) is recorded in the `jobs` table so that
+the web dashboard always shows a unified history regardless of how a job was started.
+
+---
+
+### `web_server.py`
+
+Thin entry-point wrapper for the Flask web UI. Parses `--port`, `--host`, `--debug`, and
+`--log-level` options (or their environment variable equivalents: `WEB_PORT`, `WEB_HOST`,
+`FLASK_DEBUG`, `LOG_LEVEL`) and calls `web.app.create_app()`.
 
 ---
 
 ## Data Flow
 
+### CLI / scheduled run
+
 ```
-HCL file
+main.py (--mapping or --run-scheduler)
    │
-   ▼
-config.py ──► CollectorConfig
+   ├── init_db()                        ← ensure tables exist
    │
-   ├──► sources/<adapter>.py (vmware, azure, ldap, catc, nexus, f5, prometheus, snmp, tenable, rest)
-   │        └── get_objects("collection") → [raw_obj, …]
+   ├── [scheduler] get_due_schedules()  ← find cron entries past their next_run_at
+   │        └── update_schedule_run()   ← advance next_run_at immediately (no double-fire)
    │
-   └──► engine.py
-           │
-           ├── For each raw_obj:
-           │       │
-           │       ├── prerequisites.py → resolve prereqs → context.prereqs[name] = id
-           │       │
-           │       ├── field_resolvers.py → evaluate each field expr → payload dict
-           │       │
-           │       └── pynetbox2.upsert(resource, payload, lookup_fields)
-           │
-           └── For each nested collection (interfaces, inventory_items, disks, modules):
-                   └── same inner loop, parent_id injected automatically
+   ├── create_job() / start_job()       ← record job in SQLite
+   │
+   ├── JobLogHandler attached to root logger
+   │
+   ├── HCL file
+   │      │
+   │      ▼
+   │   config.py ──► CollectorConfig
+   │      │
+   │      ├──► sources/<adapter>.py → get_objects("collection") → [raw_obj, …]
+   │      │
+   │      └──► engine.py
+   │               │
+   │               ├── For each raw_obj:
+   │               │       ├── prerequisites.py → resolve prereqs
+   │               │       ├── field_resolvers.py → evaluate fields → payload
+   │               │       └── pynetbox2.upsert(resource, payload, lookup_fields)
+   │               │
+   │               └── For each nested collection (interfaces, inventory_items, disks, modules):
+   │                       └── same inner loop, parent_id injected automatically
+   │
+   └── finish_job(success, summary)     ← write final status + JSON summary to SQLite
+```
+
+### Web UI request flow
+
+```
+Browser → Flask (web/app.py)
+              │
+              ├── GET  /              → render_template("index.html",
+              │                           running=get_running_jobs(),
+              │                           recent=get_jobs())
+              │
+              ├── POST /jobs/run      → threading.Thread(_run_job_background)
+              │                           └── same engine flow as CLI run above
+              │
+              ├── GET  /jobs/<id>     → render_template("job_detail.html",
+              │                           job=get_job(id), logs=get_job_logs(id))
+              │
+              ├── GET  /jobs/<id>/logs → jsonify(new logs since after_id, job status)
+              │                           (polled every 2 s by the log viewer)
+              │
+              ├── GET  /schedules     → render_template("schedules.html",
+              │                           schedules=get_schedules())
+              │
+              ├── POST /schedules/create  → create_schedule(), compute next_run via croniter
+              ├── POST /schedules/<id>/edit    → update_schedule()
+              ├── POST /schedules/<id>/delete  → delete_schedule()
+              ├── POST /schedules/<id>/toggle  → update_schedule(enabled=not current)
+              └── POST /schedules/<id>/run-now → threading.Thread(_run_job_background)
 ```
 
 ---
@@ -402,7 +654,9 @@ config.py ──► CollectorConfig
 |---|---|
 | Minimal per-collector code | Field mappings are pure HCL data; no Python needed per source |
 | Reuse existing NetBox client | `pynetbox2.py` is called unchanged |
-| Thread safety | `parallel.py` wraps executor; each item gets an isolated context |
+| Thread safety | `parallel.py` wraps executor; each item gets an isolated context; DB writes serialised by a module-level lock |
 | No silent data loss | Prerequisites that fail cause the item to be skipped with a warning |
 | Dry-run safety | Engine checks flag before every write call |
 | Extensible sources | Add a new `sources/foo.py` implementing `DataSource`; no engine changes |
+| Unified job visibility | CLI runs, scheduler runs, and web-triggered runs all write to the same SQLite DB |
+| Unattended operation | `--run-scheduler` + `restart: unless-stopped` in Docker Compose keeps jobs firing on schedule |

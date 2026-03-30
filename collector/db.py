@@ -1,6 +1,6 @@
 """
 File: collector/db.py
-Purpose: SQLite-backed store for sync job status and log records.
+Purpose: SQLite-backed store for sync job status, log records, and schedules.
 Created: 2026-03-30
 Last Changed: Copilot 2026-03-30 Issue: #141
 """
@@ -56,6 +56,18 @@ CREATE TABLE IF NOT EXISTS job_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    hcl_file    TEXT    NOT NULL,
+    cron_expr   TEXT    NOT NULL,
+    dry_run     INTEGER NOT NULL DEFAULT 0,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL,
+    last_run_at TEXT,
+    next_run_at TEXT
+);
 """
 
 _lock = threading.Lock()
@@ -216,3 +228,108 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             job["summary"] = row[6]
     return job
+
+
+# ---------------------------------------------------------------------------
+# Schedule CRUD
+# ---------------------------------------------------------------------------
+
+
+def create_schedule(
+    name: str,
+    hcl_file: str,
+    cron_expr: str,
+    dry_run: bool = False,
+    next_run_at: str | None = None,
+) -> int:
+    """Insert a new schedule and return its *id*."""
+    now = _now()
+    with _conn() as con:
+        cur = con.execute(
+            "INSERT INTO schedules (name, hcl_file, cron_expr, dry_run, enabled, created_at, next_run_at)"
+            " VALUES (?, ?, ?, ?, 1, ?, ?)",
+            (name, hcl_file, cron_expr, int(dry_run), now, next_run_at),
+        )
+        return cur.lastrowid  # type: ignore[return-value]
+
+
+def get_schedules() -> list[dict[str, Any]]:
+    """Return all schedules ordered by name."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT id, name, hcl_file, cron_expr, dry_run, enabled, created_at, last_run_at, next_run_at"
+            " FROM schedules ORDER BY name ASC"
+        ).fetchall()
+    return [_row_to_schedule(r) for r in rows]
+
+
+def get_schedule(schedule_id: int) -> dict[str, Any] | None:
+    """Return a single schedule or *None* if not found."""
+    with _conn() as con:
+        row = con.execute(
+            "SELECT id, name, hcl_file, cron_expr, dry_run, enabled, created_at, last_run_at, next_run_at"
+            " FROM schedules WHERE id=?",
+            (schedule_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_schedule(row)
+
+
+def update_schedule(
+    schedule_id: int,
+    name: str,
+    hcl_file: str,
+    cron_expr: str,
+    dry_run: bool,
+    enabled: bool,
+    next_run_at: str | None = None,
+) -> None:
+    """Update an existing schedule."""
+    with _conn() as con:
+        con.execute(
+            "UPDATE schedules SET name=?, hcl_file=?, cron_expr=?, dry_run=?, enabled=?, next_run_at=?"
+            " WHERE id=?",
+            (name, hcl_file, cron_expr, int(dry_run), int(enabled), next_run_at, schedule_id),
+        )
+
+
+def delete_schedule(schedule_id: int) -> None:
+    """Delete a schedule by id."""
+    with _conn() as con:
+        con.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+
+
+def get_due_schedules() -> list[dict[str, Any]]:
+    """Return enabled schedules whose next_run_at is at or before now."""
+    now = _now()
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT id, name, hcl_file, cron_expr, dry_run, enabled, created_at, last_run_at, next_run_at"
+            " FROM schedules WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= ?",
+            (now,),
+        ).fetchall()
+    return [_row_to_schedule(r) for r in rows]
+
+
+def update_schedule_run(schedule_id: int, last_run_at: str, next_run_at: str) -> None:
+    """Record that a schedule has run and set its next fire time."""
+    with _conn() as con:
+        con.execute(
+            "UPDATE schedules SET last_run_at=?, next_run_at=? WHERE id=?",
+            (last_run_at, next_run_at, schedule_id),
+        )
+
+
+def _row_to_schedule(row: tuple) -> dict[str, Any]:
+    return {
+        "id": row[0],
+        "name": row[1],
+        "hcl_file": row[2],
+        "cron_expr": row[3],
+        "dry_run": bool(row[4]),
+        "enabled": bool(row[5]),
+        "created_at": row[6],
+        "last_run_at": row[7],
+        "next_run_at": row[8],
+    }
