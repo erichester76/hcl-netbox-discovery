@@ -1,8 +1,8 @@
 # AGENTS.md
 
 **Agent Instructions – Baseline for This Repository**
-
 This file provides specific guidance for AI coding agents working in this project.  
+
 **Core Rule**: Stay strictly focused on the exact task requested. Do not expand scope, add extra features, or over-deliver unless explicitly asked.
 
 ## How to Approach Any Task
@@ -16,7 +16,7 @@ This file provides specific guidance for AI coding agents working in this projec
 
 ### Project Structure & Module Organization
 - All source code belongs in the `/src` directory.
-- All variables and credentials are defined in `.env.example`. Copy `.env.example` → `.env` for local development and testing. Never commit secrets.
+- All variables and credentials are defined in `.env.example`. Copy `.env.example` to `.env` for local development and testing. Never commit secrets.
 
 ### Build, Test, and Development Commands
 - Use the project's configured build and package manager for dependency installation and running commands.
@@ -170,6 +170,5 @@ Last Changed: [Your Name] Issue: #123
 **Remember**: The goal is reliable, incremental progress. Over-delivering creates unnecessary review burden.
 
 Refer to the full project README and other documentation for additional context when needed, but always prioritize the exact task given.
-
 
 Last updated: March 2026
