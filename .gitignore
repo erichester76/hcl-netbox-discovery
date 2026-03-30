@@ -43,4 +43,6 @@ env/
 
 # Docker build artifacts
 *.tar
-collector_jobs.sqlite3
+
+# Runtime data (SQLite job DB)
+data/
