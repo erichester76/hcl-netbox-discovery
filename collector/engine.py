@@ -501,6 +501,8 @@ class Engine:
             return None
         try:
             obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
+            logger.info("Upserted  resource=%-30s  %s", resource, lookup_display)
             if stats is not None:
                 stats.record("created")
             return obj
@@ -534,6 +536,8 @@ class Engine:
             items = _get_nested_items(ctx.source_obj, iface_cfg.source_items, parent_resolver)
             if not items:
                 continue
+
+            logger.info("Processing %d interface(s) for %r", len(items), obj_cfg.name)
 
             # Choose correct NetBox resource and parent field name
             if "virtual_machine" in obj_cfg.netbox_resource or obj_cfg.netbox_resource.endswith("virtual_machines"):
@@ -880,6 +884,8 @@ class Engine:
             if not items:
                 continue
 
+            logger.info("Processing %d inventory item(s) for %r", len(items), obj_cfg.name)
+
             parent_id = extract_id(parent_nb_obj)
 
             # Ensure the inventory item role exists once per block
@@ -939,6 +945,8 @@ class Engine:
             items = _get_nested_items(ctx.source_obj, disk_cfg.source_items, resolver)
             if not items:
                 continue
+
+            logger.info("Processing %d disk(s) for %r", len(items), obj_cfg.name)
 
             parent_id = extract_id(parent_nb_obj)
 
@@ -1011,6 +1019,8 @@ class Engine:
             items = _get_nested_items(ctx.source_obj, mod_cfg.source_items, resolver)
             if not items:
                 continue
+
+            logger.info("Processing %d module(s) for %r", len(items), obj_cfg.name)
 
             seen_dedup_keys: set = set()
 
