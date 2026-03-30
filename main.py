@@ -189,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
 _active_schedule_ids: set[int] = set()
 _active_lock = threading.Lock()
 
+# Set of job IDs (created by the web UI) currently being processed.
+_active_queued_job_ids: set[int] = set()
+_active_queued_lock = threading.Lock()
+
 
 def _run_scheduler(poll_interval: int = 60) -> int:
     """Run the scheduler loop indefinitely, checking for due jobs every *poll_interval* seconds."""
@@ -196,6 +200,7 @@ def _run_scheduler(poll_interval: int = 60) -> int:
     while True:
         try:
             _check_and_fire_due_schedules()
+            _check_and_run_queued_jobs()
         except Exception as exc:
             logging.exception("Scheduler poll error: %s", exc)
         time.sleep(poll_interval)
@@ -298,6 +303,96 @@ def _run_scheduled_job(sched: dict[str, Any]) -> None:
         finish_job(job_id, success=success, summary=summary if summary else None)
         with _active_lock:
             _active_schedule_ids.discard(sched["id"])
+
+
+def _check_and_run_queued_jobs() -> None:
+    """Pick up any jobs with status='queued' (created by the web UI) and run them."""
+    from collector.db import get_queued_jobs  # noqa: PLC0415
+
+    queued = get_queued_jobs()
+    if not queued:
+        return
+
+    for job in queued:
+        job_id = job["id"]
+        with _active_queued_lock:
+            if job_id in _active_queued_job_ids:
+                continue  # already being processed
+            _active_queued_job_ids.add(job_id)
+
+        t = threading.Thread(
+            target=_run_queued_job,
+            args=(job,),
+            daemon=True,
+            name=f"queued-job-{job_id}",
+        )
+        t.start()
+        logging.info(
+            "Running on-demand queued job %d for %s (dry_run=%s)",
+            job_id,
+            job["hcl_file"],
+            job.get("dry_run", False),
+        )
+
+
+def _run_queued_job(job: dict[str, Any]) -> None:
+    """Execute a single on-demand queued job created by the web UI."""
+    from collector.db import add_log, finish_job, start_job  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+
+    job_id = job["id"]
+    hcl_file = job["hcl_file"]
+    dry_run: bool = job.get("dry_run", False)
+
+    start_job(job_id)
+
+    if not os.path.isfile(hcl_file):
+        logging.error("Queued mapping file not found: %s", hcl_file)
+        add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
+        finish_job(job_id, success=False)
+        with _active_queued_lock:
+            _active_queued_job_ids.discard(job_id)
+        return
+
+    handler = JobLogHandler(job_id)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
+    )
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+
+    summary: dict[str, Any] = {}
+    success = False
+    has_errors = False
+    try:
+        from collector.engine import Engine  # noqa: PLC0415
+
+        engine = Engine()
+        all_stats = engine.run(hcl_file, dry_run_override=dry_run or None)
+        summary = {
+            s.object_name: {
+                "processed": s.processed,
+                "created": s.created,
+                "updated": s.updated,
+                "skipped": s.skipped,
+                "errored": s.errored,
+            }
+            for s in all_stats
+        }
+        success = True
+        has_errors = any(s.errored > 0 for s in all_stats)
+    except Exception as exc:
+        logging.exception("Queued job %d failed for %s: %s", job_id, hcl_file, exc)
+    finally:
+        root_logger.removeHandler(handler)
+        finish_job(
+            job_id,
+            success=success,
+            summary=summary if summary else None,
+            has_errors=has_errors,
+        )
+        with _active_queued_lock:
+            _active_queued_job_ids.discard(job_id)
 
 
 if __name__ == "__main__":
