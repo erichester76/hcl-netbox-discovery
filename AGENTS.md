@@ -41,6 +41,12 @@ This file provides specific guidance for AI coding agents working in this projec
 - Maintain a high-level `ARCHITECTURE.md` file that describes the overall system design, major components, data flows, and key decisions.
 - When making changes that affect how the project works, update the relevant documentation in the same commit/PR.
 
+### UI Guidelines
+- Adhere to WCAG and Section 508 Standards for ADA Compliance
+- The official Clemson University color palette is anchored by Clemson Orange (RGB: 245, 102, 0) and Regalia (purple, RGB: 82, 45, 128).
+These primary colors are supported by neutrals including Goal Line (white, RGB: 255, 255, 255) and College Avenue (dark gray, RGB: 51, 51, 51)
+- More standards available at https://www.clemson.edu/brand/web/
+  
 ### Stock Header Template
 Use the following standard stock header at the top of **every new or significantly modified file**. Replace placeholders as needed.
 
