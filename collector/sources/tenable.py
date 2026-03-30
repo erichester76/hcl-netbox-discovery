@@ -52,9 +52,9 @@ import logging
 from typing import Any
 
 import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning  # type: ignore[import]
 
 from .base import DataSource
+from .utils import close_http_session, disable_ssl_warnings, safe_get
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +84,8 @@ def _first(lst: Any, default: str = "") -> str:
 
 
 def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
-    """Return ``obj[key]`` (dict) or ``getattr(obj, key)`` (object) or *default*."""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+    """Alias for the shared :func:`~collector.sources.utils.safe_get` helper."""
+    return safe_get(obj, key, default)
 
 
 class TenableSource(DataSource):
@@ -115,7 +113,7 @@ class TenableSource(DataSource):
 
         verify_ssl = config.verify_ssl
         if not verify_ssl:
-            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+            disable_ssl_warnings()
 
         extra = config.extra or {}
         self._platform = str(extra.get("platform", "tenable")).lower()
@@ -177,12 +175,7 @@ class TenableSource(DataSource):
                     self._delete("/session")
                 except Exception as exc:
                     logger.debug("TenableSource: session logout error: %s", exc)
-            try:
-                self._session.close()
-            except Exception as exc:
-                logger.debug("TenableSource session close error: %s", exc)
-            finally:
-                self._session = None
+            self._session = close_http_session(self._session, "TenableSource")
 
     # ------------------------------------------------------------------
     # Authentication helpers

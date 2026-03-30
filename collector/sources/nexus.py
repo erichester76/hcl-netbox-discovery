@@ -49,6 +49,7 @@ from typing import Any, Optional
 import requests
 
 from .base import DataSource
+from .utils import close_http_session, disable_ssl_warnings, parse_speed_mbps, safe_get
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +145,7 @@ class NexusDashboardSource(DataSource):
 
         verify_ssl = config.verify_ssl
         if not verify_ssl:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            disable_ssl_warnings()
 
         if not config.username or not config.password:
             raise RuntimeError(
@@ -185,13 +185,7 @@ class NexusDashboardSource(DataSource):
 
     def close(self) -> None:
         """Release the HTTP session."""
-        if self._session is not None:
-            try:
-                self._session.close()
-            except Exception as exc:
-                logger.debug("NexusDashboardSource session close error: %s", exc)
-            finally:
-                self._session = None
+        self._session = close_http_session(self._session, "NexusDashboardSource")
 
     # ------------------------------------------------------------------
     # Authentication
@@ -385,31 +379,10 @@ class NexusDashboardSource(DataSource):
 # Utility helpers
 # ---------------------------------------------------------------------------
 
-def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
-    """Return obj[key] (dict) or getattr(obj, key) (object) or *default*."""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+# Module-level aliases so existing call sites are unchanged.
+_safe_get = safe_get
 
 
 def _parse_speed_mbps(speed_str: str) -> Optional[int]:
-    """Parse a speed string like ``"10G"`` or ``"1000 Mbps"`` into Mbps.
-
-    Returns ``None`` when the speed cannot be parsed.
-    """
-    if not speed_str:
-        return None
-    s = str(speed_str).strip().upper().replace(" ", "")
-    # "10GBPS" / "10G" / "10GBIT"
-    m = re.match(r"(\d+(?:\.\d+)?)\s*(?:G(?:BPS|BIT|B)?)", s)
-    if m:
-        return int(float(m.group(1)) * 1000)
-    # "1000MBPS" / "1000M"
-    m = re.match(r"(\d+(?:\.\d+)?)\s*(?:M(?:BPS|BIT|B)?)", s)
-    if m:
-        return int(float(m.group(1)))
-    # bare integer → assume Mbps
-    m = re.match(r"^(\d+)$", s)
-    if m:
-        return int(m.group(1))
-    return None
+    """Delegate to shared helper, treating bare integers as already-Mbps (Nexus)."""
+    return parse_speed_mbps(speed_str)

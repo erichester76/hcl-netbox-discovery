@@ -23,6 +23,8 @@ import logging
 import os
 import sys
 
+from collector import setup_logging
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -57,11 +59,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level, logging.INFO),
-        format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+    setup_logging(args.log_level)
 
     # Ensure lib/ is importable
     here = os.path.dirname(os.path.abspath(__file__))

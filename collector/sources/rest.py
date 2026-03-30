@@ -68,9 +68,9 @@ from typing import Any, Optional
 from urllib.parse import urlparse, urlunparse
 
 import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning  # type: ignore[import]
 
 from .base import DataSource
+from .utils import close_http_session, disable_ssl_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class RestSource(DataSource):
 
         verify_ssl = config.verify_ssl
         if not verify_ssl:
-            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+            disable_ssl_warnings()
 
         session = requests.Session()
         session.verify = verify_ssl
@@ -146,13 +146,7 @@ class RestSource(DataSource):
 
     def close(self) -> None:
         """Close the underlying HTTP session."""
-        if self._session is not None:
-            try:
-                self._session.close()
-            except Exception as exc:
-                logger.debug("RestSource session close error: %s", exc)
-            finally:
-                self._session = None
+        self._session = close_http_session(self._session, "RestSource")
 
     # ------------------------------------------------------------------
     # Internal helpers

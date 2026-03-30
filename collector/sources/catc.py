@@ -49,6 +49,7 @@ import re
 from typing import Any, Optional
 
 from .base import DataSource
+from .utils import parse_speed_mbps, safe_get
 
 logger = logging.getLogger(__name__)
 
@@ -87,16 +88,6 @@ _IFACE_TYPE_MAP: dict[str, str] = {
     "NVE":                         "virtual",
 }
 
-# Speed string suffix → multiplier to convert to Mbps.
-_SPEED_SUFFIX_MAP: list[tuple[str, int]] = [
-    ("gbps", 1000),
-    ("g",    1000),
-    ("mbps", 1),
-    ("m",    1),
-    ("kbps", 0),   # rounded to 0 Mbps — effectively too slow to matter
-    ("k",    0),
-]
-
 
 def _normalize_model(platform_id: str) -> str:
     """Return a normalised Cisco model string from *platform_id*."""
@@ -118,36 +109,8 @@ def _normalize_iface_type(raw_type: str) -> str:
 
 
 def _parse_speed_mbps(speed_str: str) -> Optional[int]:
-    """Parse a DNAC speed string into Mbps.
-
-    DNAC may return speed as:
-      * a numeric string of bits-per-second (e.g. ``"1000000000"`` for 1 Gbps)
-      * a human-readable string like ``"1 Gbps"`` or ``"100 Mbps"``
-
-    Returns ``None`` when the value cannot be parsed.
-    """
-    if not speed_str:
-        return None
-    s = str(speed_str).strip()
-
-    # Pure numeric → assume bits per second
-    if s.isdigit():
-        bps = int(s)
-        if bps == 0:
-            return None
-        return max(1, bps // 1_000_000)  # bps → Mbps
-
-    # Human-readable suffix matching
-    lower = s.lower().replace(" ", "")
-    m = re.match(r"(\d+(?:\.\d+)?)(.*)", lower)
-    if m:
-        value = float(m.group(1))
-        suffix = m.group(2)
-        for key, multiplier in _SPEED_SUFFIX_MAP:
-            if suffix.startswith(key):
-                return int(value * multiplier)
-
-    return None
+    """Delegate to shared helper, treating bare integers as bits-per-second (DNAC)."""
+    return parse_speed_mbps(speed_str, numeric_is_bps=True)
 
 
 def _mask_to_prefix(mask: str) -> Optional[int]:
@@ -425,12 +388,5 @@ class CatalystCenterSource(DataSource):
         }
 
 
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
-
-def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
-    """Return obj[key] (dict) or getattr(obj, key) (object) or *default*."""
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
+# Keep _safe_get as a module-level alias so existing call sites are unchanged.
+_safe_get = safe_get

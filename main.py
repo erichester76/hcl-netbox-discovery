@@ -43,6 +43,8 @@ import threading
 import time
 from typing import Any
 
+from collector import setup_logging as _setup_logging
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -81,16 +83,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
-
-
-def _setup_logging(level: str | None = None) -> None:
-    if level is None:
-        level = os.environ.get("LOG_LEVEL", "INFO")
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s [%(threadName)s] [%(levelname)s] [%(name)s] %(message)s",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
 
 
 def main(argv: list[str] | None = None) -> int:

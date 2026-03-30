@@ -26,6 +26,7 @@ import logging
 from typing import Any, Optional
 
 from .base import DataSource
+from .utils import disable_ssl_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,6 @@ class VMwareSource(DataSource):
 
         logger.info("Connecting to vCenter: %s", config.url)
 
-        import urllib3
-
         connect_kwargs: dict = {
             "host": config.url,
             "user": config.username,
@@ -118,7 +117,7 @@ class VMwareSource(DataSource):
             # certificate verification.  Passing only an unverified sslContext
             # without this flag causes pyVmomi to still attempt thumbprint
             # validation, which can result in vim.fault.InvalidLogin.
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            disable_ssl_warnings()
             connect_kwargs["disableSslCertValidation"] = True
 
         self._api_client = SmartConnect(**connect_kwargs)
@@ -359,10 +358,9 @@ class VMwareSource(DataSource):
 
     def _connect_rest(self, config: Any) -> Any:
         """Authenticate to the vSphere REST API and return the session."""
-        import requests
-        from urllib.parse import urljoin
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        import requests  # noqa: PLC0415
+        from urllib.parse import urljoin  # noqa: PLC0415
+        disable_ssl_warnings()
 
         session = requests.Session()
         session.verify = config.verify_ssl
