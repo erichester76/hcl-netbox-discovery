@@ -42,10 +42,14 @@ COPY collector/ collector/
 COPY lib/       lib/
 COPY mappings/  mappings/
 COPY regex/     regex/
+COPY web/       web/
 COPY main.py    .
+COPY web_server.py .
 
 # Run as a non-root user
 RUN useradd -r -u 1001 -g root appuser
+# Ensure the data directory for the job DB is writable
+RUN mkdir -p /app/data && chown 1001 /app/data
 USER appuser
 
 ENTRYPOINT ["python", "main.py"]

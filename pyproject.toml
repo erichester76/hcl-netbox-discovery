@@ -17,6 +17,7 @@ dependencies = [
     "ldap3",
     "pysnmp>=7.1",
     "netboxlabs-diode-sdk",
+    "flask>=3.0",
     "python-hcl2>=4.3.0",
     "dnacentersdk>=2.6.0",
     "azure-identity>=1.15.0",
