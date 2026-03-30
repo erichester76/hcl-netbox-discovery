@@ -339,6 +339,37 @@ def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> No
 # ---------------------------------------------------------------------------
 
 
+def _env_int(name: str, default: int) -> int:
+    """Return *name* from the environment as int, falling back to *default*."""
+    raw = os.environ.get(name, "")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid integer value for %s=%r; using default %d", name, raw, default)
+    return default
+
+
+def _cache_client_kwargs(backend: str, cache_url: str) -> dict[str, Any]:
+    """Build common kwargs for a pynetbox2 cache-only client."""
+    url = os.environ.get("NETBOX_URL", "http://localhost:8080")
+    token = os.environ.get("NETBOX_TOKEN", "")
+    kwargs: dict[str, Any] = dict(
+        url=url,
+        token=token,
+        cache_backend=backend,
+        cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
+    )
+    sentinel_ttl = _env_int("NETBOX_PREWARM_SENTINEL_TTL", 0)
+    if sentinel_ttl:
+        kwargs["prewarm_sentinel_ttl_seconds"] = sentinel_ttl
+    if backend == "redis":
+        kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
+    if backend == "sqlite":
+        kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
+    return kwargs
+
+
 def _get_cache_info() -> dict[str, Any]:
     """Return a dict describing the current cache backend and entry counts."""
     try:
@@ -356,11 +387,16 @@ def _get_cache_info() -> dict[str, Any]:
         # Build a temporary client just to inspect the cache
         url = os.environ.get("NETBOX_URL", "http://localhost:8080")
         token = os.environ.get("NETBOX_TOKEN", "")
+        _ttl_raw = os.environ.get("NETBOX_CACHE_TTL", "")
+        _sentinel_raw = os.environ.get("NETBOX_PREWARM_SENTINEL_TTL", "")
         kwargs: dict[str, Any] = dict(
             url=url,
             token=token,
             cache_backend=backend,
+            cache_ttl_seconds=int(_ttl_raw) if _ttl_raw else 300,
         )
+        if _sentinel_raw:
+            kwargs["prewarm_sentinel_ttl_seconds"] = int(_sentinel_raw)
         if backend == "redis":
             kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
         if backend == "sqlite":
@@ -391,7 +427,16 @@ def _flush_cache(resource: str | None) -> None:
         url = os.environ.get("NETBOX_URL", "http://localhost:8080")
         token = os.environ.get("NETBOX_TOKEN", "")
         cache_url = os.environ.get("NETBOX_CACHE_URL", "")
-        kwargs: dict[str, Any] = dict(url=url, token=token, cache_backend=backend)
+        _ttl_raw = os.environ.get("NETBOX_CACHE_TTL", "")
+        _sentinel_raw = os.environ.get("NETBOX_PREWARM_SENTINEL_TTL", "")
+        kwargs: dict[str, Any] = dict(
+            url=url,
+            token=token,
+            cache_backend=backend,
+            cache_ttl_seconds=int(_ttl_raw) if _ttl_raw else 300,
+        )
+        if _sentinel_raw:
+            kwargs["prewarm_sentinel_ttl_seconds"] = int(_sentinel_raw)
         if backend == "redis":
             kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
         if backend == "sqlite":
@@ -422,7 +467,16 @@ def _prewarm_cache(resource: str | None) -> None:
         url = os.environ.get("NETBOX_URL", "http://localhost:8080")
         token = os.environ.get("NETBOX_TOKEN", "")
         cache_url = os.environ.get("NETBOX_CACHE_URL", "")
-        kwargs: dict[str, Any] = dict(url=url, token=token, cache_backend=backend)
+        _ttl_raw = os.environ.get("NETBOX_CACHE_TTL", "")
+        _sentinel_raw = os.environ.get("NETBOX_PREWARM_SENTINEL_TTL", "")
+        kwargs: dict[str, Any] = dict(
+            url=url,
+            token=token,
+            cache_backend=backend,
+            cache_ttl_seconds=int(_ttl_raw) if _ttl_raw else 300,
+        )
+        if _sentinel_raw:
+            kwargs["prewarm_sentinel_ttl_seconds"] = int(_sentinel_raw)
         if backend == "redis":
             kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
         if backend == "sqlite":
