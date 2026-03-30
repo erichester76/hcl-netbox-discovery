@@ -13,6 +13,9 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_VER: "3.12"
+        HTTP_PROXY:  ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY:    ${NO_PROXY:-}
     image: clemson-netbox-discovery:latest
     restart: unless-stopped
 
@@ -110,6 +113,9 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_VER: "3.12"
+        HTTP_PROXY:  ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY:    ${NO_PROXY:-}
     image: clemson-netbox-discovery:latest
     entrypoint: ["python", "web_server.py"]
     restart: unless-stopped
