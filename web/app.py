@@ -12,7 +12,8 @@ import logging
 import os
 import sys
 import threading
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Generator
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
@@ -120,31 +121,7 @@ def create_app() -> Flask:
         if not hcl_file:
             return redirect(url_for("index"))
 
-        # Resolve to an absolute path relative to the project root
-        if not os.path.isabs(hcl_file):
-            hcl_file = os.path.join(_ROOT, hcl_file)
-
-        if not os.path.isfile(hcl_file):
-            # Unknown file – still create a failed job so the error is visible
-            job_id = create_job(hcl_file)
-            start_job(job_id)
-            finish_job(job_id, success=False)
-            add_log(
-                job_id,
-                "ERROR",
-                __name__,
-                f"Mapping file not found: {hcl_file}",
-            )
-            return redirect(url_for("job_detail", job_id=job_id))
-
-        job_id = create_job(hcl_file)
-        t = threading.Thread(
-            target=_run_job_background,
-            args=(job_id, hcl_file, dry_run),
-            daemon=True,
-            name=f"sync-job-{job_id}",
-        )
-        t.start()
+        job_id = _dispatch_job(hcl_file, dry_run)
         return redirect(url_for("job_detail", job_id=job_id))
 
     @app.route("/cache")
@@ -254,25 +231,7 @@ def create_app() -> Flask:
         if sched is None:
             return render_template("404.html"), 404
 
-        hcl_file = sched["hcl_file"]
-        if not os.path.isabs(hcl_file):
-            hcl_file = os.path.join(_ROOT, hcl_file)
-
-        if not os.path.isfile(hcl_file):
-            job_id = create_job(hcl_file)
-            start_job(job_id)
-            finish_job(job_id, success=False)
-            add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
-            return redirect(url_for("job_detail", job_id=job_id))
-
-        job_id = create_job(hcl_file)
-        t = threading.Thread(
-            target=_run_job_background,
-            args=(job_id, hcl_file, sched.get("dry_run", False)),
-            daemon=True,
-            name=f"sync-job-{job_id}",
-        )
-        t.start()
+        job_id = _dispatch_job(sched["hcl_file"], sched.get("dry_run", False))
         return redirect(url_for("job_detail", job_id=job_id))
 
     # ------------------------------------------------------------------
@@ -289,6 +248,32 @@ def create_app() -> Flask:
 # ---------------------------------------------------------------------------
 # Background job runner
 # ---------------------------------------------------------------------------
+
+
+def _dispatch_job(hcl_file: str, dry_run: bool = False) -> int:
+    """Resolve *hcl_file*, create a DB job record, and start a background thread.
+
+    Returns the new job ID in all cases (success or immediate failure).
+    """
+    if not os.path.isabs(hcl_file):
+        hcl_file = os.path.join(_ROOT, hcl_file)
+
+    job_id = create_job(hcl_file)
+
+    if not os.path.isfile(hcl_file):
+        start_job(job_id)
+        finish_job(job_id, success=False)
+        add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
+        return job_id
+
+    t = threading.Thread(
+        target=_run_job_background,
+        args=(job_id, hcl_file, dry_run),
+        daemon=True,
+        name=f"sync-job-{job_id}",
+    )
+    t.start()
+    return job_id
 
 
 def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> None:
@@ -339,36 +324,66 @@ def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> No
 # ---------------------------------------------------------------------------
 
 
+def _env_int(name: str, default: int) -> int:
+    """Return *name* from the environment as int, falling back to *default*."""
+    raw = os.environ.get(name, "")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid integer value for %s=%r; using default %d", name, raw, default)
+    return default
+
+
+def _cache_client_kwargs() -> dict[str, Any]:
+    """Build kwargs for a pynetbox2 client using cache-related env vars."""
+    backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
+    cache_url = os.environ.get("NETBOX_CACHE_URL", "")
+    kwargs: dict[str, Any] = dict(
+        url=os.environ.get("NETBOX_URL", "http://localhost:8080"),
+        token=os.environ.get("NETBOX_TOKEN", ""),
+        cache_backend=backend,
+        cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
+    )
+    sentinel_ttl = _env_int("NETBOX_PREWARM_SENTINEL_TTL", 0)
+    if sentinel_ttl:
+        kwargs["prewarm_sentinel_ttl_seconds"] = sentinel_ttl
+    if backend == "redis":
+        kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
+    if backend == "sqlite":
+        kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
+    return kwargs
+
+
+@contextmanager
+def _cache_client() -> Generator[Any | None, None, None]:
+    """Context manager that yields a pynetbox2 API client configured from env vars.
+
+    Yields ``None`` when the cache backend is ``"none"``.
+    """
+    import pynetbox2 as pynetbox  # type: ignore[import]  # noqa: PLC0415
+
+    backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
+    if backend == "none":
+        yield None
+        return
+
+    nb = pynetbox.api(**_cache_client_kwargs())
+    try:
+        yield nb
+    finally:
+        nb.close()
+
+
 def _get_cache_info() -> dict[str, Any]:
     """Return a dict describing the current cache backend and entry counts."""
     try:
-        lib_dir = os.path.join(_ROOT, "lib")
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
-        import pynetbox2 as pynetbox  # type: ignore[import]
-
         backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
-        cache_url = os.environ.get("NETBOX_CACHE_URL", "")
-
         if backend == "none":
             return {"backend": "none", "entries": {}, "total": 0}
 
-        # Build a temporary client just to inspect the cache
-        url = os.environ.get("NETBOX_URL", "http://localhost:8080")
-        token = os.environ.get("NETBOX_TOKEN", "")
-        kwargs: dict[str, Any] = dict(
-            url=url,
-            token=token,
-            cache_backend=backend,
-        )
-        if backend == "redis":
-            kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
-        if backend == "sqlite":
-            kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
-
-        nb = pynetbox.api(**kwargs)
-        stats = nb.cache_stats()
-        nb.close()
+        with _cache_client() as nb:
+            stats = nb.cache_stats()
         total = stats.get("total", 0) if stats else 0
         by_resource = stats.get("by_resource", {}) if stats else {}
         return {"backend": backend, "entries": by_resource, "total": total}
@@ -379,30 +394,13 @@ def _get_cache_info() -> dict[str, Any]:
 def _flush_cache(resource: str | None) -> None:
     """Flush the cache for *resource* (or all if *None*)."""
     try:
-        lib_dir = os.path.join(_ROOT, "lib")
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
-        import pynetbox2 as pynetbox  # type: ignore[import]
-
-        backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
-        if backend == "none":
-            return
-
-        url = os.environ.get("NETBOX_URL", "http://localhost:8080")
-        token = os.environ.get("NETBOX_TOKEN", "")
-        cache_url = os.environ.get("NETBOX_CACHE_URL", "")
-        kwargs: dict[str, Any] = dict(url=url, token=token, cache_backend=backend)
-        if backend == "redis":
-            kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
-        if backend == "sqlite":
-            kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
-
-        nb = pynetbox.api(**kwargs)
-        if resource:
-            nb.cache_flush(resource)
-        else:
-            nb.cache_flush()
-        nb.close()
+        with _cache_client() as nb:
+            if nb is None:
+                return
+            if resource:
+                nb.cache_flush(resource)
+            else:
+                nb.cache_flush()
     except Exception as exc:
         logger.warning("Cache flush failed: %s", exc)
 
@@ -410,34 +408,17 @@ def _flush_cache(resource: str | None) -> None:
 def _prewarm_cache(resource: str | None) -> None:
     """Pre-warm the cache for *resource* (or all known resources if *None*)."""
     try:
-        lib_dir = os.path.join(_ROOT, "lib")
-        if lib_dir not in sys.path:
-            sys.path.insert(0, lib_dir)
-        import pynetbox2 as pynetbox  # type: ignore[import]
-
-        backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
-        if backend == "none":
-            return
-
-        url = os.environ.get("NETBOX_URL", "http://localhost:8080")
-        token = os.environ.get("NETBOX_TOKEN", "")
-        cache_url = os.environ.get("NETBOX_CACHE_URL", "")
-        kwargs: dict[str, Any] = dict(url=url, token=token, cache_backend=backend)
-        if backend == "redis":
-            kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
-        if backend == "sqlite":
-            kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
-
-        nb = pynetbox.api(**kwargs)
-        if resource:
-            resources: list[str] = [resource]
-        else:
-            stats = nb.cache_stats()
-            resources = list((stats or {}).get("by_resource", {}).keys())
-        if resources:
-            logger.debug("Pre-warming cache for resources: %s", resources)
-            nb.prewarm(resources)
-        nb.close()
+        with _cache_client() as nb:
+            if nb is None:
+                return
+            if resource:
+                resources: list[str] = [resource]
+            else:
+                stats = nb.cache_stats()
+                resources = list((stats or {}).get("by_resource", {}).keys())
+            if resources:
+                logger.debug("Pre-warming cache for resources: %s", resources)
+                nb.prewarm(resources)
     except Exception as exc:
         logger.warning("Cache pre-warm failed: %s", exc)
 

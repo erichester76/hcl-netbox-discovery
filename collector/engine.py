@@ -59,7 +59,10 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         token=cfg_nb.token,
         rate_limit_per_second=cfg_nb.rate_limit,
         cache_backend=cfg_nb.cache if cfg_nb.cache in ("none", "redis", "sqlite") else "none",
+        cache_ttl_seconds=cfg_nb.cache_ttl,
     )
+    if cfg_nb.prewarm_sentinel_ttl is not None:
+        kwargs["prewarm_sentinel_ttl_seconds"] = cfg_nb.prewarm_sentinel_ttl
     if cfg_nb.cache == "redis":
         kwargs["redis_url"] = cfg_nb.cache_url or "redis://localhost:6379/0"
     if cfg_nb.cache == "sqlite":

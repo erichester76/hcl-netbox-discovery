@@ -115,6 +115,8 @@ class NetBoxConfig:
     token: str
     cache: str = "none"
     cache_url: str = ""
+    cache_ttl: int = 300
+    prewarm_sentinel_ttl: Optional[int] = None
     rate_limit: float = 0.0
 
 
@@ -479,11 +481,14 @@ def load_config(mapping_path: str) -> CollectorConfig:
     if not netbox_list:
         raise ValueError("HCL file is missing a 'netbox' block")
     netbox_body = _unlabeled_list(netbox_list)[0]
+    _raw_sentinel_ttl = _eval_config_str(netbox_body.get("prewarm_sentinel_ttl", ""))
     netbox_cfg = NetBoxConfig(
         url=_eval_config_str(netbox_body.get("url", "")),
         token=_eval_config_str(netbox_body.get("token", "")),
         cache=_eval_config_str(netbox_body.get("cache", "none")),
         cache_url=_eval_config_str(netbox_body.get("cache_url", "")),
+        cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", 300))),
+        prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", 0))),
     )
 
