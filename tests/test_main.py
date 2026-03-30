@@ -213,3 +213,85 @@ def test_check_and_fire_due_schedules_fires_job(tmp_path, tmp_db):
 
     jobs = get_jobs()
     assert len(jobs) >= 1
+
+
+def test_check_and_run_queued_jobs_picks_up_queued_job(tmp_path, tmp_db):
+    """_check_and_run_queued_jobs() must execute jobs with status='queued'."""
+    import time as _time  # noqa: PLC0415
+    from unittest.mock import patch  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")
+
+    # Create a queued job as the web UI would
+    job_id = db_module.create_job(str(hcl), dry_run=False)
+    assert db_module.get_job(job_id)["status"] == "queued"
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    # Keep the patch alive until the background thread finishes
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    job = db_module.get_job(job_id)
+    assert job["status"] == "success"
+
+
+def test_check_and_run_queued_jobs_missing_file(tmp_path, tmp_db):
+    """_check_and_run_queued_jobs() must mark a job failed when the file is missing."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    job_id = db_module.create_job("/nonexistent/path.hcl")
+    assert db_module.get_job(job_id)["status"] == "queued"
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+    _check_and_run_queued_jobs()
+
+    _time.sleep(0.3)
+
+    job = db_module.get_job(job_id)
+    assert job["status"] == "failed"
+
+
+def test_dispatch_job_creates_queued_record(tmp_path, tmp_db, monkeypatch):
+    """POSTing /jobs/run must create a 'queued' job without running the engine."""
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_jobs  # noqa: PLC0415
+
+    from web.app import create_app  # noqa: PLC0415
+
+    flask_app = create_app()
+    flask_app.config["TESTING"] = True
+
+    hcl = tmp_path / "real.hcl"
+    hcl.write_text("")
+
+    with flask_app.test_client() as client:
+        resp = client.post("/jobs/run", data={"hcl_file": str(hcl)})
+
+    assert resp.status_code == 302
+    assert "/jobs/" in resp.headers["Location"]
+
+    jobs = get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "queued"  # collector has not run yet

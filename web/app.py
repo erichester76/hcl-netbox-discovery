@@ -11,7 +11,6 @@ import glob
 import logging
 import os
 import sys
-import threading
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -26,11 +25,9 @@ if _LIB not in sys.path:
     sys.path.insert(0, _LIB)
 
 from collector.db import (  # noqa: E402
-    add_log,
     create_job,
     create_schedule,
     delete_schedule,
-    finish_job,
     get_job,
     get_job_logs,
     get_jobs,
@@ -38,11 +35,8 @@ from collector.db import (  # noqa: E402
     get_schedule,
     get_schedules,
     init_db,
-    start_job,
     update_schedule,
-    update_schedule_run,
 )
-from collector.job_log_handler import JobLogHandler  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -246,77 +240,21 @@ def create_app() -> Flask:
 
 
 # ---------------------------------------------------------------------------
-# Background job runner
+# Job dispatcher – creates a queued DB record for the collector to pick up
 # ---------------------------------------------------------------------------
 
 
 def _dispatch_job(hcl_file: str, dry_run: bool = False) -> int:
-    """Resolve *hcl_file*, create a DB job record, and start a background thread.
+    """Resolve *hcl_file*, create a 'queued' DB job record, and return its ID.
 
-    Returns the new job ID in all cases (success or immediate failure).
+    The actual execution is handled by the collector container's scheduler loop,
+    which polls for queued jobs and runs them.  The web container never invokes
+    collector code directly.
     """
     if not os.path.isabs(hcl_file):
         hcl_file = os.path.join(_ROOT, hcl_file)
 
-    job_id = create_job(hcl_file)
-
-    if not os.path.isfile(hcl_file):
-        start_job(job_id)
-        finish_job(job_id, success=False)
-        add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
-        return job_id
-
-    t = threading.Thread(
-        target=_run_job_background,
-        args=(job_id, hcl_file, dry_run),
-        daemon=True,
-        name=f"sync-job-{job_id}",
-    )
-    t.start()
-    return job_id
-
-
-def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> None:
-    """Run an Engine sync in a daemon thread, logging to the DB."""
-    start_job(job_id)
-
-    handler = JobLogHandler(job_id)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
-    )
-    root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
-
-    summary: dict[str, Any] = {}
-    success = False
-    has_errors = False
-    try:
-        from collector.engine import Engine  # noqa: PLC0415
-
-        engine = Engine()
-        all_stats = engine.run(hcl_file, dry_run_override=dry_run if dry_run else None)
-        summary = {
-            s.object_name: {
-                "processed": s.processed,
-                "created": s.created,
-                "updated": s.updated,
-                "skipped": s.skipped,
-                "errored": s.errored,
-            }
-            for s in all_stats
-        }
-        success = True
-        has_errors = any(s.errored > 0 for s in all_stats)
-    except Exception as exc:
-        logger.exception("Sync job %d failed: %s", job_id, exc)
-    finally:
-        root_logger.removeHandler(handler)
-        finish_job(
-            job_id,
-            success=success,
-            summary=summary if summary else None,
-            has_errors=has_errors,
-        )
+    return create_job(hcl_file, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
