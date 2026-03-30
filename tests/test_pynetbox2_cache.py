@@ -53,6 +53,9 @@ class DictCacheBackend(CacheBackend):
     def clear(self):
         self._store.clear()
 
+    def count(self) -> int:
+        return len(self._store)
+
     def close(self):
         pass
 

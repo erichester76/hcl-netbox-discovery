@@ -233,6 +233,10 @@ class CacheBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def count(self) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def close(self) -> None:
         raise NotImplementedError
 
@@ -254,6 +258,9 @@ class NullCacheBackend(CacheBackend):
 
     def clear(self) -> None:
         return None
+
+    def count(self) -> int:
+        return 0
 
     def close(self) -> None:
         return None
@@ -389,6 +396,18 @@ class RedisCacheBackend(CacheBackend):
     def clear(self) -> None:
         self.delete_prefix("")
 
+    def count(self) -> int:
+        if self._is_disabled():
+            return 0
+        try:
+            pattern = f"{self.key_prefix}*"
+            keys = list(self.client.scan_iter(match=pattern))
+            self._record_success()
+            return len(keys)
+        except Exception as exc:
+            self._record_failure("count", exc)
+            return 0
+
     def close(self) -> None:
         try:
             self.client.close()
@@ -483,6 +502,14 @@ class SQLiteCacheBackend(CacheBackend):
         with self.lock:
             self.conn.execute("DELETE FROM cache_entries")
             self.conn.commit()
+
+    def count(self) -> int:
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT COUNT(*) FROM cache_entries WHERE expires_at > ?",
+                (self._now(),),
+            ).fetchone()
+            return int(row[0]) if row else 0
 
     def cleanup_expired(self) -> int:
         with self.lock:
@@ -2215,6 +2242,15 @@ class NetBoxExtendedClient:
             self._invalidate_resource_cache(resource)
         else:
             self.cache.clear()
+
+    def cache_stats(self) -> dict[str, Any]:
+        """Return a summary dict describing the current cache state."""
+        total = self.cache.count()
+        return {"total": total}
+
+    def cache_flush(self, resource: Optional[str] = None) -> None:
+        """Flush the cache for *resource* (or all if *None*)."""
+        self.clear_cache(resource)
 
     def close(self) -> None:
         self.cache.close()

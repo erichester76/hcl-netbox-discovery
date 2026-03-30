@@ -228,10 +228,10 @@ def _get_cache_info() -> dict[str, Any]:
             kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
 
         nb = pynetbox.api(**kwargs)
-        stats = nb.cache_stats() if hasattr(nb, "cache_stats") else {}
+        stats = nb.cache_stats()
         nb.close()
-        total = sum(stats.values()) if stats else 0
-        return {"backend": backend, "entries": stats, "total": total}
+        total = stats.get("total", 0) if stats else 0
+        return {"backend": backend, "entries": {}, "total": total}
     except Exception as exc:
         return {"backend": "error", "entries": {}, "total": 0, "error": str(exc)}
 
