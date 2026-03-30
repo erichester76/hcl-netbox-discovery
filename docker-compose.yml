@@ -108,7 +108,7 @@ services:
       args:
         PYTHON_VER: "3.12"
     image: clemson-netbox-discovery:latest
-    command: ["python", "web_server.py"]
+    entrypoint: ["python", "web_server.py"]
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-5000}:5000"
@@ -184,15 +184,15 @@ services:
       COLLECTOR_SYNC_DISKS:      ${COLLECTOR_SYNC_DISKS:-true}
 
   # ---------------------------------------------------------------------------
-  # redis – optional cache backend.
-  # Enable by setting NETBOX_CACHE_BACKEND=redis and
-  # NETBOX_CACHE_URL=redis://redis:6379/0 in your .env file.
+  # redis – cache backend (starts automatically with docker compose up).
+  # To use it, set in your .env file:
+  #   NETBOX_CACHE_BACKEND=redis
+  #   NETBOX_CACHE_URL=redis://redis:6379/0
+  # If the cache vars are not set, the collector simply ignores Redis.
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    profiles:
-      - cache
     volumes:
       - redis_data:/data
 
