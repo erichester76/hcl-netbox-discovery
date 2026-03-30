@@ -2,7 +2,7 @@
 File: collector/db.py
 Purpose: SQLite-backed store for sync job status and log records.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #web-ui
+Last Changed: Copilot 2026-03-30 Issue: #141
 """
 
 from __future__ import annotations
@@ -20,9 +20,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Default DB path – can be overridden via COLLECTOR_DB_PATH env var
+# Default DB path – can be overridden via COLLECTOR_DB_PATH env var.
+# Stored under data/ so the directory is writable when running as a
+# non-root user inside the container (the Dockerfile chowns /app/data/).
 # ---------------------------------------------------------------------------
-_DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "collector_jobs.sqlite3")
+_DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "data", "collector_jobs.sqlite3")
 
 
 def _db_path() -> str:
@@ -88,6 +90,8 @@ def _conn() -> Generator[sqlite3.Connection, None, None]:
 
 def init_db() -> None:
     """Create tables if they do not exist."""
+    path = _db_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with _conn() as con:
         con.executescript(_SCHEMA)
 
