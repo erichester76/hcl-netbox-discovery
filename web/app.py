@@ -158,6 +158,12 @@ def create_app() -> Flask:
         _flush_cache(resource)
         return redirect(url_for("cache_status"))
 
+    @app.route("/cache/prewarm", methods=["POST"])
+    def cache_prewarm():
+        resource = request.form.get("resource", "").strip() or None
+        _prewarm_cache(resource)
+        return redirect(url_for("cache_status"))
+
     # ------------------------------------------------------------------
     # Scheduler routes
     # ------------------------------------------------------------------
@@ -392,6 +398,41 @@ def _flush_cache(resource: str | None) -> None:
         nb.close()
     except Exception as exc:
         logger.warning("Cache flush failed: %s", exc)
+
+
+def _prewarm_cache(resource: str | None) -> None:
+    """Pre-warm the cache for *resource* (or all known resources if *None*)."""
+    try:
+        lib_dir = os.path.join(_ROOT, "lib")
+        if lib_dir not in sys.path:
+            sys.path.insert(0, lib_dir)
+        import pynetbox2 as pynetbox  # type: ignore[import]
+
+        backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
+        if backend == "none":
+            return
+
+        url = os.environ.get("NETBOX_URL", "http://localhost:8080")
+        token = os.environ.get("NETBOX_TOKEN", "")
+        cache_url = os.environ.get("NETBOX_CACHE_URL", "")
+        kwargs: dict[str, Any] = dict(url=url, token=token, cache_backend=backend)
+        if backend == "redis":
+            kwargs["redis_url"] = cache_url or "redis://localhost:6379/0"
+        if backend == "sqlite":
+            kwargs["sqlite_path"] = cache_url or ".nbx_cache.sqlite3"
+
+        nb = pynetbox.api(**kwargs)
+        if resource:
+            resources: list[str] = [resource]
+        else:
+            stats = nb.cache_stats()
+            resources = list((stats or {}).get("by_resource", {}).keys())
+        if resources:
+            logger.debug("Pre-warming cache for resources: %s", resources)
+            nb.prewarm(resources)
+        nb.close()
+    except Exception as exc:
+        logger.warning("Cache pre-warm failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
