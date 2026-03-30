@@ -2302,6 +2302,17 @@ class NetBoxExtendedClient:
                 derived_key_count,
                 count,
             )
+            self.cache.set(
+                sentinel_key,
+                {
+                    "resource": resource,
+                    "filters": dict(filters),
+                    "count": count,
+                    "refreshed_at": int(time.time()),
+                },
+                ttl_seconds=self.config.prewarm_sentinel_ttl_seconds,
+            )
+
             summary[resource] = count
             logger.info("Prewarmed %s records for resource=%s", count, resource)
 

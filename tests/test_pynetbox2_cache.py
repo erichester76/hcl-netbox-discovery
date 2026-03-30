@@ -203,3 +203,55 @@ class TestGetCacheBackfillOnMiss:
         result2 = client.get("dcim.module_bays", device_id=21, name="DIMM 1")
         assert result2 is record
         assert client.adapter.get.call_count == 1  # no new API call
+
+
+class TestPrewarmSentinelKey:
+    """Verify that prewarm() sets the sentinel key after a fresh cache load."""
+
+    def test_sentinel_key_set_after_fresh_prewarm(self):
+        """After a successful prewarm, the sentinel key must be present in the
+        cache so that cache_stats() can return a TTL instead of None/'-'."""
+        client = _make_client()
+        client.config.prewarm_sentinel_ttl_seconds = 3600
+        records = [{"id": 1, "name": "site-a"}, {"id": 2, "name": "site-b"}]
+        client.adapter.list.return_value = records
+
+        summary = client.prewarm(["dcim.sites"])
+
+        assert summary["dcim.sites"] == 2
+
+        # The external sentinel key for dcim.sites (unfiltered) should now
+        # be present in the cache — previously it was never set on a fresh
+        # prewarm, causing cache_stats() to show '-' for sentinel_ttl.
+        sentinel_prefix = client._PREWARM_SENTINEL_KEY_PREFIX
+        object_type = client._RESOURCE_TO_PRECACHE_OBJECT_TYPE.get("dcim.sites")
+        assert object_type is not None, "dcim.sites must have a sentinel object_type mapping"
+        sentinel_key = f"{sentinel_prefix}{object_type}"
+        sentinel_value = client.cache.get(sentinel_key)
+        assert sentinel_value is not None, (
+            "Sentinel key was not written after fresh prewarm — "
+            "cache_stats() would show '-' for sentinel_ttl"
+        )
+        assert sentinel_value["resource"] == "dcim.sites"
+        assert sentinel_value["count"] == 2
+
+    def test_sentinel_key_set_for_filtered_prewarm(self):
+        """For a filtered prewarm, a per-resource sentinel key (not the shared
+        external one) must be written."""
+        client = _make_client()
+        client.config.prewarm_sentinel_ttl_seconds = 3600
+        records = [{"id": 10, "name": "dev-nyc"}]
+        client.adapter.list.return_value = records
+
+        summary = client.prewarm({"dcim.devices": {"site": "nyc"}})
+
+        assert summary["dcim.devices"] == 1
+
+        # For a filtered prewarm the external sentinel key is None; a
+        # per-invocation sentinel key is used instead.
+        sentinel_key = client._cache_key("dcim.devices", "prewarm_sentinel", {"site": "nyc"})
+        sentinel_value = client.cache.get(sentinel_key)
+        assert sentinel_value is not None, (
+            "Per-resource sentinel key was not written after filtered prewarm"
+        )
+        assert sentinel_value["count"] == 1
