@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import logging
+import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import collector.db as db_module
+from collector.db import get_job, get_jobs, init_db
 from main import _parse_args, _setup_logging
 
 
@@ -79,3 +83,78 @@ class TestSetupLogging:
         self.reset_root_logger()
         _setup_logging("WARNING")
         assert logging.getLogger().level == logging.WARNING
+
+
+# ---------------------------------------------------------------------------
+# CLI job DB integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def tmp_db(tmp_path, monkeypatch):
+    """Point the DB at a temp file and reset the lock for isolation."""
+    db_path = str(tmp_path / "test_main.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_lock", threading.Lock())
+    init_db()
+    yield db_path
+
+
+def _fake_stat():
+    """Return a minimal stats-like object that main() iterates over."""
+    s = MagicMock()
+    s.object_name = "devices"
+    s.processed = 5
+    s.created = 1
+    s.updated = 3
+    s.skipped = 1
+    s.errored = 0
+    return s
+
+
+def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
+    """main() must create a DB job row and mark it success for a good mapping."""
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")  # file just needs to exist
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import main  # noqa: PLC0415
+        rc = main(["--mapping", str(hcl)])
+
+    assert rc == 0
+    jobs = get_jobs()
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["status"] == "success"
+    assert job["hcl_file"] == str(hcl)
+    assert job["summary"] is not None
+    assert job["summary"]["devices"]["created"] == 1
+
+
+def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):
+    """main() must mark the DB job as failed when the engine raises."""
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = RuntimeError("boom")
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import main  # noqa: PLC0415
+        rc = main(["--mapping", str(hcl)])
+
+    assert rc == 1
+    jobs = get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "failed"
+
+
+def test_main_missing_mapping_does_not_create_db_job(tmp_db):
+    """main() must not create a DB job for a mapping file that does not exist."""
+    from main import main  # noqa: PLC0415
+    rc = main(["--mapping", "/nonexistent/path.hcl"])
+    assert rc == 1
+    assert get_jobs() == []

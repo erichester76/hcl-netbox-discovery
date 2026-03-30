@@ -33,6 +33,7 @@ import glob
 import logging
 import os
 import sys
+from typing import Any
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -93,6 +94,13 @@ def main(argv: list[str] | None = None) -> int:
     if lib_path not in sys.path:
         sys.path.insert(0, lib_path)
 
+    # Initialise the shared job-tracking database so the web UI can observe
+    # jobs started from the CLI (same SQLite file used by web_server.py).
+    from collector.db import create_job, finish_job, init_db, start_job  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+
+    init_db()
+
     # Determine which mapping files to run
     mapping_paths: list[str] = args.mappings or []
     if not mapping_paths:
@@ -106,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         logging.info("Auto-discovered %d mapping(s): %s", len(mapping_paths), mapping_paths)
 
-    from collector.engine import Engine
+    from collector.engine import Engine  # noqa: PLC0415
 
     engine = Engine()
     exit_code = 0
@@ -116,12 +124,39 @@ def main(argv: list[str] | None = None) -> int:
             logging.error("Mapping file not found: %s", path)
             exit_code = 1
             continue
+
+        job_id = create_job(path)
+        start_job(job_id)
+
+        handler = JobLogHandler(job_id)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
+        )
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+
+        summary: dict[str, Any] = {}
+        success = False
         try:
             dry_run = True if args.dry_run else None
-            engine.run(path, dry_run_override=dry_run)
+            all_stats = engine.run(path, dry_run_override=dry_run)
+            summary = {
+                s.object_name: {
+                    "processed": s.processed,
+                    "created": s.created,
+                    "updated": s.updated,
+                    "skipped": s.skipped,
+                    "errored": s.errored,
+                }
+                for s in all_stats
+            }
+            success = True
         except Exception as exc:
             logging.exception("Collector run failed for %s: %s", path, exc)
             exit_code = 1
+        finally:
+            root_logger.removeHandler(handler)
+            finish_job(job_id, success=success, summary=summary if summary else None)
 
     return exit_code
 

@@ -15,6 +15,7 @@ from collector.db import (
     get_job,
     get_job_logs,
     get_jobs,
+    get_running_jobs,
     init_db,
     start_job,
 )
@@ -136,6 +137,47 @@ def test_get_jobs_limit():
         create_job(f"mappings/{i}.hcl")
     jobs = get_jobs(limit=5)
     assert len(jobs) == 5
+
+
+# ---------------------------------------------------------------------------
+# get_running_jobs
+# ---------------------------------------------------------------------------
+
+
+def test_get_running_jobs_empty():
+    assert get_running_jobs() == []
+
+
+def test_get_running_jobs_includes_queued_and_running():
+    queued_id = create_job("mappings/queued.hcl")          # status = queued
+    running_id = create_job("mappings/running.hcl")
+    start_job(running_id)                                   # status = running
+    done_id = create_job("mappings/done.hcl")
+    start_job(done_id)
+    finish_job(done_id, success=True)                       # status = success
+
+    jobs = get_running_jobs()
+    ids = {j["id"] for j in jobs}
+    assert queued_id in ids
+    assert running_id in ids
+    assert done_id not in ids
+
+
+def test_get_running_jobs_no_limit():
+    """get_running_jobs must return all active jobs even when there are more than 50."""
+    active_ids = set()
+    for i in range(60):
+        jid = create_job(f"mappings/{i}.hcl")
+        start_job(jid)
+        active_ids.add(jid)
+
+    # Finish a few so they drop out of the active list
+    for jid in list(active_ids)[:5]:
+        finish_job(jid, success=True)
+        active_ids.discard(jid)
+
+    running = get_running_jobs()
+    assert len(running) == len(active_ids)
 
 
 # ---------------------------------------------------------------------------

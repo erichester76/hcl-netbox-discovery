@@ -31,6 +31,7 @@ from collector.db import (  # noqa: E402
     get_job,
     get_job_logs,
     get_jobs,
+    get_running_jobs,
     init_db,
     start_job,
 )
@@ -65,9 +66,11 @@ def create_app() -> Flask:
 
     @app.route("/")
     def index():
-        jobs = get_jobs(limit=50)
-        running = [j for j in jobs if j["status"] == "running"]
-        recent = [j for j in jobs if j["status"] != "running"]
+        running = get_running_jobs()
+        recent = get_jobs(limit=50)
+        # Exclude active jobs from the recent history list
+        active_ids = {j["id"] for j in running}
+        recent = [j for j in recent if j["id"] not in active_ids]
         mapping_files = _discover_mappings()
         return render_template(
             "index.html",
@@ -97,6 +100,12 @@ def create_app() -> Flask:
                 "status": job["status"] if job else "unknown",
             }
         )
+
+    @app.route("/api/running-jobs")
+    def api_running_jobs():
+        """Return currently queued/running jobs as JSON (used for dashboard polling)."""
+        jobs = get_running_jobs()
+        return jsonify({"jobs": jobs, "count": len(jobs)})
 
     @app.route("/jobs/run", methods=["POST"])
     def run_job():
