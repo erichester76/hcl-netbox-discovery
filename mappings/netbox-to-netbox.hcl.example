@@ -1,0 +1,194 @@
+# NetBox → NetBox device sync mapping
+#
+# Syncs devices (and their interfaces) from one NetBox instance to another.
+# All device-level prerequisites (manufacturer, device type, role, site,
+# platform) are auto-created in the destination NetBox as needed.
+#
+# Required environment variables:
+#   SOURCE_NETBOX_URL     Base URL of the source NetBox (e.g. https://source.example.com)
+#   SOURCE_NETBOX_TOKEN   API token for the source NetBox
+#   NETBOX_URL            Base URL of the destination NetBox
+#   NETBOX_TOKEN          API token for the destination NetBox
+#
+# Optional:
+#   SOURCE_NETBOX_VERIFY_SSL   true | false  (default: true)
+#   SOURCE_NETBOX_FILTERS      JSON filter string, e.g. '{"site": "hq", "status": "active"}'
+#   NETBOX_CACHE_BACKEND       Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL           Redis URL or SQLite path for destination cache
+#   DRY_RUN                    Set to "true" to log payloads without writing
+#   COLLECTOR_SYNC_INTERFACES  true | false  (default: true)
+#   NETBOX_SYNC_TAG            Tag applied to all synced objects (default: netbox-sync)
+
+source "source_netbox" {
+  api_type   = "netbox"
+  url        = "env('SOURCE_NETBOX_URL')"
+  # The API token for the source NetBox is supplied via the password field
+  password   = "env('SOURCE_NETBOX_TOKEN')"
+  verify_ssl = "env('SOURCE_NETBOX_VERIFY_SSL', 'true')"
+
+  # Optional JSON filter applied when fetching devices from the source.
+  # Leave empty to fetch all devices.
+  # Example: filters = '{"site": "hq", "status": "active"}'
+  filters    = "env('SOURCE_NETBOX_FILTERS', '')"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = 0
+}
+
+collector {
+  max_workers      = 4
+  dry_run          = "env('DRY_RUN', 'false')"
+  sync_tag         = "env('NETBOX_SYNC_TAG', 'netbox-sync')"
+  regex_dir        = "./regex"
+  sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# Devices
+#
+# Each device from the source NetBox is looked up by serial number in the
+# destination NetBox.  If no match is found the device is created; otherwise
+# it is updated in place.
+#
+# The prerequisite blocks below ensure that the manufacturer, device type,
+# role, site, and platform referenced by the source device all exist in the
+# destination NetBox before the device record is written.
+# ---------------------------------------------------------------------------
+
+object "device" {
+  source_collection = "dcim.devices"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["serial"]
+  max_workers       = 4
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "coalesce(source('device_type.manufacturer.name'), 'Unknown')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('device_type.model'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "coalesce(source('role.name'), 'Unknown')" }
+    optional = false
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "coalesce(source('site.name'), 'Unknown')" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name         = "coalesce(source('platform.name'), '')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "coalesce(source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "serial" {
+    value = "source('serial')"
+  }
+
+  field "asset_tag" {
+    value = "source('asset_tag')"
+  }
+
+  field "status" {
+    value = "coalesce(source('status.value'), source('status'), 'active')"
+  }
+
+  field "comments" {
+    value = "source('comments')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+
+  # ---------------------------------------------------------------------------
+  # Network interfaces
+  #
+  # Requires COLLECTOR_SYNC_INTERFACES=true (default).
+  # Interface records are fetched via the dcim.interfaces collection below and
+  # matched to each device.  Set COLLECTOR_SYNC_INTERFACES=false to skip.
+  #
+  # NOTE: Interfaces are nested inside the device object block so that the
+  # engine can associate them with the correct parent device.  The
+  # source_items path "interfaces" is a field on the device record that the
+  # NetBox source adapter does NOT embed automatically; instead use a
+  # separate object block (see dcim.interfaces below) for a full interface
+  # sync without nesting.
+  # ---------------------------------------------------------------------------
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type.value'), source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "description" {
+      value = "coalesce(source('description'), '')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    field "mtu" {
+      value = "source('mtu')"
+    }
+
+    field "tags" {
+      type  = "tags"
+      value = "['netbox-sync']"
+    }
+  }
+}
