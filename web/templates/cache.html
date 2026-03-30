@@ -11,91 +11,89 @@
   </div>
 </div>
 
-<div class="row g-4">
-  <!-- Status card -->
-  <div class="col-md-6">
-    <div class="card shadow-sm">
-      <div class="card-header card-header-cu fw-semibold">Cache Status</div>
-      <div class="card-body">
-        <dl class="row mb-0">
-          <dt class="col-sm-4">Backend</dt>
-          <dd class="col-sm-8">
-            <span class="badge bg-secondary">{{ cache_info.backend }}</span>
-          </dd>
-          <dt class="col-sm-4">Total entries</dt>
-          <dd class="col-sm-8">{{ cache_info.total }}</dd>
-          {% if cache_info.error %}
-          <dt class="col-sm-4 text-danger">Error</dt>
-          <dd class="col-sm-8 text-danger">{{ cache_info.error }}</dd>
-          {% endif %}
-        </dl>
-        {% if cache_info.entries %}
-        <hr />
-        <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr><th>Resource</th><th>Entries</th></tr>
-          </thead>
-          <tbody>
-          {% for res, cnt in cache_info.entries.items() %}
-            <tr>
-              <td>{{ res }}</td>
-              <td>{{ cnt }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% endif %}
-      </div>
+{% if cache_info.backend == 'none' %}
+<div class="alert alert-info">
+  Cache is disabled (<code>NETBOX_CACHE_BACKEND=none</code>). Nothing to flush.
+</div>
+{% else %}
+
+<!-- Summary bar -->
+<div class="row g-3 mb-4">
+  <div class="col-auto">
+    <div class="card shadow-sm text-center px-4 py-2">
+      <div class="fs-4 fw-bold">{{ cache_info.total }}</div>
+      <div class="text-muted small">Total Entries</div>
     </div>
   </div>
-
-  <!-- Flush card -->
-  <div class="col-md-6">
-    <div class="card shadow-sm">
-      <div class="card-header card-header-cu fw-semibold">Flush Cache</div>
-      <div class="card-body">
-        {% if cache_info.backend == 'none' %}
-        <div class="alert alert-info mb-0">
-          Cache is disabled (<code>NETBOX_CACHE_BACKEND=none</code>).
-          Nothing to flush.
-        </div>
-        {% else %}
-
-        <!-- Flush all -->
-        <form method="POST" action="/cache/flush" class="mb-3">
-          <button type="submit" class="btn btn-danger"
-                  onclick="return confirm('Flush the entire cache?')">
-            Flush All Cache
-          </button>
-        </form>
-
-        <hr />
-
-        <!-- Flush by resource -->
-        <form method="POST" action="/cache/flush">
-          <label class="form-label fw-semibold">Flush by Object Class</label>
-          <div class="input-group">
-            {% if cache_info.entries %}
-            <select class="form-select" name="resource" required>
-              <option value="" disabled selected>— pick a resource —</option>
-              {% for res in cache_info.entries.keys() %}
-              <option value="{{ res }}">{{ res }}</option>
-              {% endfor %}
-            </select>
-            {% else %}
-            <input type="text" class="form-control" name="resource"
-                   placeholder="e.g. dcim.devices" required />
-            {% endif %}
-            <button type="submit" class="btn btn-warning">Flush Resource</button>
-          </div>
-          <div class="form-text">
-            Removes cached entries for the selected NetBox resource only.
-          </div>
-        </form>
-
-        {% endif %}
+  <div class="col-auto">
+    <div class="card shadow-sm text-center px-4 py-2">
+      <div class="fs-4 fw-bold">
+        <span class="badge bg-secondary">{{ cache_info.backend }}</span>
       </div>
+      <div class="text-muted small">Backend</div>
     </div>
+  </div>
+  <div class="col-auto d-flex align-items-center">
+    <form method="POST" action="/cache/flush">
+      <button type="submit" class="btn btn-danger"
+              onclick="return confirm('Flush the entire cache?')">
+        Flush All Cache
+      </button>
+    </form>
+  </div>
+  {% if cache_info.error %}
+  <div class="col-12">
+    <div class="alert alert-danger mb-0">{{ cache_info.error }}</div>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Per-resource table -->
+{% if cache_info.entries %}
+<div class="card shadow-sm">
+  <div class="card-header card-header-cu fw-semibold">Cache by Object Type</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Resource</th>
+          <th class="text-end">Entries</th>
+          <th class="text-end">Sentinel TTL</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for res, info in cache_info.entries.items() %}
+        <tr>
+          <td><code>{{ res }}</code></td>
+          <td class="text-end">{{ info.count }}</td>
+          <td class="text-end">
+            {% if info.sentinel_ttl is not none %}
+              <span class="badge {% if info.sentinel_ttl > 60 %}bg-success{% elif info.sentinel_ttl > 0 %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                {{ info.sentinel_ttl }}s
+              </span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <form method="POST" action="/cache/flush" class="d-inline">
+              <input type="hidden" name="resource" value="{{ res }}" />
+              <button type="submit" class="btn btn-sm btn-outline-warning"
+                      onclick="return confirm('Flush cache for {{ res }}?')">
+                Flush
+              </button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
+{% else %}
+<div class="alert alert-secondary">No cached entries found.</div>
+{% endif %}
+
+{% endif %}
 {% endblock %}

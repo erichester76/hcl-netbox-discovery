@@ -56,6 +56,12 @@ class DictCacheBackend(CacheBackend):
     def count(self) -> int:
         return len(self._store)
 
+    def keys(self) -> list:
+        return list(self._store.keys())
+
+    def get_ttl(self, key: str):
+        return None
+
     def close(self):
         pass
 
