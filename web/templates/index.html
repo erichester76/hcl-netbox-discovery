@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – HCL NetBox Discovery{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Left column: Run a new job                                          -->
+  <!-- ------------------------------------------------------------------ -->
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header card-header-cu fw-semibold">Run a Sync Job</div>
+      <div class="card-body">
+        <form method="POST" action="/jobs/run">
+          <div class="mb-3">
+            <label for="hcl_file" class="form-label">HCL Mapping File</label>
+            {% if mapping_files %}
+            <select class="form-select" id="hcl_file" name="hcl_file" required>
+              <option value="" disabled selected>— select a mapping —</option>
+              {% for f in mapping_files %}
+              <option value="{{ f }}">{{ f }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" class="form-control" id="hcl_file" name="hcl_file"
+                   placeholder="mappings/vmware.hcl" required />
+            <div class="form-text text-muted">
+              No *.hcl files found in mappings/. Enter a path manually.
+            </div>
+            {% endif %}
+          </div>
+          <div class="mb-3 form-check">
+            <input type="checkbox" class="form-check-input" id="dry_run" name="dry_run" value="1">
+            <label class="form-check-label" for="dry_run">Dry-run (no writes to NetBox)</label>
+          </div>
+          <button type="submit" class="btn btn-primary w-100"
+                  style="background-color:#522D80;border-color:#522D80;">
+            ▶ Run Sync
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Right column: Job tables                                            -->
+  <!-- ------------------------------------------------------------------ -->
+  <div class="col-lg-8">
+
+    <!-- Currently running -->
+    {% if running %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header card-header-cu fw-semibold">
+        ⏳ Currently Running
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th><th>Mapping File</th><th>Started</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for j in running %}
+            <tr>
+              <td>{{ j.id }}</td>
+              <td>{{ j.hcl_file }}</td>
+              <td>{{ j.started_at or j.created_at }}</td>
+              <td>
+                <a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-primary">
+                  View Logs
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Recent jobs -->
+    <div class="card shadow-sm">
+      <div class="card-header card-header-cu fw-semibold">Recent Jobs</div>
+      <div class="card-body p-0">
+        {% if recent %}
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Mapping File</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for j in recent %}
+            <tr>
+              <td>{{ j.id }}</td>
+              <td title="{{ j.hcl_file }}">{{ j.hcl_file | basename }}</td>
+              <td>
+                <span class="badge badge-{{ j.status }}">{{ j.status }}</span>
+              </td>
+              <td>{{ j.started_at or j.created_at }}</td>
+              <td>{{ j.finished_at or '—' }}</td>
+              <td>
+                <a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-secondary">Logs</a>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="p-4 text-muted text-center">No jobs yet. Run a sync above.</div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div><!-- col-lg-8 -->
+</div><!-- row -->
+{% endblock %}

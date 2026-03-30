@@ -12,6 +12,7 @@ A **modular, declarative framework** for syncing infrastructure data from multip
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Web UI](#web-ui)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Project Layout](#project-layout)
@@ -50,6 +51,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 | **Module support** | Full NetBox module bay / module type / module hierarchy for detailed hardware tracking |
 | **Error isolation** | Failures on individual items are logged and skipped without aborting the run |
 | **Tag management** | Automatically tag every synced object; tags are merged with existing values |
+| **Web UI** | Browser-based dashboard to monitor running jobs, browse logs of past runs, trigger new syncs, and manage the NetBox cache |
 
 ---
 
@@ -83,8 +85,11 @@ Key components:
 | Component | Role |
 |---|---|
 | `main.py` | CLI entry point; discovers and runs mapping files |
+| `web_server.py` | Web UI entry point; starts the Flask monitor server |
 | `collector/engine.py` | Top-level orchestrator per HCL file |
 | `collector/config.py` | HCL parser; produces a validated `CollectorConfig` dataclass tree |
+| `collector/db.py` | SQLite store for job status and log records |
+| `collector/job_log_handler.py` | Logging handler that persists INFO+ records to the job DB |
 | `collector/field_resolvers.py` | Expression evaluator with 20+ helper functions |
 | `collector/prerequisites.py` | Resolves prerequisite objects (ensures they exist in NetBox) |
 | `collector/sources/rest.py` | Generic HTTP/REST adapter — zero Python per source |
@@ -93,6 +98,8 @@ Key components:
 | `collector/sources/ldap.py` | LDAP3 adapter |
 | `collector/sources/catc.py` | Cisco Catalyst Center adapter |
 | `lib/pynetbox2.py` | Production-ready NetBox client: caching, rate-limiting, upsert, retry |
+| `web/app.py` | Flask application factory; dashboard, job detail, cache management routes |
+| `web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
 
 For a deeper dive, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -148,6 +155,53 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 # 3. Install dependencies
 pip install -r requirements.txt
 ```
+
+---
+
+## Web UI
+
+The web monitor provides a browser-based interface to:
+
+- **View running jobs** in real time (logs stream automatically via polling)
+- **Browse previous job logs** with colour-coded log levels
+- **Inspect sync summaries** (processed / created / updated / skipped / errored per object type)
+- **Trigger new sync runs** by selecting an HCL mapping file from a drop-down (or entering a path manually) with an optional dry-run flag
+- **Manage the NetBox cache** — inspect entry counts per resource and flush individual resource caches or the entire cache
+
+### Starting the web server
+
+```bash
+# Development
+python web_server.py                 # listens on http://0.0.0.0:5000
+
+# Custom port / host
+python web_server.py --port 8080 --host 127.0.0.1
+
+# Production (gunicorn)
+pip install gunicorn
+gunicorn -w 2 -b 0.0.0.0:5000 "web.app:create_app()"
+```
+
+### Docker Compose
+
+The `web` service is included in `docker-compose.yml` and starts automatically:
+
+```bash
+docker compose up web           # web UI only, shares the collector image
+docker compose up               # collector one-shot + web UI
+```
+
+The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job history in a named Docker volume (`collector_db`).
+
+### Web UI environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `WEB_PORT` | `5000` | TCP port the web server listens on |
+| `WEB_HOST` | `0.0.0.0` | Bind address |
+| `WEB_SECRET_KEY` | `change-me-in-production` | Flask session secret — **change this** |
+| `COLLECTOR_DB_PATH` | `<project root>/collector_jobs.sqlite3` | Path to the SQLite job database |
+| `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
 
 ---
 
@@ -413,12 +467,15 @@ cp regex/xclarity_room_to_location.example  regex/xclarity_room_to_location
 ```
 hcl-netbox-discovery/
 ├── main.py                        # CLI entry point
+├── web_server.py                  # Web UI entry point
 ├── requirements.txt               # Python dependencies
 │
 ├── collector/                     # Core framework package
 │   ├── engine.py                  # Top-level orchestrator
 │   ├── config.py                  # HCL parser + dataclass models
 │   ├── context.py                 # Per-run execution context
+│   ├── db.py                      # SQLite job-tracking store
+│   ├── job_log_handler.py         # Logging handler → job DB
 │   ├── field_resolvers.py         # Expression evaluator
 │   ├── prerequisites.py           # Prerequisite resolution
 │   └── sources/
@@ -432,6 +489,15 @@ hcl-netbox-discovery/
 │       ├── f5.py                  # F5 BIG-IP
 │       ├── prometheus.py          # Prometheus node-exporter
 │       └── snmp.py                # SNMP (vendor-agnostic)
+│
+├── web/                           # Web UI package
+│   ├── app.py                     # Flask application factory + routes
+│   └── templates/
+│       ├── base.html              # Shared navbar / layout (Bootstrap 5)
+│       ├── index.html             # Dashboard: running jobs, recent history, run form
+│       ├── job_detail.html        # Job log viewer + sync summary table
+│       ├── cache.html             # Cache status and flush UI
+│       └── 404.html               # Not-found page
 │
 ├── lib/
 │   └── pynetbox2.py               # NetBox client (caching, upsert, retry)

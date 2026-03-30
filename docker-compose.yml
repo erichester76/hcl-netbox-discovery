@@ -95,6 +95,95 @@ services:
       COLLECTOR_SYNC_DISKS:      ${COLLECTOR_SYNC_DISKS:-true}
 
   # ---------------------------------------------------------------------------
+  # web – Flask-based job monitor UI (http://localhost:5000)
+  #
+  # Shares the same image as the collector service.  Mount the mappings
+  # directory read-only so the UI can list available HCL files.
+  # Persist the job database with a named volume so history survives restarts.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VER: "3.12"
+    image: clemson-netbox-discovery:latest
+    command: ["python", "web_server.py"]
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-5000}:5000"
+
+    volumes:
+      - ./mappings:/app/mappings:ro
+      - ./regex:/app/regex:ro
+      - collector_db:/app/data
+
+    env_file:
+      - path: .env
+        required: false
+
+    environment:
+      NETBOX_URL:            ${NETBOX_URL:-}
+      NETBOX_TOKEN:          ${NETBOX_TOKEN:-}
+      NETBOX_CACHE_BACKEND:  ${NETBOX_CACHE_BACKEND:-none}
+      NETBOX_CACHE_URL:      ${NETBOX_CACHE_URL:-}
+      LOG_LEVEL:             ${LOG_LEVEL:-INFO}
+      WEB_PORT:              5000
+      WEB_HOST:              0.0.0.0
+      FLASK_DEBUG:           ${FLASK_DEBUG:-false}
+      COLLECTOR_DB_PATH:     /app/data/collector_jobs.sqlite3
+      WEB_SECRET_KEY:        ${WEB_SECRET_KEY:-change-me-in-production}
+
+      # VMware
+      VCENTER_URL:   ${VCENTER_URL:-}
+      VCENTER_USER:  ${VCENTER_USER:-}
+      VCENTER_PASS:  ${VCENTER_PASS:-}
+
+      # Cisco Catalyst Center (CATC)
+      CATC_HOST:       ${CATC_HOST:-}
+      CATC_USER:       ${CATC_USER:-}
+      CATC_PASS:       ${CATC_PASS:-}
+      CATC_VERIFY_SSL: ${CATC_VERIFY_SSL:-true}
+
+      # Lenovo XClarity
+      XCLARITY_HOST:       ${XCLARITY_HOST:-}
+      XCLARITY_USER:       ${XCLARITY_USER:-}
+      XCLARITY_PASS:       ${XCLARITY_PASS:-}
+      XCLARITY_VERIFY_SSL: ${XCLARITY_VERIFY_SSL:-true}
+
+      # Microsoft Azure
+      AZURE_TENANT_ID:          ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID:          ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET:      ${AZURE_CLIENT_SECRET:-}
+      AZURE_AUTH_METHOD:        ${AZURE_AUTH_METHOD:-default}
+      AZURE_SUBSCRIPTION_IDS:   ${AZURE_SUBSCRIPTION_IDS:-}
+
+      # LDAP
+      LDAP_SERVER:         ${LDAP_SERVER:-}
+      LDAP_USER:           ${LDAP_USER:-}
+      LDAP_PASS:           ${LDAP_PASS:-}
+      LDAP_SEARCH_BASE:    ${LDAP_SEARCH_BASE:-}
+      LDAP_FILTER:         ${LDAP_FILTER:-}
+
+      # Cisco Nexus Dashboard Fabric Controller (NDFC)
+      NDFC_HOST:              ${NDFC_HOST:-}
+      NDFC_USER:              ${NDFC_USER:-}
+      NDFC_PASS:              ${NDFC_PASS:-}
+      NDFC_VERIFY_SSL:        ${NDFC_VERIFY_SSL:-true}
+      NDFC_FETCH_INTERFACES:  ${NDFC_FETCH_INTERFACES:-false}
+
+      # SNMP / Juniper
+      SNMP_HOSTS:        ${SNMP_HOSTS:-}
+      SNMP_COMMUNITY:    ${SNMP_COMMUNITY:-public}
+      SNMP_VERSION:      ${SNMP_VERSION:-2c}
+      SNMP_PORT:         ${SNMP_PORT:-161}
+
+      # Collector flags
+      COLLECTOR_SYNC_INTERFACES: ${COLLECTOR_SYNC_INTERFACES:-true}
+      COLLECTOR_SYNC_INVENTORY:  ${COLLECTOR_SYNC_INVENTORY:-true}
+      COLLECTOR_SYNC_DISKS:      ${COLLECTOR_SYNC_DISKS:-true}
+
+  # ---------------------------------------------------------------------------
   # redis – optional cache backend.
   # Enable by setting NETBOX_CACHE_BACKEND=redis and
   # NETBOX_CACHE_URL=redis://redis:6379/0 in your .env file.
@@ -109,3 +198,4 @@ services:
 
 volumes:
   redis_data:
+  collector_db:
