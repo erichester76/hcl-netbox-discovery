@@ -47,37 +47,36 @@
   <!-- ------------------------------------------------------------------ -->
   <div class="col-lg-8">
 
-    <!-- Currently running -->
-    {% if running %}
+    <!-- Currently running (always visible; polls /api/running-jobs every 3 s) -->
     <div class="card shadow-sm mb-4">
-      <div class="card-header card-header-cu fw-semibold">
-        ⏳ Currently Running
+      <div class="card-header card-header-cu fw-semibold d-flex justify-content-between align-items-center">
+        <span>⏳ Currently Running</span>
+        <span class="badge {% if running %}bg-primary{% else %}bg-secondary{% endif %}"
+              id="running-count">{{ running | length }}</span>
       </div>
-      <div class="card-body p-0">
+      <div class="card-body p-0" id="running-body">
+        {% if running %}
         <table class="table table-hover mb-0">
           <thead class="table-light">
-            <tr>
-              <th>#</th><th>Mapping File</th><th>Started</th><th></th>
-            </tr>
+            <tr><th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th></tr>
           </thead>
           <tbody>
           {% for j in running %}
             <tr>
               <td>{{ j.id }}</td>
               <td>{{ j.hcl_file }}</td>
+              <td><span class="badge badge-{{ j.status }}">{{ j.status }}</span></td>
               <td>{{ j.started_at or j.created_at }}</td>
-              <td>
-                <a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-primary">
-                  View Logs
-                </a>
-              </td>
+              <td><a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-primary">View Logs</a></td>
             </tr>
           {% endfor %}
           </tbody>
         </table>
+        {% else %}
+        <div class="p-3 text-muted text-center" id="running-empty">No active jobs.</div>
+        {% endif %}
       </div>
     </div>
-    {% endif %}
 
     <!-- Recent jobs -->
     <div class="card shadow-sm">
@@ -120,4 +119,64 @@
 
   </div><!-- col-lg-8 -->
 </div><!-- row -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  // Poll /api/running-jobs every POLL_MS so CLI-started jobs become visible
+  // without the user having to manually reload the page.
+  var POLL_MS   = 3000;   // normal polling interval
+  var RELOAD_MS = 1000;   // delay before full reload when jobs finish
+  var RETRY_MS  = 5000;   // retry interval after a fetch error
+
+  var previousCount = {{ running | length }};
+
+  function renderRunning(jobs) {
+    var body  = document.getElementById('running-body');
+    var badge = document.getElementById('running-count');
+    badge.textContent = jobs.length;
+    badge.className   = 'badge ' + (jobs.length > 0 ? 'bg-primary' : 'bg-secondary');
+
+    if (jobs.length === 0) {
+      body.innerHTML = '<div class="p-3 text-muted text-center">No active jobs.</div>';
+      return;
+    }
+    var html = '<table class="table table-hover mb-0">' +
+               '<thead class="table-light"><tr>' +
+               '<th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th>' +
+               '</tr></thead><tbody>';
+    jobs.forEach(function (j) {
+      html += '<tr>' +
+        '<td>' + j.id + '</td>' +
+        '<td>' + j.hcl_file + '</td>' +
+        '<td><span class="badge badge-' + j.status + '">' + j.status + '</span></td>' +
+        '<td>' + (j.started_at || j.created_at) + '</td>' +
+        '<td><a href="/jobs/' + j.id + '" class="btn btn-sm btn-outline-primary">View Logs</a></td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  }
+
+  function poll() {
+    fetch('/api/running-jobs')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var jobs = data.jobs || [];
+        renderRunning(jobs);
+        // When active jobs finish, reload the page to refresh the history table.
+        if (previousCount > 0 && jobs.length < previousCount) {
+          setTimeout(function () { location.reload(); }, RELOAD_MS);
+          return;
+        }
+        previousCount = jobs.length;
+        setTimeout(poll, POLL_MS);
+      })
+      .catch(function () { setTimeout(poll, RETRY_MS); });
+  }
+
+  setTimeout(poll, POLL_MS);
+})();
+</script>
 {% endblock %}

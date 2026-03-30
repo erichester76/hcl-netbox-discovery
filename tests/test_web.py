@@ -121,6 +121,77 @@ def test_run_job_missing_file(app):
 
 
 # ---------------------------------------------------------------------------
+# Currently running panel – queued and running jobs
+# ---------------------------------------------------------------------------
+
+
+def test_index_shows_queued_job_in_running_panel(app):
+    """A queued job (not yet started) must appear in the 'Currently Running' section."""
+    job_id = create_job("mappings/queued.hcl")  # status = queued, never started
+
+    resp = app.get("/")
+    assert resp.status_code == 200
+    # The running panel should contain the job id and the queued badge
+    assert str(job_id).encode() in resp.data
+    assert b"queued" in resp.data
+
+
+def test_index_shows_running_job_in_running_panel(app):
+    """A running job must appear in the 'Currently Running' section."""
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)  # status = running
+
+    resp = app.get("/")
+    assert resp.status_code == 200
+    assert str(job_id).encode() in resp.data
+    assert b"running" in resp.data
+
+
+def test_index_excludes_finished_job_from_running_panel(app):
+    """A finished job must NOT appear in the 'Currently Running' section."""
+    job_id = create_job("mappings/done.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get("/")
+    assert resp.status_code == 200
+    # The job should be in the history table but not in the running panel body
+    # (The running panel should say "No active jobs.")
+    assert b"No active jobs" in resp.data
+
+
+# ---------------------------------------------------------------------------
+# /api/running-jobs endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_api_running_jobs_empty(app):
+    resp = app.get("/api/running-jobs")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 0
+    assert data["jobs"] == []
+
+
+def test_api_running_jobs_returns_active_jobs(app):
+    queued_id = create_job("mappings/a.hcl")          # queued
+    running_id = create_job("mappings/b.hcl")
+    start_job(running_id)                              # running
+    done_id = create_job("mappings/c.hcl")
+    start_job(done_id)
+    finish_job(done_id, success=True)                  # success – should be excluded
+
+    resp = app.get("/api/running-jobs")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    ids = {j["id"] for j in data["jobs"]}
+    assert queued_id in ids
+    assert running_id in ids
+    assert done_id not in ids
+    assert data["count"] == 2
+
+
+# ---------------------------------------------------------------------------
 # Cache status page
 # ---------------------------------------------------------------------------
 
