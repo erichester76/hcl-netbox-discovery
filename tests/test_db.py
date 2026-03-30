@@ -11,13 +11,20 @@ import collector.db as db_module
 from collector.db import (
     add_log,
     create_job,
+    create_schedule,
+    delete_schedule,
     finish_job,
+    get_due_schedules,
     get_job,
     get_job_logs,
     get_jobs,
     get_running_jobs,
+    get_schedule,
+    get_schedules,
     init_db,
     start_job,
+    update_schedule,
+    update_schedule_run,
 )
 
 
@@ -193,3 +200,96 @@ def test_init_db_idempotent():
     job = get_job(job_id)
     assert job is not None
     assert job["hcl_file"] == "mappings/stable.hcl"
+
+
+# ---------------------------------------------------------------------------
+# Schedule CRUD
+# ---------------------------------------------------------------------------
+
+
+def test_create_schedule_returns_id():
+    sid = create_schedule("test", "mappings/vmware.hcl", "0 * * * *")
+    assert isinstance(sid, int)
+    assert sid >= 1
+
+
+def test_get_schedule_initial_state():
+    sid = create_schedule("nightly", "mappings/a.hcl", "0 2 * * *", dry_run=True)
+    s = get_schedule(sid)
+    assert s is not None
+    assert s["name"] == "nightly"
+    assert s["hcl_file"] == "mappings/a.hcl"
+    assert s["cron_expr"] == "0 2 * * *"
+    assert s["dry_run"] is True
+    assert s["enabled"] is True
+    assert s["last_run_at"] is None
+
+
+def test_get_schedule_not_found():
+    assert get_schedule(99999) is None
+
+
+def test_get_schedules_empty():
+    assert get_schedules() == []
+
+
+def test_get_schedules_returns_all():
+    create_schedule("a", "mappings/a.hcl", "0 * * * *")
+    create_schedule("b", "mappings/b.hcl", "0 2 * * *")
+    schedules = get_schedules()
+    assert len(schedules) == 2
+    names = {s["name"] for s in schedules}
+    assert names == {"a", "b"}
+
+
+def test_update_schedule():
+    sid = create_schedule("old-name", "mappings/old.hcl", "0 * * * *")
+    update_schedule(sid, "new-name", "mappings/new.hcl", "0 2 * * *", True, False)
+    s = get_schedule(sid)
+    assert s["name"] == "new-name"
+    assert s["hcl_file"] == "mappings/new.hcl"
+    assert s["cron_expr"] == "0 2 * * *"
+    assert s["dry_run"] is True
+    assert s["enabled"] is False
+
+
+def test_delete_schedule():
+    sid = create_schedule("to-delete", "mappings/x.hcl", "0 * * * *")
+    assert get_schedule(sid) is not None
+    delete_schedule(sid)
+    assert get_schedule(sid) is None
+
+
+def test_get_due_schedules_past_next_run():
+    # A schedule with next_run_at in the past should be due
+    past = "2000-01-01T00:00:00"
+    sid = create_schedule("due", "mappings/a.hcl", "0 * * * *", next_run_at=past)
+    due = get_due_schedules()
+    ids = {s["id"] for s in due}
+    assert sid in ids
+
+
+def test_get_due_schedules_future_next_run():
+    # A schedule with next_run_at far in the future should NOT be due
+    future = "2099-12-31T23:59:59"
+    sid = create_schedule("not-due", "mappings/a.hcl", "0 * * * *", next_run_at=future)
+    due = get_due_schedules()
+    ids = {s["id"] for s in due}
+    assert sid not in ids
+
+
+def test_get_due_schedules_disabled_not_returned():
+    past = "2000-01-01T00:00:00"
+    sid = create_schedule("disabled-due", "mappings/a.hcl", "0 * * * *", next_run_at=past)
+    update_schedule(sid, "disabled-due", "mappings/a.hcl", "0 * * * *", False, False, past)
+    due = get_due_schedules()
+    ids = {s["id"] for s in due}
+    assert sid not in ids
+
+
+def test_update_schedule_run():
+    sid = create_schedule("runner", "mappings/a.hcl", "0 * * * *")
+    update_schedule_run(sid, "2026-01-01T02:00:00", "2026-01-02T02:00:00")
+    s = get_schedule(sid)
+    assert s["last_run_at"] == "2026-01-01T02:00:00"
+    assert s["next_run_at"] == "2026-01-02T02:00:00"

@@ -53,4 +53,4 @@ RUN mkdir -p /app/data && chown 1001 /app/data
 USER appuser
 
 ENTRYPOINT ["python", "main.py"]
-CMD []
+CMD ["--run-scheduler"]

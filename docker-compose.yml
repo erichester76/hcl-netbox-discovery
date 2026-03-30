@@ -1,8 +1,8 @@
 services:
   # ---------------------------------------------------------------------------
-  # collector – runs all *.hcl mappings found in ./mappings by default.
+  # collector – runs the scheduler loop by default (--run-scheduler).
   #
-  # Pass --mapping to target a single mapping file, e.g.:
+  # To run a single mapping file manually instead:
   #   docker compose run --rm collector --mapping mappings/vmware.hcl
   #
   # Set DRY_RUN=true (in .env or environment) to log payloads without writing.
@@ -14,7 +14,7 @@ services:
       args:
         PYTHON_VER: "3.12"
     image: clemson-netbox-discovery:latest
-    restart: "no"
+    restart: unless-stopped
 
     # Mount local directories so you can edit mappings/regex without rebuilding.
     # Share the named volume with the web service so job history is visible in the UI.
