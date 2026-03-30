@@ -2,7 +2,7 @@
 File: web/app.py
 Purpose: Flask web application for monitoring and triggering HCL sync jobs.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #web-ui
+Last Changed: Copilot 2026-03-30 Issue: #cache-display
 """
 
 from __future__ import annotations
@@ -231,7 +231,8 @@ def _get_cache_info() -> dict[str, Any]:
         stats = nb.cache_stats()
         nb.close()
         total = stats.get("total", 0) if stats else 0
-        return {"backend": backend, "entries": {}, "total": total}
+        by_resource = stats.get("by_resource", {}) if stats else {}
+        return {"backend": backend, "entries": by_resource, "total": total}
     except Exception as exc:
         return {"backend": "error", "entries": {}, "total": 0, "error": str(exc)}
 
