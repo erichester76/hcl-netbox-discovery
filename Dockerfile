@@ -1,9 +1,14 @@
 ARG PYTHON_VER=3.12
 
 # ---------------------------------------------------------------------------
-# Stage 1 – install Python dependencies into a virtual environment
+# Stage 1 – install Python dependencies via Poetry into a virtual environment
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VER}-slim AS builder
+
+# Proxy build args – pass with --build-arg HTTP_PROXY=... if needed
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
 WORKDIR /app
 
@@ -14,16 +19,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsasl2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Install Poetry
+RUN pip install --no-cache-dir poetry
 
-RUN python -m venv /opt/venv \
-    && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+# Configure Poetry: place the venv inside the project dir, no prompts
+ENV POETRY_VIRTUALENVS_IN_PROJECT=1 \
+    POETRY_NO_INTERACTION=1
+
+COPY pyproject.toml poetry.lock* ./
+
+RUN poetry install --only main --no-root
 
 # ---------------------------------------------------------------------------
 # Stage 2 – lean runtime image
 # ---------------------------------------------------------------------------
 FROM python:${PYTHON_VER}-slim
+
+# Proxy build args – pass with --build-arg HTTP_PROXY=... if needed
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
 # Runtime LDAP libraries required by ldap3
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,8 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy the virtual environment from the builder stage
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
 COPY collector/ collector/
