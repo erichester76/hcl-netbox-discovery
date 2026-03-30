@@ -150,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
         summary: dict[str, Any] = {}
         success = False
+        has_errors = False
         try:
             dry_run = True if args.dry_run else None
             all_stats = engine.run(path, dry_run_override=dry_run)
@@ -164,12 +165,18 @@ def main(argv: list[str] | None = None) -> int:
                 for s in all_stats
             }
             success = True
+            has_errors = any(s.errored > 0 for s in all_stats)
         except Exception as exc:
             logging.exception("Collector run failed for %s: %s", path, exc)
             exit_code = 1
         finally:
             root_logger.removeHandler(handler)
-            finish_job(job_id, success=success, summary=summary if summary else None)
+            finish_job(
+                job_id,
+                success=success,
+                summary=summary if summary else None,
+                has_errors=has_errors,
+            )
 
     return exit_code
 

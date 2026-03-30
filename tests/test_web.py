@@ -69,6 +69,18 @@ def test_job_detail_found(app):
     assert b"Sync started for test" in resp.data
 
 
+def test_job_detail_partial_status(app):
+    """A job finished with has_errors=True should show 'partial' badge."""
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    summary = {"devices": {"processed": 5, "created": 3, "updated": 1, "skipped": 0, "errored": 1}}
+    finish_job(job_id, success=True, summary=summary, has_errors=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+    assert resp.status_code == 200
+    assert b"partial" in resp.data
+
+
 def test_job_detail_not_found(app):
     resp = app.get("/jobs/99999")
     assert resp.status_code == 404

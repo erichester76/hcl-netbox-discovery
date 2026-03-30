@@ -304,6 +304,7 @@ def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> No
 
     summary: dict[str, Any] = {}
     success = False
+    has_errors = False
     try:
         from collector.engine import Engine  # noqa: PLC0415
 
@@ -320,11 +321,17 @@ def _run_job_background(job_id: int, hcl_file: str, dry_run: bool = False) -> No
             for s in all_stats
         }
         success = True
+        has_errors = any(s.errored > 0 for s in all_stats)
     except Exception as exc:
         logger.exception("Sync job %d failed: %s", job_id, exc)
     finally:
         root_logger.removeHandler(handler)
-        finish_job(job_id, success=success, summary=summary if summary else None)
+        finish_job(
+            job_id,
+            success=success,
+            summary=summary if summary else None,
+            has_errors=has_errors,
+        )
 
 
 # ---------------------------------------------------------------------------

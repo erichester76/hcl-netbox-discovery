@@ -128,9 +128,28 @@ def start_job(job_id: int) -> None:
         )
 
 
-def finish_job(job_id: int, success: bool, summary: dict | None = None) -> None:
-    """Mark job as success/failed and store optional summary dict."""
-    status = "success" if success else "failed"
+def finish_job(
+    job_id: int,
+    success: bool,
+    summary: dict | None = None,
+    has_errors: bool = False,
+) -> None:
+    """Mark job as success/partial/failed and store optional summary dict.
+
+    Args:
+        job_id: Primary key of the job to update.
+        success: False if a top-level exception aborted the run (sets *failed*).
+        summary: Optional per-object stats dict persisted as JSON.
+        has_errors: Set to True when the run completed without a fatal exception
+            but at least one item-level error was recorded in RunStats. Causes
+            the status to be *partial* instead of *success*.
+    """
+    if not success:
+        status = "failed"
+    elif has_errors:
+        status = "partial"
+    else:
+        status = "success"
     summary_json = json.dumps(summary) if summary else None
     with _conn() as con:
         con.execute(
