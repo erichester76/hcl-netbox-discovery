@@ -143,6 +143,16 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     return [_row_to_job(r) for r in rows]
 
 
+def get_running_jobs() -> list[dict[str, Any]]:
+    """Return all queued and running jobs (no limit), newest first."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary "
+            "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
+        ).fetchall()
+    return [_row_to_job(r) for r in rows]
+
+
 def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
