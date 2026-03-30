@@ -51,6 +51,7 @@ from typing import Any, Optional
 import requests
 
 from .base import DataSource
+from .utils import close_http_session, disable_ssl_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,7 @@ class PrometheusSource(DataSource):
 
         verify_ssl = config.verify_ssl
         if not verify_ssl:
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            disable_ssl_warnings()
 
         extra = config.extra or {}
         self._fetch_interfaces = (
@@ -168,13 +168,7 @@ class PrometheusSource(DataSource):
 
     def close(self) -> None:
         """Release the HTTP session."""
-        if self._session is not None:
-            try:
-                self._session.close()
-            except Exception as exc:
-                logger.debug("PrometheusSource session close error: %s", exc)
-            finally:
-                self._session = None
+        self._session = close_http_session(self._session, "PrometheusSource")
 
     # ------------------------------------------------------------------
     # Connectivity check
