@@ -488,7 +488,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
         cache=_eval_config_str(netbox_body.get("cache", "none")),
         cache_url=_eval_config_str(netbox_body.get("cache_url", "")),
         cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", 300))),
-        prewarm_sentinel_ttl=int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
+        prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", 0))),
     )
 
