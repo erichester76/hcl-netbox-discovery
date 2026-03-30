@@ -43,3 +43,4 @@ env/
 
 # Docker build artifacts
 *.tar
+collector_jobs.sqlite3
