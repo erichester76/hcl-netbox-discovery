@@ -237,6 +237,16 @@ class CacheBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def keys(self) -> list:
+        """Return all cache keys (without key_prefix)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_ttl(self, key: str) -> Optional[int]:
+        """Return seconds remaining for *key*, or None if unknown/no TTL."""
+        raise NotImplementedError
+
+    @abstractmethod
     def close(self) -> None:
         raise NotImplementedError
 
@@ -261,6 +271,12 @@ class NullCacheBackend(CacheBackend):
 
     def count(self) -> int:
         return 0
+
+    def keys(self) -> list:
+        return []
+
+    def get_ttl(self, key: str) -> Optional[int]:
+        return None
 
     def close(self) -> None:
         return None
@@ -408,6 +424,38 @@ class RedisCacheBackend(CacheBackend):
             self._record_failure("count", exc)
             return 0
 
+    def keys(self) -> list:
+        if self._is_disabled():
+            return []
+        try:
+            pattern = f"{self.key_prefix}*"
+            prefix_len = len(self.key_prefix)
+            raw_keys = list(self.client.scan_iter(match=pattern))
+            self._record_success()
+            result = []
+            for k in raw_keys:
+                if isinstance(k, bytes):
+                    k = k.decode("utf-8", errors="replace")
+                result.append(k[prefix_len:])
+            return result
+        except Exception as exc:
+            self._record_failure("keys", exc)
+            return []
+
+    def get_ttl(self, key: str) -> Optional[int]:
+        if self._is_disabled():
+            return None
+        try:
+            ttl = self.client.ttl(self._k(key))
+            self._record_success()
+            # Redis returns -2 if key doesn't exist, -1 if no TTL set
+            if ttl is None or ttl < 0:
+                return None
+            return int(ttl)
+        except Exception as exc:
+            self._record_failure("get_ttl", exc)
+            return None
+
     def close(self) -> None:
         try:
             self.client.close()
@@ -510,6 +558,28 @@ class SQLiteCacheBackend(CacheBackend):
                 (self._now(),),
             ).fetchone()
             return int(row[0]) if row else 0
+
+    def keys(self) -> list:
+        prefix_len = len(self.key_prefix)
+        now = self._now()
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT key FROM cache_entries WHERE expires_at > ?",
+                (now,),
+            ).fetchall()
+        return [row[0][prefix_len:] for row in rows]
+
+    def get_ttl(self, key: str) -> Optional[int]:
+        full_key = self._k(key)
+        now = self._now()
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT expires_at FROM cache_entries WHERE key = ? AND expires_at > ?",
+                (full_key, now),
+            ).fetchone()
+        if not row:
+            return None
+        return max(0, int(row[0]) - now)
 
     def cleanup_expired(self) -> int:
         with self.lock:
@@ -1566,7 +1636,7 @@ class NetBoxExtendedClient:
         object_type = self._RESOURCE_TO_PRECACHE_OBJECT_TYPE.get(resource)
         if not object_type:
             return None
-        return f"precache:complete:{object_type}"
+        return f"{self._PREWARM_SENTINEL_KEY_PREFIX}{object_type}"
 
     @staticmethod
     def _extract_id(record: Any) -> Optional[Any]:
@@ -2243,10 +2313,58 @@ class NetBoxExtendedClient:
         else:
             self.cache.clear()
 
+    _PREWARM_SENTINEL_KEY_PREFIX: str = "precache:complete:"
+
     def cache_stats(self) -> dict[str, Any]:
-        """Return a summary dict describing the current cache state."""
-        total = self.cache.count()
-        return {"total": total}
+        """Return a summary dict describing the current cache state.
+
+        Returns a dict with:
+        - ``total``: total number of cached entries
+        - ``by_resource``: mapping of resource name → dict with ``count`` and
+          ``sentinel_ttl`` (seconds remaining on the prewarm sentinel record,
+          or ``None`` if no sentinel exists for that resource; 0 means expired).
+        """
+        all_keys = self.cache.keys()
+        total = len(all_keys)
+        sentinel_prefix = self._PREWARM_SENTINEL_KEY_PREFIX
+
+        # Build reverse mapping: object_type → resource
+        _object_type_to_resource: dict[str, str] = {
+            v: k for k, v in self._RESOURCE_TO_PRECACHE_OBJECT_TYPE.items()
+        }
+
+        # Tally counts per resource (skip sentinel keys)
+        counts: dict[str, int] = {}
+        for key in all_keys:
+            if key.startswith(sentinel_prefix):
+                continue
+            parts = key.split(":")
+            if len(parts) >= 2:
+                resource = parts[0]
+                if resource:
+                    counts[resource] = counts.get(resource, 0) + 1
+
+        # Collect sentinel TTLs keyed by resource
+        sentinel_ttls: dict[str, Optional[int]] = {}
+        for key in all_keys:
+            if not key.startswith(sentinel_prefix):
+                continue
+            object_type = key[len(sentinel_prefix):]
+            resource = _object_type_to_resource.get(object_type)
+            if resource is not None:
+                sentinel_ttls[resource] = self.cache.get_ttl(key)
+
+        # Merge counts and sentinel TTLs
+        all_resources = sorted(set(counts) | set(sentinel_ttls))
+        by_resource: dict[str, Any] = {
+            res: {
+                "count": counts.get(res, 0),
+                "sentinel_ttl": sentinel_ttls.get(res),
+            }
+            for res in all_resources
+        }
+
+        return {"total": total, "by_resource": by_resource}
 
     def cache_flush(self, resource: Optional[str] = None) -> None:
         """Flush the cache for *resource* (or all if *None*)."""
