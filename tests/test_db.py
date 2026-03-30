@@ -89,6 +89,18 @@ def test_finish_job_failed():
     assert job["summary"] is None
 
 
+def test_finish_job_partial():
+    """A successful run with item-level errors should produce status 'partial'."""
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    summary = {"devices": {"processed": 10, "created": 2, "updated": 7, "skipped": 0, "errored": 1}}
+    finish_job(job_id, success=True, summary=summary, has_errors=True)
+    job = get_job(job_id)
+    assert job["status"] == "partial"
+    assert job["finished_at"] is not None
+    assert job["summary"] == summary
+
+
 def test_get_job_not_found():
     assert get_job(99999) is None
 
