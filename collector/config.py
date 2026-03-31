@@ -68,16 +68,15 @@ def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
     if "env(" in stripped:
         try:
             from .db import get_config as _get_config  # noqa: PLC0415
-
-            def _env_fn(k: str, d: str = "") -> str:
-                if k in overrides:
-                    return str(overrides[k])
-                return _get_config(k, d)
+            _base_lookup = _get_config
         except ImportError:
-            def _env_fn(k: str, d: str = "") -> str:  # type: ignore[misc]
-                if k in overrides:
-                    return str(overrides[k])
-                return os.environ.get(k, d)
+            _base_lookup = lambda k, d="": os.environ.get(k, d)  # type: ignore[assignment]
+
+        def _env_fn(k: str, d: str = "") -> str:
+            if k in overrides:
+                return str(overrides[k])
+            return _base_lookup(k, d)
+
         try:
             return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
         except Exception:
@@ -156,32 +155,36 @@ class SourceConfig:
 class IteratorConfig:
     """One ``iterator {}`` block inside a ``collector {}`` block.
 
-    Each key maps to a list of string values.  The engine iterates through
-    the lists in lock-step (zip), running a full collection pass for each
-    index.  The variable names are used as env-var overrides when evaluating
-    ``env()`` calls in the ``source {}`` block.
+    Each key (except ``max_workers``) maps to a list of string values.  The
+    engine iterates through the lists in lock-step (zip), running a full
+    collection pass for each index.  The variable names are used as env-var
+    overrides when evaluating ``env()`` calls in the ``source {}`` block.
+
+    The optional ``max_workers`` key controls how many iterator passes run in
+    parallel.  Defaults to ``1`` (sequential).  Set it higher to connect to
+    multiple sources simultaneously.
 
     Example HCL::
 
         collector {
           iterator {
-            VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
-            VCENTER_USER = ["admin", "admin"]
-            VCENTER_PASS = ["pass1", "pass2"]
+            max_workers  = 2
+            VCENTER_URL  = ["vc1.example.com", "vc2.example.com", "vc3.example.com"]
+            VCENTER_USER = ["admin", "admin", "readonly"]
+            VCENTER_PASS = ["pass1", "pass2", "pass3"]
           }
         }
     """
 
     variables: dict  # var_name → list of values
+    max_workers: int = 1
 
     def __len__(self) -> int:
         """Return the number of iterations (shortest list length)."""
         if not self.variables:
             return 0
-        return min(
-            len(v) if isinstance(v, list) else 1
-            for v in self.variables.values()
-        )
+        lengths = [len(v) if isinstance(v, list) else 1 for v in self.variables.values()]
+        return min(lengths) if lengths else 0
 
     def get_row(self, index: int) -> dict:
         """Return the variable values for iteration *index*."""
@@ -535,7 +538,9 @@ def _parse_iterators(raw: list) -> list[IteratorConfig]:
     """Parse ``iterator {}`` unlabeled blocks from a collector block body."""
     configs = []
     for body in _unlabeled_list(raw):
-        configs.append(IteratorConfig(variables=body))
+        max_workers = _int(body.get("max_workers", 1), default=1)
+        variables = {k: v for k, v in body.items() if k != "max_workers"}
+        configs.append(IteratorConfig(variables=variables, max_workers=max_workers))
     return configs
 
 

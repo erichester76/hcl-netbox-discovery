@@ -14,16 +14,19 @@
 #
 # Multiple vCenter support (iterator):
 #   To collect from more than one vCenter, add an iterator {} block inside
-#   the collector {} block.  Each key in the iterator block maps to a list of
-#   values.  The engine iterates through the lists in lock-step (zip), running
-#   a full collection pass for each index.  The values override env() calls in
-#   the source block for that pass.  Example:
+#   the collector {} block.  Each key (except max_workers) in the iterator
+#   block maps to a list of values.  The engine iterates through the lists in
+#   lock-step (zip), running a full collection pass for each index.  The
+#   values override env() calls in the source block for that pass.
+#   Set max_workers > 1 to run multiple vCenter passes in parallel.
+#   Example:
 #
 #     collector {
 #       iterator {
-#         VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
-#         VCENTER_USER = ["admin", "readonly"]
-#         VCENTER_PASS = ["pass1",  "pass2"]
+#         max_workers  = 2
+#         VCENTER_URL  = ["vc1.example.com", "vc2.example.com", "vc3.example.com"]
+#         VCENTER_USER = ["admin", "readonly", "admin"]
+#         VCENTER_PASS = ["pass1",  "pass2",    "pass3"]
 #       }
 #     }
 
@@ -53,6 +56,7 @@ collector {
 
   # Uncomment and populate to collect from multiple vCenters in one run:
   # iterator {
+  #   max_workers  = 2
   #   VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
   #   VCENTER_USER = ["admin", "admin"]
   #   VCENTER_PASS = ["pass1",  "pass2"]

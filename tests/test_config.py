@@ -13,15 +13,18 @@ from collector.config import (
     CollectorConfig,
     CollectorOptions,
     FieldConfig,
+    IteratorConfig,
     NetBoxConfig,
     ObjectConfig,
     PrerequisiteConfig,
     SourceConfig,
     _bool,
     _eval_config_str,
+    _eval_config_str_with_overrides,
     _int,
     _labeled_list,
     _unlabeled_list,
+    build_source_config,
     load_config,
 )
 
@@ -407,9 +410,214 @@ class TestDataclasses:
         assert opts.sync_tag == ""
         assert opts.regex_dir == "./regex"
         assert opts.extra_flags == {}
+        assert opts.iterators == []
 
     def test_collection_config_defaults(self):
         col = CollectionConfig(name="nodes", endpoint="/nodes")
         assert col.list_key == ""
         assert col.detail_endpoint == ""
         assert col.detail_id_field == "uuid"
+
+
+# ---------------------------------------------------------------------------
+# IteratorConfig unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestIteratorConfig:
+    def test_len_returns_shortest_list(self):
+        it = IteratorConfig(variables={"A": ["a1", "a2", "a3"], "B": ["b1", "b2"]})
+        assert len(it) == 2
+
+    def test_len_empty_variables(self):
+        it = IteratorConfig(variables={})
+        assert len(it) == 0
+
+    def test_len_scalar_value_counts_as_one(self):
+        it = IteratorConfig(variables={"A": ["a1", "a2"], "B": "scalar"})
+        assert len(it) == 1
+
+    def test_get_row_returns_correct_values(self):
+        it = IteratorConfig(
+            variables={
+                "URL": ["vc1.example.com", "vc2.example.com"],
+                "USER": ["admin", "readonly"],
+            }
+        )
+        assert it.get_row(0) == {"URL": "vc1.example.com", "USER": "admin"}
+        assert it.get_row(1) == {"URL": "vc2.example.com", "USER": "readonly"}
+
+    def test_get_row_out_of_range_skips_key(self):
+        it = IteratorConfig(variables={"A": ["a1"]})
+        row = it.get_row(99)
+        assert "A" not in row
+
+    def test_max_workers_defaults_to_one(self):
+        it = IteratorConfig(variables={"A": ["x"]})
+        assert it.max_workers == 1
+
+    def test_max_workers_set(self):
+        it = IteratorConfig(variables={"A": ["x", "y"]}, max_workers=3)
+        assert it.max_workers == 3
+
+
+# ---------------------------------------------------------------------------
+# _eval_config_str_with_overrides unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestEvalConfigStrWithOverrides:
+    def test_override_takes_precedence_over_env(self, monkeypatch):
+        monkeypatch.setenv("MY_VAR", "from_env")
+        result = _eval_config_str_with_overrides("env('MY_VAR')", {"MY_VAR": "from_override"})
+        assert result == "from_override"
+
+    def test_falls_back_to_env_when_no_override(self, monkeypatch):
+        monkeypatch.setenv("MY_VAR", "from_env")
+        result = _eval_config_str_with_overrides("env('MY_VAR')", {})
+        assert result == "from_env"
+
+    def test_plain_string_returned_as_is(self):
+        result = _eval_config_str_with_overrides("hello", {"hello": "world"})
+        assert result == "hello"
+
+    def test_non_string_returned_as_is(self):
+        assert _eval_config_str_with_overrides(42, {"A": "B"}) == 42
+
+
+# ---------------------------------------------------------------------------
+# build_source_config unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSourceConfig:
+    def test_builds_source_config_without_overrides(self, monkeypatch):
+        monkeypatch.setenv("VCENTER_URL", "vc.example.com")
+        body = {"api_type": "vmware", "url": "env('VCENTER_URL')", "username": "admin"}
+        cfg = build_source_config(body, "vmware")
+        assert cfg.api_type == "vmware"
+        assert cfg.url == "vc.example.com"
+
+    def test_builds_source_config_with_overrides(self, monkeypatch):
+        monkeypatch.setenv("VCENTER_URL", "should_not_be_used")
+        body = {"api_type": "vmware", "url": "env('VCENTER_URL')", "username": "admin"}
+        cfg = build_source_config(body, "vmware", overrides={"VCENTER_URL": "vc2.example.com"})
+        assert cfg.url == "vc2.example.com"
+
+    def test_falls_back_to_source_label_for_api_type(self):
+        body = {"url": "vc.example.com"}
+        cfg = build_source_config(body, "vmware")
+        assert cfg.api_type == "vmware"
+
+
+# ---------------------------------------------------------------------------
+# load_config() iterator parsing
+# ---------------------------------------------------------------------------
+
+
+class TestLoadConfigIterator:
+    def test_parses_iterator_block(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "env('VCENTER_URL')"
+              username = "env('VCENTER_USER')"
+              password = "env('VCENTER_PASS')"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
+                VCENTER_USER = ["admin", "readonly"]
+                VCENTER_PASS = ["pass1", "pass2"]
+              }
+            }
+        """)
+        cfg = load_config(path)
+        assert len(cfg.collector.iterators) == 1
+        it = cfg.collector.iterators[0]
+        assert len(it) == 2
+        assert it.max_workers == 1
+        row0 = it.get_row(0)
+        assert row0["VCENTER_URL"] == "vc1.example.com"
+        assert row0["VCENTER_USER"] == "admin"
+        row1 = it.get_row(1)
+        assert row1["VCENTER_URL"] == "vc2.example.com"
+        assert row1["VCENTER_PASS"] == "pass2"
+
+    def test_parses_iterator_max_workers(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                max_workers  = 3
+                VCENTER_URL  = ["vc1.example.com", "vc2.example.com", "vc3.example.com"]
+                VCENTER_PASS = ["p1", "p2", "p3"]
+              }
+            }
+        """)
+        cfg = load_config(path)
+        it = cfg.collector.iterators[0]
+        assert it.max_workers == 3
+        assert len(it) == 3
+        assert "max_workers" not in it.variables
+
+    def test_no_iterator_block_yields_empty_list(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.collector.iterators == []
+
+    def test_raw_source_body_stored(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.source_label == "vmware"
+        assert isinstance(cfg.raw_source_body, dict)
+        assert "url" in cfg.raw_source_body
+
+    def test_iterator_max_workers_not_in_extra_flags(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                max_workers = 2
+                VCENTER_URL = ["vc1.example.com", "vc2.example.com"]
+              }
+            }
+        """)
+        cfg = load_config(path)
+        assert "iterator" not in cfg.collector.extra_flags
