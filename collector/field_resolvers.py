@@ -19,7 +19,8 @@ source(path)
       "list[*]"         – flatten/iterate all items in list
 
 env(name, default="")
-    os.environ.get(name, default)
+    get_config(name, default) – DB config_settings value is authoritative;
+    falls back to os.environ[name], then *default*.
 
 regex_file(value, filename)
     Apply pattern/replacement pairs from ``regex/<filename>`` to *value*.
@@ -97,6 +98,12 @@ import os
 import re as _re
 import types
 from typing import Any, Optional
+
+try:
+    from .db import get_config as _get_config
+except ImportError:
+    def _get_config(key: str, default: str = "") -> str:  # type: ignore[misc]
+        return os.environ.get(key, default)
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +268,7 @@ class Resolver:
 
         # ---- env() ----
         def env(name: str, default: str = "") -> str:
-            return os.environ.get(name, default)
+            return _get_config(name, default)
 
         # ---- regex_file() ----
         def regex_file(value: Any, filename: str) -> Any:
