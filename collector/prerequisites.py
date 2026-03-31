@@ -138,7 +138,9 @@ class PrerequisiteRunner:
         return extract_id(obj)
 
     def _ensure_location(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+        name = args.get("name")
+        if not name:
+            return None
         site_id = args.get("site_id") or args.get("site")
         slug = slugify(name)
         payload: dict[str, Any] = {"name": name, "slug": slug}
@@ -152,7 +154,9 @@ class PrerequisiteRunner:
         return extract_id(obj)
 
     def _ensure_rack(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+        name = args.get("name")
+        if not name:
+            return None
         site_id = args.get("site_id") or args.get("site")
         location_id = args.get("location_id") or args.get("location")
         payload: dict[str, Any] = {"name": name}

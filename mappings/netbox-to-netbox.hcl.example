@@ -2,7 +2,8 @@
 #
 # Syncs devices (and their interfaces) from one NetBox instance to another.
 # All device-level prerequisites (manufacturer, device type, role, site,
-# platform) are auto-created in the destination NetBox as needed.
+# location, rack, platform) are auto-created in the destination NetBox as
+# needed.
 #
 # Required environment variables:
 #   SOURCE_NETBOX_URL     Base URL of the source NetBox (e.g. https://source.example.com)
@@ -56,8 +57,8 @@ collector {
 # it is updated in place.
 #
 # The prerequisite blocks below ensure that the manufacturer, device type,
-# role, site, and platform referenced by the source device all exist in the
-# destination NetBox before the device record is written.
+# role, site, location, rack, and platform referenced by the source device
+# all exist in the destination NetBox before the device record is written.
 # ---------------------------------------------------------------------------
 
 object "device" {
@@ -93,6 +94,29 @@ object "device" {
     optional = false
   }
 
+  # Sync the location the device is assigned to (optional — skipped when the
+  # source device has no location).
+  prerequisite "location" {
+    method   = "ensure_location"
+    args     = {
+      name = "when(source('location') != None, source('location.name'), None)"
+      site = "prereq('site')"
+    }
+    optional = true
+  }
+
+  # Sync the rack the device is mounted in (optional — skipped when the
+  # source device has no rack assignment).
+  prerequisite "rack" {
+    method   = "ensure_rack"
+    args     = {
+      name     = "when(source('rack') != None, source('rack.name'), None)"
+      site     = "prereq('site')"
+      location = "prereq('location')"
+    }
+    optional = true
+  }
+
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
@@ -116,6 +140,25 @@ object "device" {
 
   field "site" {
     value = "prereq('site')"
+  }
+
+  field "location" {
+    value = "prereq('location')"
+  }
+
+  field "rack" {
+    value = "prereq('rack')"
+  }
+
+  # face: which side of the rack the device faces — "front" or "rear".
+  # NetBox returns this as a choice object; .value holds the raw string.
+  field "face" {
+    value = "when(source('face') != None, source('face.value'), None)"
+  }
+
+  # position: rack unit (U) the device occupies, counted from the bottom.
+  field "position" {
+    value = "source('position')"
   }
 
   field "platform" {
