@@ -2,7 +2,7 @@
 File: collector/db.py
 Purpose: SQLite-backed store for sync job status, log records, schedules, and config settings.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #debug-mode
+Last Changed: Copilot 2026-03-31 Issue: #settings-migration
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sqlite3
 import threading
 from collections.abc import Generator
@@ -85,84 +84,112 @@ CREATE TABLE IF NOT EXISTS config_settings (
 """
 
 # ---------------------------------------------------------------------------
-# .env.example parser – seeds the config_settings table on first run
+# Hardcoded config_settings seed data (key, default_value, description, group_name).
+# Generated from .env.example; use INSERT OR IGNORE so user-set values are never
+# overwritten.  Add new rows here when new environment variables are introduced.
 # ---------------------------------------------------------------------------
-
-_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
-_ENV_EXAMPLE = os.path.join(_ROOT, ".env.example")
-
-
-def _parse_env_example(path: str) -> list[dict[str, str]]:
-    """Parse *path* (.env.example) and return a list of setting dicts.
-
-    Each dict has keys: key, default_value, description, group_name.
-    Duplicate keys are skipped (first definition wins).
-    """
-    try:
-        with open(path, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-    except OSError:
-        logger.debug("Could not read %s – config_settings will not be seeded.", path)
-        return []
-
-    settings: list[dict[str, str]] = []
-    seen: set[str] = set()
-    group = "General"
-    pending_desc: list[str] = []
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # Detect a three-line section header:
-        #   # ----...\n# Group Name (context)\n# ----...
-        if re.match(r"^# -{10,}$", line) and i + 2 < len(lines):
-            next1 = lines[i + 1]
-            next2 = lines[i + 2]
-            if next1.startswith("# ") and re.match(r"^# -{10,}$", next2):
-                raw = next1[2:].strip()
-                # Strip trailing parenthetical context: "Web UI  (web_server.py)"
-                raw = re.sub(r"\s*\(.*", "", raw).strip()
-                # Keep only the first segment if slash-separated: "SNMP / Linux"
-                raw = raw.split("/")[0].strip()
-                group = raw or group
-                pending_desc = []
-                i += 3
-                continue
-
-        # Comment line – accumulate as description
-        if line.startswith("#"):
-            text = line[2:].strip() if len(line) > 1 else ""
-            if text and not re.match(r"^-+$", text):
-                pending_desc.append(text)
-            i += 1
-            continue
-
-        # Blank line – clear pending description
-        if not line.strip():
-            pending_desc = []
-            i += 1
-            continue
-
-        # Variable assignment: KEY=value
-        m = re.match(r"^([A-Z][A-Z0-9_]*)=(.*)$", line)
-        if m:
-            key, default = m.group(1), m.group(2).strip()
-            if key not in seen:
-                settings.append(
-                    {
-                        "key": key,
-                        "default_value": default,
-                        "description": " ".join(pending_desc).strip(),
-                        "group_name": group,
-                    }
-                )
-                seen.add(key)
-            pending_desc = []
-
-        i += 1
-
-    return settings
+_SETTINGS_SEED: list[tuple[str, str, str, str]] = [
+    # --- Web UI ---
+    ('WEB_PORT', '5000', 'TCP port the web UI listens on (default: 5000)', 'Web UI'),
+    ('WEB_HOST', '0.0.0.0', 'Bind address for the web UI (default: 0.0.0.0)', 'Web UI'),
+    ('WEB_SECRET_KEY', 'change-me-in-production', 'Secret key for Flask sessions \u2013 change this in production!', 'Web UI'),
+    ('COLLECTOR_DB_PATH', '', 'Path for the SQLite job-tracking database (default: ./collector_jobs.sqlite3)', 'Web UI'),
+    ('FLASK_DEBUG', 'false', 'Set to "true" to enable Flask debug mode (never use in production)', 'Web UI'),
+    # --- NetBox ---
+    ('NETBOX_URL', 'https://netbox.example.com', '', 'NetBox'),
+    ('NETBOX_TOKEN', 'your_netbox_api_token', '', 'NetBox'),
+    ('NETBOX_CACHE_BACKEND', 'none', 'Optional caching: none | redis | sqlite', 'NetBox'),
+    ('NETBOX_CACHE_URL', '', 'Redis:  NETBOX_CACHE_URL=redis://redis:6379/0 SQLite: NETBOX_CACHE_URL=/tmp/netbox_cache.db', 'NetBox'),
+    ('NETBOX_CACHE_TTL', '300', 'Cache entry TTL in seconds (default: 300)', 'NetBox'),
+    ('NETBOX_PREWARM_SENTINEL_TTL', '', 'Prewarm sentinel TTL in seconds; leave empty to use cache TTL (default: unset)', 'NetBox'),
+    ('NETBOX_CACHE_DISABLE_ON_FAILURES', '5', 'Number of consecutive Redis failures before the cache is auto-disabled for the run (default: 5)', 'NetBox'),
+    # --- NetBox Source ---
+    ('SOURCE_NETBOX_URL', '', 'URL of the source NetBox instance to read objects from', 'NetBox Source'),
+    ('SOURCE_NETBOX_TOKEN', '', 'API token for the source NetBox instance', 'NetBox Source'),
+    ('SOURCE_NETBOX_VERIFY_SSL', 'true', 'Set to "false" to disable SSL verification for the source NetBox (default: true)', 'NetBox Source'),
+    ('SOURCE_NETBOX_FILTERS', '', 'Optional JSON filter dict passed to the source collection, e.g. {"site": "lon01"}', 'NetBox Source'),
+    # --- General collector flags ---
+    ('DRY_RUN', 'false', 'Set to "true" to log payloads without writing anything to NetBox', 'General collector flags'),
+    ('LOG_LEVEL', 'INFO', 'Logging verbosity: DEBUG | INFO | WARNING | ERROR', 'General collector flags'),
+    # --- VMware vCenter ---
+    ('VCENTER_URL', 'vcenter.example.com', '', 'VMware vCenter'),
+    ('VCENTER_USER', 'administrator@vsphere.local', '', 'VMware vCenter'),
+    ('VCENTER_PASS', 'changeme', '', 'VMware vCenter'),
+    # --- Cisco Catalyst Center ---
+    ('CATC_HOST', 'https://catc.example.com', '', 'Cisco Catalyst Center'),
+    ('CATC_USER', 'admin', '', 'Cisco Catalyst Center'),
+    ('CATC_PASS', 'changeme', '', 'Cisco Catalyst Center'),
+    ('CATC_VERIFY_SSL', 'true', '', 'Cisco Catalyst Center'),
+    # --- Lenovo XClarity ---
+    ('XCLARITY_HOST', 'https://xclarity.example.com', 'XCLARITY_HOST can be just a hostname/IP or a full URL; HTTPS port 443 is always used unless an explicit port is included in the URL.', 'Lenovo XClarity'),
+    ('XCLARITY_USER', 'admin', '', 'Lenovo XClarity'),
+    ('XCLARITY_PASS', 'changeme', '', 'Lenovo XClarity'),
+    ('XCLARITY_VERIFY_SSL', 'true', '', 'Lenovo XClarity'),
+    # --- Microsoft Azure ---
+    ('AZURE_AUTH_METHOD', 'default', 'Use "service_principal" + client_id/secret, or "default" for DefaultAzureCredential (az login, managed identity, etc.)', 'Microsoft Azure'),
+    ('AZURE_TENANT_ID', '', '', 'Microsoft Azure'),
+    ('AZURE_CLIENT_ID', '', '', 'Microsoft Azure'),
+    ('AZURE_CLIENT_SECRET', '', '', 'Microsoft Azure'),
+    ('AZURE_SUBSCRIPTION_IDS', '', 'Comma-separated subscription IDs to limit scope (leave empty for all)', 'Microsoft Azure'),
+    # --- LDAP ---
+    ('LDAP_SERVER', 'ldaps://ldap.example.com:636', '', 'LDAP'),
+    ('LDAP_USER', 'cn=service-account,dc=example,dc=com', '', 'LDAP'),
+    ('LDAP_PASS', 'changeme', '', 'LDAP'),
+    ('LDAP_SEARCH_BASE', 'dc=example,dc=com', '', 'LDAP'),
+    ('LDAP_FILTER', '(objectClass=person)', '', 'LDAP'),
+    ('LDAP_PREFIX_LENGTH', '', '', 'LDAP'),
+    ('LDAP_SKIP_APS', 'true', '', 'LDAP'),
+    # --- Active Directory ---
+    ('AD_SERVER', 'ldaps://dc01.corp.example.com', '', 'Active Directory'),
+    ('AD_USER', 'CN=svc-netbox,OU=ServiceAccounts,DC=corp,DC=example,DC=com', '', 'Active Directory'),
+    ('AD_PASS', 'changeme', '', 'Active Directory'),
+    ('AD_SEARCH_BASE', 'OU=Computers,DC=corp,DC=example,DC=com', 'Search base for computer objects', 'Active Directory'),
+    ('AD_DOMAIN', 'corp.example.com', '', 'Active Directory'),
+    # --- Cisco Nexus Dashboard Fabric Controller ---
+    ('NDFC_HOST', 'ndfc.example.com', '', 'Cisco Nexus Dashboard Fabric Controller'),
+    ('NDFC_USER', 'admin', '', 'Cisco Nexus Dashboard Fabric Controller'),
+    ('NDFC_PASS', 'changeme', '', 'Cisco Nexus Dashboard Fabric Controller'),
+    ('NDFC_VERIFY_SSL', 'true', '', 'Cisco Nexus Dashboard Fabric Controller'),
+    ('NDFC_FETCH_INTERFACES', 'false', 'Set to "true" to fetch per-switch interface lists from NDFC', 'Cisco Nexus Dashboard Fabric Controller'),
+    # --- F5 BIG-IP ---
+    ('F5_HOST', 'f5.example.com', '', 'F5 BIG-IP'),
+    ('F5_USER', 'admin', '', 'F5 BIG-IP'),
+    ('F5_PASS', 'changeme', '', 'F5 BIG-IP'),
+    ('F5_VERIFY_SSL', 'true', '', 'F5 BIG-IP'),
+    ('F5_FETCH_INTERFACES', 'false', 'Set to "true" to fetch physical interfaces and self-IPs', 'F5 BIG-IP'),
+    ('F5_SITE', 'Default', 'NetBox site name to assign the BIG-IP appliance to', 'F5 BIG-IP'),
+    # --- Prometheus node-exporter ---
+    ('PROMETHEUS_URL', 'http://prometheus.example.com:9090', '', 'Prometheus node-exporter'),
+    ('PROMETHEUS_USER', '', '', 'Prometheus node-exporter'),
+    ('PROMETHEUS_PASS', '', '', 'Prometheus node-exporter'),
+    ('PROMETHEUS_VERIFY_SSL', 'true', '', 'Prometheus node-exporter'),
+    ('PROMETHEUS_FETCH_INTERFACES', 'true', 'Set to "true" to fetch per-node network interface info', 'Prometheus node-exporter'),
+    # --- SNMP ---
+    ('SNMP_HOSTS', 'router1.example.com,router2.example.com', 'Comma-separated list of hostnames or IP addresses to poll', 'SNMP'),
+    ('SNMP_COMMUNITY', 'public', '', 'SNMP'),
+    ('SNMP_VERSION', '2c', '', 'SNMP'),
+    ('SNMP_PORT', '161', '', 'SNMP'),
+    ('SNMP_TIMEOUT', '5', '', 'SNMP'),
+    ('SNMP_RETRIES', '1', '', 'SNMP'),
+    ('SNMP_V3_USER', '', 'SNMPv3 (only required when SNMP_VERSION=3)', 'SNMP'),
+    ('SNMP_V3_AUTH_PASS', '', '', 'SNMP'),
+    ('SNMP_V3_AUTH_PROTO', 'sha', '', 'SNMP'),
+    ('SNMP_V3_PRIV_PASS', '', '', 'SNMP'),
+    ('SNMP_V3_PRIV_PROTO', 'aes', '', 'SNMP'),
+    ('LINUX_SITE', 'Default', 'Linux SNMP specific (mappings/linux-snmp.hcl.example)', 'SNMP'),
+    # --- Per-source sync flags ---
+    ('COLLECTOR_SYNC_INTERFACES', 'true', '', 'Per-source sync flags'),
+    ('COLLECTOR_SYNC_INVENTORY', 'true', '', 'Per-source sync flags'),
+    ('COLLECTOR_SYNC_DISKS', 'true', '', 'Per-source sync flags'),
+    # --- Tenable One / Nessus ---
+    ('TENABLE_HOST', '', 'For Tenable.io / Tenable One: leave TENABLE_HOST empty (defaults to cloud.tenable.com). For on-prem Nessus: set to e.g. https://nessus.example.com:8834', 'Tenable One'),
+    ('TENABLE_ACCESS_KEY', '', '', 'Tenable One'),
+    ('TENABLE_SECRET_KEY', '', '', 'Tenable One'),
+    ('TENABLE_PLATFORM', 'tenable', '"tenable" (default) or "nessus"', 'Tenable One'),
+    ('TENABLE_DATE_RANGE', '30', 'Days to look back for asset/vulnerability activity', 'Tenable One'),
+    ('TENABLE_VERIFY_SSL', 'true', '', 'Tenable One'),
+    ('TENABLE_INCLUDE_ASSET_DETAILS', 'false', 'Set to "true" to enable the "findings" collection', 'Tenable One'),
+]
 
 _lock = threading.Lock()
 
@@ -195,7 +222,7 @@ def _conn() -> Generator[sqlite3.Connection, None, None]:
 
 
 def init_db() -> None:
-    """Create tables if they do not exist and seed config_settings from .env.example."""
+    """Create tables if they do not exist and seed config_settings from _SETTINGS_SEED."""
     path = _db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with _conn() as con:
@@ -211,14 +238,14 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists
 
-        # Seed config_settings from .env.example (INSERT OR IGNORE preserves user values)
+        # Seed config_settings (INSERT OR IGNORE preserves user-set values)
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        for s in _parse_env_example(_ENV_EXAMPLE):
+        for key, default_value, description, group_name in _SETTINGS_SEED:
             con.execute(
                 "INSERT OR IGNORE INTO config_settings"
                 " (key, value, default_value, description, group_name, created_at, updated_at)"
                 " VALUES (?, NULL, ?, ?, ?, ?, ?)",
-                (s["key"], s["default_value"], s["description"], s["group_name"], now, now),
+                (key, default_value, description, group_name, now, now),
             )
 
 
