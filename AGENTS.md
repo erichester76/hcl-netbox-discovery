@@ -5,6 +5,8 @@ This file provides specific guidance for AI coding agents working in this projec
 
 **Core Rule**: Stay strictly focused on the exact task requested. Do not expand scope, add extra features, or over-deliver unless explicitly asked.
 
+Always read all .md files in /docs before beginning a task (ARCHITECTURE.md especially).
+
 ## How to Approach Any Task
 - Read the user's request carefully and implement **only** what is asked.
 - Do not add "nice-to-have" improvements, refactoring, new tests, or extra documentation unless the request specifically mentions them.
@@ -38,7 +40,7 @@ This file provides specific guidance for AI coding agents working in this projec
 
 ### Documentation Guidelines
 - Keep `README.md` up to date at all times.
-- Maintain a high-level `ARCHITECTURE.md` file that describes the overall system design, major components, data flows, and key decisions.
+- Maintain a high-level `ARCHITECTURE.md` file in /docs that describes the overall system design, major components, data flows, and key decisions.
 - When making changes that affect how the project works, update the relevant documentation in the same commit/PR.
 
 ### UI Guidelines
@@ -46,7 +48,15 @@ This file provides specific guidance for AI coding agents working in this projec
 - The official Clemson University color palette is anchored by Clemson Orange (RGB: 245, 102, 0) and Regalia (purple, RGB: 82, 45, 128).
 These primary colors are supported by neutrals including Goal Line (white, RGB: 255, 255, 255) and College Avenue (dark gray, RGB: 51, 51, 51)
 - More standards available at https://www.clemson.edu/brand/web/
-  
+- 
+### Commenting Guidelines
+- Keep comments concise and minimal.
+- Add only a standard stock header at the top of every new or significantly modified file.
+- Comment **only** when the logic is not obvious from reading the code.
+- Comment important decisions, trade-offs, or compromises that need to be addressed later.
+- Every comment must include the date (YYYY-MM-DD) and reference any relevant issue number (e.g., `#123`).
+- Avoid redundant comments that simply restate what the code does.
+
 ### Stock Header Template
 Use the following standard stock header at the top of **every new or significantly modified file**. Replace placeholders as needed.
 
@@ -94,22 +104,14 @@ Last Changed: [Your Name] Issue: #123
  */
 ```
 
-### Commenting Guidelines
-- Keep comments concise and minimal.
-- Add only a standard stock header at the top of every new or significantly modified file.
-- Comment **only** when the logic is not obvious from reading the code.
-- Comment important decisions, trade-offs, or compromises that need to be addressed later.
-- Every comment must include the date (YYYY-MM-DD) and reference any relevant issue number (e.g., `#123`).
-- Avoid redundant comments that simply restate what the code does.
-
 ### Logging Guidelines
-- Use the project's standard logging approach.
+- Use the project language's standard logging approach.
 - **INFO level**: Use sparingly — only for high-level important events.
 - **WARNING level**: Use for recoverable issues and situations that require attention.
 - **ERROR level**: Use for errors and failed operations.
 - **DEBUG level**: Use heavily for detailed tracing, decision paths, and internal state — especially in complex logic.
 - Configure log levels appropriately per environment (more verbose in development).
-- Do not log sensitive information.
+- Do not log sensitive information such as PHI or PII. (mask or omit)
 
 ### Commit & Pull Request Guidelines
 - Use short, imperative commit messages.
@@ -117,7 +119,7 @@ Last Changed: [Your Name] Issue: #123
 - In PRs: explain the change, note any runtime or configuration impact, link issues, and include test evidence.
 
 ### Security & Configuration Tips
-- Store all credentials in `.env` only.
+- Store all credentials in `.env` or doppler only.
 - Never commit secrets or generated state files.
 - Follow least-privilege principles for any external integrations.
 
@@ -162,7 +164,6 @@ Last Changed: [Your Name] Issue: #123
 - Run tests with the project's test runner (e.g., PHPUnit).
 - Follow PSR-12 coding style where possible.
 - Use a logging library such as Monolog with appropriate levels.
-- Prefer clear, self-documenting code; add comments only for non-obvious logic or decisions.
 - Use type hints and strict types when supported by the PHP version.
 
 ## Strict Agent Rules – No Scope Creep
