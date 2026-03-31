@@ -28,7 +28,9 @@ from .config import (
     ModuleConfig,
     ObjectConfig,
     PowerInputConfig,
+    SourceConfig,
     TaggedVlanConfig,
+    build_source_config,
     load_config,
 )
 from .context import RunContext
@@ -220,7 +222,10 @@ class Engine:
         Returns
         -------
         list[RunStats]
-            One ``RunStats`` instance per ``object`` block, in declaration order.
+            One ``RunStats`` instance per ``object`` block per iteration, in
+            declaration order.  When no ``iterator {}`` block is present the
+            behaviour is identical to previous versions (one pass, one entry
+            per ``object`` block).
         """
         cfg = load_config(mapping_path)
         dry_run = dry_run_override if dry_run_override is not None else cfg.collector.dry_run
@@ -233,8 +238,115 @@ class Engine:
         )
 
         nb = _build_nb_client(cfg.netbox)
-        source = _get_source_adapter(cfg.source.api_type)
-        source.connect(cfg.source)
+
+        if cfg.collector.sync_tag and not dry_run:
+            # Ensure the sync tag exists once (shared across all iterations)
+            tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
+            if not tag_ok:
+                logger.error(
+                    "Sync tag %r could not be created in NetBox; "
+                    "tag injection disabled for this run to prevent 400 errors",
+                    cfg.collector.sync_tag,
+                )
+                cfg.collector.sync_tag = ""
+
+        # Build groups of (source_configs, max_workers).  When iterator blocks
+        # are present each row produces its own SourceConfig with env() calls
+        # re-evaluated using that row's variable overrides.  The iterator's
+        # max_workers controls how many passes within that group run in parallel.
+        if cfg.collector.iterators:
+            groups: list[tuple[list[SourceConfig], int]] = []
+            for iterator in cfg.collector.iterators:
+                n = len(iterator)
+                if n == 0:
+                    logger.warning("Iterator block is empty; skipping")
+                    continue
+                rows: list[SourceConfig] = [
+                    build_source_config(cfg.raw_source_body, cfg.source_label, iterator.get_row(i))
+                    for i in range(n)
+                ]
+                groups.append((rows, max(1, iterator.max_workers)))
+        else:
+            groups = [([cfg.source], 1)]
+
+        all_stats: list[RunStats] = []
+
+        try:
+            for rows, pass_workers in groups:
+                total = len(rows)
+                if pass_workers > 1 and total > 1:
+                    logger.info(
+                        "Running %d iterator passes in parallel (max_workers=%d)",
+                        total,
+                        pass_workers,
+                    )
+                    stats_by_idx: dict[int, list[RunStats]] = {}
+                    with ThreadPoolExecutor(
+                        max_workers=pass_workers,
+                        thread_name_prefix="iter",
+                    ) as executor:
+                        futures = {
+                            executor.submit(
+                                contextvars.copy_context().run,
+                                self._run_pass,
+                                source_cfg,
+                                cfg,
+                                nb,
+                                dry_run,
+                                idx,
+                                total,
+                            ): idx
+                            for idx, source_cfg in enumerate(rows)
+                        }
+                        for future in as_completed(futures):
+                            idx = futures[future]
+                            exc = future.exception()
+                            if exc:
+                                logger.error(
+                                    "Iterator pass %d/%d failed: %s",
+                                    idx + 1,
+                                    total,
+                                    exc,
+                                    exc_info=exc,
+                                )
+                            else:
+                                stats_by_idx[idx] = future.result()
+                    # Preserve declaration order in returned stats
+                    for i in sorted(stats_by_idx):
+                        all_stats.extend(stats_by_idx[i])
+                else:
+                    for idx, source_cfg in enumerate(rows):
+                        pass_stats = self._run_pass(source_cfg, cfg, nb, dry_run, idx, total)
+                        all_stats.extend(pass_stats)
+        finally:
+            nb.close()
+
+        logger.info("Collector run complete  objects=%d", len(all_stats))
+        return all_stats
+
+    def _run_pass(
+        self,
+        source_cfg: SourceConfig,
+        cfg: CollectorConfig,
+        nb: Any,
+        dry_run: bool,
+        pass_idx: int = 0,
+        total_passes: int = 1,
+    ) -> list[RunStats]:
+        """Connect to *source_cfg*, process all object blocks, and disconnect.
+
+        Returns a list of :class:`RunStats` (one per ``object {}`` block).
+        """
+        if total_passes > 1:
+            logger.info(
+                "Iterator pass %d/%d  url=%s",
+                pass_idx + 1,
+                total_passes,
+                source_cfg.url,
+            )
+
+        source = _get_source_adapter(source_cfg.api_type)
+        source.connect(source_cfg)
 
         base_ctx = RunContext(
             nb=nb,
@@ -247,28 +359,17 @@ class Engine:
             dry_run=dry_run,
         )
 
-        if cfg.collector.sync_tag and not dry_run:
-            tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
-            if not tag_ok:
-                logger.error(
-                    "Sync tag %r could not be created in NetBox; "
-                    "tag injection disabled for this run to prevent 400 errors",
-                    cfg.collector.sync_tag,
-                )
-                cfg.collector.sync_tag = ""
-
-        all_stats: list[RunStats] = []
+        pass_stats: list[RunStats] = []
         try:
             for obj_cfg in cfg.objects:
                 stats = self._process_object(obj_cfg, base_ctx)
-                all_stats.append(stats)
+                pass_stats.append(stats)
                 stats.log_summary()
         finally:
             source.close()
-            nb.close()
 
-        logger.info("Collector run complete  objects=%d", len(all_stats))
-        return all_stats
+        return pass_stats
+
 
     # ------------------------------------------------------------------
     # Object-level processing

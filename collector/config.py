@@ -7,6 +7,7 @@ python-hcl2 output structure for labeled blocks:
 Unlabeled blocks:
   ``netbox {...}``           → ``{"netbox": [{body}]}``
   ``interface {...}``        → ``{"interface": [{body}]}``
+  ``iterator {...}``         → ``{"iterator": [{body}]}``
 """
 
 from __future__ import annotations
@@ -45,6 +46,37 @@ def _eval_config_str(value: Any) -> Any:
         except ImportError:
             def _env_fn(k: str, d: str = "") -> str:  # type: ignore[misc]
                 return os.environ.get(k, d)
+        try:
+            return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
+        except Exception:
+            return value
+    return value
+
+
+def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
+    """Evaluate env() references with iterator variable overrides.
+
+    Identical to :func:`_eval_config_str` except that *overrides* is checked
+    first before the database / OS environment.  Used by
+    :func:`build_source_config` to inject per-iteration values.
+    """
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if not stripped:
+        return value
+    if "env(" in stripped:
+        try:
+            from .db import get_config as _get_config  # noqa: PLC0415
+            _base_lookup = _get_config
+        except ImportError:
+            _base_lookup = lambda k, d="": os.environ.get(k, d)  # type: ignore[assignment]
+
+        def _env_fn(k: str, d: str = "") -> str:
+            if k in overrides:
+                return str(overrides[k])
+            return _base_lookup(k, d)
+
         try:
             return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
         except Exception:
@@ -120,6 +152,53 @@ class SourceConfig:
 
 
 @dataclass
+class IteratorConfig:
+    """One ``iterator {}`` block inside a ``collector {}`` block.
+
+    Each key (except ``max_workers``) maps to a list of string values.  The
+    engine iterates through the lists in lock-step (zip), running a full
+    collection pass for each index.  The variable names are used as env-var
+    overrides when evaluating ``env()`` calls in the ``source {}`` block.
+
+    The optional ``max_workers`` key controls how many iterator passes run in
+    parallel.  Defaults to ``1`` (sequential).  Set it higher to connect to
+    multiple sources simultaneously.
+
+    Example HCL::
+
+        collector {
+          iterator {
+            max_workers  = 2
+            VCENTER_URL  = ["vc1.example.com", "vc2.example.com", "vc3.example.com"]
+            VCENTER_USER = ["admin", "admin", "readonly"]
+            VCENTER_PASS = ["pass1", "pass2", "pass3"]
+          }
+        }
+    """
+
+    variables: dict  # var_name → list of values
+    max_workers: int = 1
+
+    def __len__(self) -> int:
+        """Return the number of iterations (shortest list length)."""
+        if not self.variables:
+            return 0
+        lengths = [len(v) if isinstance(v, list) else 1 for v in self.variables.values()]
+        return min(lengths) if lengths else 0
+
+    def get_row(self, index: int) -> dict:
+        """Return the variable values for iteration *index*."""
+        row: dict = {}
+        for k, v in self.variables.items():
+            if isinstance(v, list):
+                if index < len(v):
+                    row[k] = v[index]
+            else:
+                row[k] = v
+        return row
+
+
+@dataclass
 class NetBoxConfig:
     url: str
     token: str
@@ -146,6 +225,7 @@ class CollectorOptions:
     sync_tag: str = ""
     regex_dir: str = "./regex"
     extra_flags: dict = field(default_factory=dict)
+    iterators: list[IteratorConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -291,6 +371,9 @@ class CollectorConfig:
     netbox: NetBoxConfig
     collector: CollectorOptions
     objects: list[ObjectConfig] = field(default_factory=list)
+    # Raw HCL source body kept for per-iteration re-evaluation (iterator feature)
+    raw_source_body: dict = field(default_factory=dict)
+    source_label: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +534,67 @@ def _parse_objects(raw: list) -> list[ObjectConfig]:
     return objects
 
 
+def _parse_iterators(raw: list) -> list[IteratorConfig]:
+    """Parse ``iterator {}`` unlabeled blocks from a collector block body."""
+    configs = []
+    for body in _unlabeled_list(raw):
+        max_workers = _int(body.get("max_workers", 1), default=1)
+        variables = {k: v for k, v in body.items() if k != "max_workers"}
+        configs.append(IteratorConfig(variables=variables, max_workers=max_workers))
+    return configs
+
+
+def build_source_config(
+    source_body: dict,
+    source_label: str,
+    overrides: Optional[dict] = None,
+) -> SourceConfig:
+    """Build a :class:`SourceConfig` from a raw HCL source block body.
+
+    Parameters
+    ----------
+    source_body:
+        The raw dict from python-hcl2 for the ``source "label" {}`` block.
+    source_label:
+        The label (e.g. ``"vmware"``) used as a fallback for ``api_type``.
+    overrides:
+        Optional mapping of variable names to values that take precedence
+        when ``env()`` calls are evaluated.  Supplied per-iteration by the
+        engine when :attr:`CollectorOptions.iterators` is non-empty.
+    """
+    _eval = (
+        lambda v: _eval_config_str_with_overrides(v, overrides)
+        if overrides
+        else _eval_config_str(v)
+    )
+
+    _SOURCE_SCALAR_KEYS = {"api_type", "url", "username", "password", "verify_ssl", "auth", "auth_header"}
+    raw_collections = source_body.get("collection", [])
+    collections: dict[str, CollectionConfig] = {}
+    for col_label, col_body in _labeled_list(raw_collections):
+        collections[col_label] = CollectionConfig(
+            name=col_label,
+            endpoint=col_body.get("endpoint", ""),
+            list_key=col_body.get("list_key", ""),
+            detail_endpoint=col_body.get("detail_endpoint", ""),
+            detail_id_field=col_body.get("detail_id_field", "uuid"),
+        )
+
+    return SourceConfig(
+        api_type=_eval(source_body.get("api_type", source_label)),
+        url=_eval(source_body.get("url", "")),
+        username=_eval(source_body.get("username", "")),
+        password=_eval(source_body.get("password", "")),
+        verify_ssl=_bool(_eval(source_body.get("verify_ssl", "true")), default=True),
+        extra={
+            k: _eval(v)
+            for k, v in source_body.items()
+            if k not in _SOURCE_SCALAR_KEYS and k != "collection"
+        },
+        collections=collections,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level loader
 # ---------------------------------------------------------------------------
@@ -466,34 +610,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
         raise ValueError("HCL file is missing a 'source' block")
     source_label, source_body = _labeled_list(source_list)[0]
 
-    # Parse optional collection {} labeled sub-blocks (used by RestSource)
-    _SOURCE_SCALAR_KEYS = {"api_type", "url", "username", "password", "verify_ssl", "auth", "auth_header"}
-    raw_collections = source_body.get("collection", [])
-    collections: dict[str, CollectionConfig] = {}
-    for col_label, col_body in _labeled_list(raw_collections):
-        collections[col_label] = CollectionConfig(
-            name=col_label,
-            endpoint=col_body.get("endpoint", ""),
-            list_key=col_body.get("list_key", ""),
-            detail_endpoint=col_body.get("detail_endpoint", ""),
-            detail_id_field=col_body.get("detail_id_field", "uuid"),
-        )
-
-    source_cfg = SourceConfig(
-        api_type=_eval_config_str(source_body.get("api_type", source_label)),
-        url=_eval_config_str(source_body.get("url", "")),
-        username=_eval_config_str(source_body.get("username", "")),
-        password=_eval_config_str(source_body.get("password", "")),
-        verify_ssl=_bool(
-            _eval_config_str(source_body.get("verify_ssl", "true")), default=True
-        ),
-        extra={
-            k: _eval_config_str(v)
-            for k, v in source_body.items()
-            if k not in _SOURCE_SCALAR_KEYS and k != "collection"
-        },
-        collections=collections,
-    )
+    source_cfg = build_source_config(source_body, source_label)
 
     # --- netbox ---
     netbox_list = raw.get("netbox", [])
@@ -522,7 +639,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
     )
 
     # --- collector ---
-    _KNOWN_COLLECTOR_KEYS = {"max_workers", "dry_run", "sync_tag", "regex_dir"}
+    _KNOWN_COLLECTOR_KEYS = {"max_workers", "dry_run", "sync_tag", "regex_dir", "iterator"}
     col_body = {}
     collector_list = raw.get("collector", [])
     if collector_list:
@@ -534,12 +651,15 @@ def load_config(mapping_path: str) -> CollectorConfig:
             resolved = _eval_config_str(v)
             extra_flags[k] = _bool(resolved) if isinstance(resolved, str) else resolved
 
+    iterators = _parse_iterators(col_body.get("iterator", []))
+
     collector_cfg = CollectorOptions(
         max_workers=_int(col_body.get("max_workers", 4), default=4),
         dry_run=_bool(_eval_config_str(col_body.get("dry_run", False))),
         sync_tag=_eval_config_str(col_body.get("sync_tag", "")),
         regex_dir=_eval_config_str(col_body.get("regex_dir", "./regex")),
         extra_flags=extra_flags,
+        iterators=iterators,
     )
 
     # --- objects ---
@@ -550,4 +670,6 @@ def load_config(mapping_path: str) -> CollectorConfig:
         netbox=netbox_cfg,
         collector=collector_cfg,
         objects=objects,
+        raw_source_body=source_body,
+        source_label=source_label,
     )
