@@ -604,6 +604,7 @@ class BackendAdapter(ABC):
         retry_max_delay_seconds: float = 15.0,
         retry_jitter_seconds: float = 0.0,
         retry_on_4xx: Sequence[int] = (408, 409, 425, 429),
+        retry_on_5xx: Sequence[int] = (502, 503, 504),
     ) -> None:
         self.rate_limiter = rate_limiter
         self.retry_attempts = max(int(retry_attempts), 0)
@@ -612,6 +613,7 @@ class BackendAdapter(ABC):
         self.retry_max_delay_seconds = max(float(retry_max_delay_seconds), self.retry_initial_delay_seconds)
         self.retry_jitter_seconds = max(float(retry_jitter_seconds), 0.0)
         self.retry_on_4xx = {int(code) for code in retry_on_4xx}
+        self.retry_on_5xx = {int(code) for code in retry_on_5xx}
 
     @staticmethod
     def _extract_status_code(exc: Exception) -> Optional[int]:
@@ -641,7 +643,7 @@ class BackendAdapter(ABC):
     def _should_retry_exception(self, exc: Exception) -> bool:
         status_code = self._extract_status_code(exc)
         if status_code is not None:
-            if 500 <= status_code <= 599:
+            if status_code in self.retry_on_5xx:
                 return True
             if status_code in self.retry_on_4xx:
                 return True
