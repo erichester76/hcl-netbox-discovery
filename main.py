@@ -354,6 +354,14 @@ def _run_queued_job(job: dict[str, Any]) -> None:
         logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
     )
     root_logger = logging.getLogger()
+    # Save the root logger's current effective level so it can be restored after
+    # the job completes.  When debug_mode is enabled we must lower the root
+    # logger's level to DEBUG; otherwise Python's logging framework silently
+    # drops DEBUG records before they ever reach any handler, so the
+    # JobLogHandler would never see them even though its own level is DEBUG.
+    original_root_level = root_logger.level
+    if debug_mode:
+        root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
 
     summary: dict[str, Any] = {}
@@ -380,6 +388,7 @@ def _run_queued_job(job: dict[str, Any]) -> None:
         logging.exception("Queued job %d failed for %s: %s", job_id, hcl_file, exc)
     finally:
         root_logger.removeHandler(handler)
+        root_logger.setLevel(original_root_level)
         finish_job(
             job_id,
             success=success,
