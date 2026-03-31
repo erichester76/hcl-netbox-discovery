@@ -69,14 +69,14 @@ object "device" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(source('device_type.manufacturer.name'), 'Unknown')" }
+    args     = { name = "source('device_type.manufacturer.name') or 'Unknown'" }
     optional = false
   }
 
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('device_type.model'), 'Unknown')"
+      model        = "source('device_type.model') or 'Unknown'"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -84,13 +84,13 @@ object "device" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "coalesce(source('role.name'), 'Unknown')" }
+    args     = { name = "source('role.name') or 'Unknown'" }
     optional = false
   }
 
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('site.name'), 'Unknown')" }
+    args     = { name = "source('site.name') or 'Unknown'" }
     optional = false
   }
 
@@ -120,14 +120,14 @@ object "device" {
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform.name'), '')"
+      name         = "source('platform.name') or None"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('name'), 'Unknown')"
+    value = "source('name') or 'Unknown'"
   }
 
   field "device_type" {
@@ -174,7 +174,7 @@ object "device" {
   }
 
   field "status" {
-    value = "coalesce(source('status.value'), source('status'), 'active')"
+    value = "source('status.value') or 'active'"
   }
 
   field "comments" {
@@ -210,7 +210,7 @@ object "device" {
     }
 
     field "type" {
-      value = "coalesce(source('type.value'), source('type'), 'other')"
+      value = "source('type.value') or 'other'"
     }
 
     field "enabled" {
@@ -218,7 +218,7 @@ object "device" {
     }
 
     field "description" {
-      value = "coalesce(source('description'), '')"
+      value = "source('description') or ''"
     }
 
     field "mac_address" {
