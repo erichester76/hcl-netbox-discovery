@@ -13,7 +13,31 @@
       --cu-orange: #F56600;
       --cu-purple: #522D80;
     }
-    body { background: #f4f4f4; }
+    /* Light mode defaults */
+    body { background: #f4f4f4; color: #333; }
+    .card { background-color: #fff; color: #333; }
+    .table { --bs-table-color: #333; }
+
+    /* Dark mode overrides – class is applied to <html> so the early script can set it before body renders */
+    html.dark-mode body { background: #121212; color: #e0e0e0; }
+    html.dark-mode .card { background-color: #1e1e1e; color: #e0e0e0; border-color: #444; }
+    html.dark-mode .card-body { background-color: #1e1e1e; }
+    html.dark-mode .table { --bs-table-color: #e0e0e0; --bs-table-bg: #1e1e1e; --bs-table-border-color: #444; }
+    html.dark-mode .table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: #2a2a2a; }
+    html.dark-mode .table-hover > tbody > tr:hover > * { --bs-table-accent-bg: #2f2f2f; }
+    html.dark-mode .modal-content { background-color: #1e1e1e; color: #e0e0e0; }
+    html.dark-mode .form-control,
+    html.dark-mode .form-select { background-color: #2a2a2a; color: #e0e0e0; border-color: #555; }
+    html.dark-mode .form-control:focus,
+    html.dark-mode .form-select:focus { background-color: #2a2a2a; color: #e0e0e0; border-color: var(--cu-orange); box-shadow: 0 0 0 0.2rem rgba(245,102,0,.25); }
+    html.dark-mode .input-group-text { background-color: #333; color: #e0e0e0; border-color: #555; }
+    html.dark-mode .list-group-item { background-color: #1e1e1e; color: #e0e0e0; border-color: #444; }
+    html.dark-mode .dropdown-menu { background-color: #1e1e1e; border-color: #444; }
+    html.dark-mode .dropdown-item { color: #e0e0e0; }
+    html.dark-mode .dropdown-item:hover { background-color: #2a2a2a; }
+    html.dark-mode .badge.bg-secondary { background-color: #555 !important; }
+    html.dark-mode hr { border-color: #444; }
+
     .navbar-brand span.text-orange { color: var(--cu-orange); }
     .navbar { background-color: var(--cu-purple) !important; }
     .navbar-brand, .nav-link { color: #fff !important; }
@@ -36,7 +60,27 @@
     .card-header-cu { background-color: var(--cu-purple); color: #fff; }
     a.text-cu-orange { color: var(--cu-orange); text-decoration: none; }
     a.text-cu-orange:hover { text-decoration: underline; }
+
+    /* Dark mode toggle button */
+    #dark-mode-toggle {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
+      padding: 0.25rem 0.5rem;
+      color: #fff;
+    }
+    #dark-mode-toggle:hover { color: var(--cu-orange); }
   </style>
+  <!-- Apply saved dark mode preference before page renders to avoid flash -- 2026-03-31 -->
+  <script>
+    (function () {
+      if (localStorage.getItem('darkMode') === 'enabled') {
+        document.documentElement.classList.add('dark-mode');
+      }
+    })();
+  </script>
 </head>
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark mb-4">
@@ -44,11 +88,15 @@
     <a class="navbar-brand fw-bold" href="/">
       <span class="text-orange">HCL</span> NetBox Discovery
     </a>
-    <div class="navbar-nav ms-auto">
+    <div class="navbar-nav ms-auto d-flex align-items-center">
       <a class="nav-link" href="/">Dashboard</a>
       <a class="nav-link" href="/schedules">Scheduler</a>
       <a class="nav-link" href="/cache">Cache</a>
       <a class="nav-link" href="/settings">Settings</a>
+      <!-- Dark mode toggle icon -- 2026-03-31 -->
+      <button id="dark-mode-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+        <span id="dark-mode-icon">🌙</span>
+      </button>
     </div>
   </div>
 </nav>
@@ -58,6 +106,38 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc4s9bIOgUxi8T/jzmZa7OV4uh6kKqfKHp5nFGJjv8c"
         crossorigin="anonymous"></script>
+<script>
+  // Dark mode toggle logic -- 2026-03-31
+  (function () {
+    var html = document.documentElement;
+    var icon = document.getElementById('dark-mode-icon');
+    var btn  = document.getElementById('dark-mode-toggle');
+
+    function applyDarkMode(enabled) {
+      if (enabled) {
+        html.classList.add('dark-mode');
+        icon.textContent = '☀️';
+        btn.title = 'Switch to light mode';
+        btn.setAttribute('aria-label', 'Switch to light mode');
+      } else {
+        html.classList.remove('dark-mode');
+        icon.textContent = '🌙';
+        btn.title = 'Switch to dark mode';
+        btn.setAttribute('aria-label', 'Switch to dark mode');
+      }
+    }
+
+    // Initialize from saved preference
+    var savedPref = localStorage.getItem('darkMode');
+    applyDarkMode(savedPref === 'enabled');
+
+    btn.addEventListener('click', function () {
+      var isDark = html.classList.contains('dark-mode');
+      localStorage.setItem('darkMode', isDark ? 'disabled' : 'enabled');
+      applyDarkMode(!isDark);
+    });
+  })();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
