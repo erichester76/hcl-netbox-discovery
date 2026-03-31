@@ -172,7 +172,9 @@ class PrerequisiteRunner:
         return extract_id(obj)
 
     def _ensure_platform(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+        name = args.get("name")
+        if not name:
+            return None
         slug = slugify(name)
         manufacturer_id = args.get("manufacturer_id") or args.get("manufacturer")
         # Allow callers to pass a manufacturer name string; we'll ensure it ourselves.
