@@ -28,13 +28,18 @@ from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
     delete_schedule,
+    get_all_settings,
+    get_config,
     get_job,
     get_job_logs,
     get_jobs,
     get_running_jobs,
     get_schedule,
     get_schedules,
+    get_settings_by_group,
     init_db,
+    reset_setting,
+    set_setting,
     update_schedule,
 )
 
@@ -47,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates")
-    app.config["SECRET_KEY"] = os.environ.get("WEB_SECRET_KEY", "dev-change-me")
+    app.config["SECRET_KEY"] = get_config("WEB_SECRET_KEY", "dev-change-me")
 
     # Initialise the job database on first request
     with app.app_context():
@@ -229,6 +234,27 @@ def create_app() -> Flask:
         return redirect(url_for("job_detail", job_id=job_id))
 
     # ------------------------------------------------------------------
+    # Settings routes
+    # ------------------------------------------------------------------
+
+    @app.route("/settings")
+    def settings():
+        groups = get_settings_by_group()
+        return render_template("settings.html", groups=groups)
+
+    @app.route("/settings/update", methods=["POST"])
+    def settings_update():
+        key = request.form.get("key", "").strip()
+        action = request.form.get("action", "save")
+        if key:
+            if action == "reset":
+                reset_setting(key)
+            else:
+                value = request.form.get("value", "").strip() or None
+                set_setting(key, value)
+        return redirect(url_for("settings"))
+
+    # ------------------------------------------------------------------
     # 404 handler
     # ------------------------------------------------------------------
 
@@ -263,8 +289,8 @@ def _dispatch_job(hcl_file: str, dry_run: bool = False) -> int:
 
 
 def _env_int(name: str, default: int) -> int:
-    """Return *name* from the environment as int, falling back to *default*."""
-    raw = os.environ.get(name, "")
+    """Return *name* from config (DB then env) as int, falling back to *default*."""
+    raw = get_config(name, "")
     if raw:
         try:
             return int(raw)
@@ -274,12 +300,12 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _cache_client_kwargs() -> dict[str, Any]:
-    """Build kwargs for a pynetbox2 client using cache-related env vars."""
-    backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
-    cache_url = os.environ.get("NETBOX_CACHE_URL", "")
+    """Build kwargs for a pynetbox2 client using cache-related config settings."""
+    backend = get_config("NETBOX_CACHE_BACKEND", "none")
+    cache_url = get_config("NETBOX_CACHE_URL", "")
     kwargs: dict[str, Any] = dict(
-        url=os.environ.get("NETBOX_URL", "http://localhost:8080"),
-        token=os.environ.get("NETBOX_TOKEN", ""),
+        url=get_config("NETBOX_URL", "http://localhost:8080"),
+        token=get_config("NETBOX_TOKEN", ""),
         cache_backend=backend,
         cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
     )
@@ -295,13 +321,13 @@ def _cache_client_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _cache_client() -> Generator[Any | None, None, None]:
-    """Context manager that yields a pynetbox2 API client configured from env vars.
+    """Context manager that yields a pynetbox2 API client configured from config settings.
 
     Yields ``None`` when the cache backend is ``"none"``.
     """
     import pynetbox2 as pynetbox  # type: ignore[import]  # noqa: PLC0415
 
-    backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
+    backend = get_config("NETBOX_CACHE_BACKEND", "none")
     if backend == "none":
         yield None
         return
@@ -316,7 +342,7 @@ def _cache_client() -> Generator[Any | None, None, None]:
 def _get_cache_info() -> dict[str, Any]:
     """Return a dict describing the current cache backend and entry counts."""
     try:
-        backend = os.environ.get("NETBOX_CACHE_BACKEND", "none")
+        backend = get_config("NETBOX_CACHE_BACKEND", "none")
         if backend == "none":
             return {"backend": "none", "entries": {}, "total": 0}
 

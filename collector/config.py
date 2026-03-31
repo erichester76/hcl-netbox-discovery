@@ -27,7 +27,9 @@ def _eval_config_str(value: Any) -> Any:
 
     If *value* is a plain string that contains an ``env(`` call, it is eval'd
     with only the ``env`` built-in in scope so that environment variables are
-    resolved at parse time.  All other values are returned unchanged.
+    resolved at parse time.  The ``env()`` function checks the DB config_settings
+    table first, then falls back to the OS environment.  All other values are
+    returned unchanged.
     """
     if not isinstance(value, str):
         return value
@@ -36,7 +38,15 @@ def _eval_config_str(value: Any) -> Any:
         return value
     if "env(" in stripped:
         try:
-            return eval(stripped, {"__builtins__": {}}, {"env": lambda k, d="": os.environ.get(k, d)})
+            from .db import get_config as _get_config  # noqa: PLC0415
+
+            def _env_fn(k: str, d: str = "") -> str:
+                return _get_config(k, d)
+        except ImportError:
+            def _env_fn(k: str, d: str = "") -> str:  # type: ignore[misc]
+                return os.environ.get(k, d)
+        try:
+            return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
         except Exception:
             return value
     return value
