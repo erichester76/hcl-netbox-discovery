@@ -309,6 +309,7 @@ def _cache_client_kwargs() -> dict[str, Any]:
         token=get_config("NETBOX_TOKEN", ""),
         cache_backend=backend,
         cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
+        cache_key_prefix=get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:"),
     )
     sentinel_ttl = _env_int("NETBOX_PREWARM_SENTINEL_TTL", 0)
     if sentinel_ttl:
@@ -371,7 +372,16 @@ def _flush_cache(resource: str | None) -> None:
 
 
 def _prewarm_cache(resource: str | None) -> None:
-    """Pre-warm the cache for *resource* (or all known resources if *None*)."""
+    """Pre-warm the cache for *resource* (or all known resources if *None*).
+
+    When no resource is specified, all resources registered in
+    _RESOURCE_TO_PRECACHE_OBJECT_TYPE are eligible for prewarming.  Using
+    only the current cache_stats() keys would miss resources that have never
+    been cached (e.g. dcim.devices on a fresh instance), creating a
+    chicken-and-egg problem where those resources could never be prewarmed
+    through the UI.  The sentinel mechanism inside prewarm() prevents
+    redundant fetches for resources that were recently prewarmed.
+    """
     try:
         with _cache_client() as nb:
             if nb is None:
@@ -379,8 +389,9 @@ def _prewarm_cache(resource: str | None) -> None:
             if resource:
                 resources: list[str] = [resource]
             else:
-                stats = nb.cache_stats()
-                resources = list((stats or {}).get("by_resource", {}).keys())
+                # 2026-03-31 Issue #cache: was using cache_stats() keys which excluded
+                # resources with 0 entries (e.g. dcim.devices on first run).
+                resources = sorted(nb._RESOURCE_TO_PRECACHE_OBJECT_TYPE.keys())
             if resources:
                 logger.debug("Pre-warming cache for resources: %s", resources)
                 nb.prewarm(resources)

@@ -393,6 +393,55 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache_url == "redis://localhost:6379/0"
         assert cfg.netbox.rate_limit == pytest.approx(0.5)
 
+    def test_cache_settings_fallback_to_env(self, tmp_path, monkeypatch):
+        """Cache settings omitted from HCL should fall back to environment variables."""
+        monkeypatch.setenv("NETBOX_CACHE_BACKEND", "redis")
+        monkeypatch.setenv("NETBOX_CACHE_URL", "redis://redis:6379/0")
+        monkeypatch.setenv("NETBOX_CACHE_TTL", "14400")
+        monkeypatch.setenv("NETBOX_CACHE_KEY_PREFIX", "myapp:")
+        monkeypatch.setenv("NETBOX_PREWARM_SENTINEL_TTL", "7200")
+
+        # HCL intentionally omits all cache-related keys – they should be
+        # picked up transparently from the environment.
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.netbox.cache == "redis"
+        assert cfg.netbox.cache_url == "redis://redis:6379/0"
+        assert cfg.netbox.cache_ttl == 14400
+        assert cfg.netbox.cache_key_prefix == "myapp:"
+        assert cfg.netbox.prewarm_sentinel_ttl == 7200
+
+    def test_cache_settings_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
+        """Explicit HCL values must override env vars."""
+        monkeypatch.setenv("NETBOX_CACHE_BACKEND", "sqlite")
+        monkeypatch.setenv("NETBOX_CACHE_TTL", "9999")
+
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url       = "https://nb.example.com"
+              token     = "tok"
+              cache     = "redis"
+              cache_ttl = 600
+            }
+        """)
+        cfg = load_config(path)
+        # HCL wins over env
+        assert cfg.netbox.cache == "redis"
+        assert cfg.netbox.cache_ttl == 600
+
 
 class TestDataclasses:
     def test_source_config_defaults(self):
