@@ -411,6 +411,76 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     )
 
 
+def test_run_queued_job_debug_captures_logs_from_executor_threads(tmp_path, tmp_db):
+    """DEBUG records emitted from ThreadPoolExecutor workers must be captured.
+
+    Root cause: JobLogHandler previously filtered by thread ID, so records
+    from executor worker threads (which run in different threads than the job
+    thread) were silently dropped.  The fix uses a contextvars.ContextVar to
+    track the active job_id; the context is propagated to worker threads via
+    contextvars.copy_context().run() in engine.py.
+    """
+    import time as _time  # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "executor_debug.hcl"
+    hcl.write_text("")
+
+    collector_logger = logging.getLogger("collector.engine")
+
+    def fake_run(*args, **kwargs):
+        # Simulate engine behaviour: submit work to a ThreadPoolExecutor and
+        # emit a DEBUG record from inside the worker thread, propagating the
+        # current contextvars context as the real engine does.
+        import contextvars  # noqa: PLC0415
+
+        current_ctx = contextvars.copy_context()
+
+        def worker():
+            collector_logger.debug("executor-debug-marker-99999")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(current_ctx.run, worker)
+            fut.result()  # wait for worker to finish
+
+        s = MagicMock()
+        s.object_name = "devices"
+        s.processed = 1
+        s.created = 0
+        s.updated = 0
+        s.skipped = 1
+        s.errored = 0
+        return [s]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=True)
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    logs = get_job_logs(job_id)
+    debug_logs = [lg for lg in logs if lg["level"] == "DEBUG"]
+    assert any("executor-debug-marker-99999" in lg["message"] for lg in debug_logs), (
+        "DEBUG log record from executor worker thread was not captured in job logs"
+    )
+
+
 def test_dispatch_job_creates_queued_record(tmp_path, tmp_db, monkeypatch):
     """POSTing /jobs/run must create a 'queued' job without running the engine."""
     import collector.db as db_module  # noqa: PLC0415

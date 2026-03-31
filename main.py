@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     # Initialise the shared job-tracking database so the web UI can observe
     # jobs started from the CLI (same SQLite file used by web_server.py).
     from collector.db import create_job, finish_job, init_db, start_job  # noqa: PLC0415
-    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler, job_context  # noqa: PLC0415
 
     init_db()
 
@@ -145,7 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         has_errors = False
         try:
             dry_run = True if args.dry_run else None
-            all_stats = engine.run(path, dry_run_override=dry_run)
+            with job_context(job_id):
+                all_stats = engine.run(path, dry_run_override=dry_run)
             summary = {
                 s.object_name: {
                     "processed": s.processed,
@@ -249,7 +250,7 @@ def _advance_schedule(sched: dict[str, Any]) -> tuple[str, str]:
 def _run_scheduled_job(sched: dict[str, Any]) -> None:
     """Execute a single scheduled HCL mapping file, recording the job in the DB."""
     from collector.db import create_job, finish_job, start_job  # noqa: PLC0415
-    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler, job_context  # noqa: PLC0415
 
     hcl_file = sched["hcl_file"]
     dry_run: bool = sched.get("dry_run", False)
@@ -276,7 +277,8 @@ def _run_scheduled_job(sched: dict[str, Any]) -> None:
         from collector.engine import Engine  # noqa: PLC0415
 
         engine = Engine()
-        all_stats = engine.run(hcl_file, dry_run_override=dry_run if dry_run else None)
+        with job_context(job_id):
+            all_stats = engine.run(hcl_file, dry_run_override=dry_run if dry_run else None)
         summary = {
             s.object_name: {
                 "processed": s.processed,
@@ -331,7 +333,7 @@ def _check_and_run_queued_jobs() -> None:
 def _run_queued_job(job: dict[str, Any]) -> None:
     """Execute a single on-demand queued job created by the web UI."""
     from collector.db import add_log, finish_job, start_job  # noqa: PLC0415
-    from collector.job_log_handler import JobLogHandler  # noqa: PLC0415
+    from collector.job_log_handler import JobLogHandler, job_context  # noqa: PLC0415
 
     job_id = job["id"]
     hcl_file = job["hcl_file"]
@@ -371,7 +373,8 @@ def _run_queued_job(job: dict[str, Any]) -> None:
         from collector.engine import Engine  # noqa: PLC0415
 
         engine = Engine()
-        all_stats = engine.run(hcl_file, dry_run_override=dry_run or None)
+        with job_context(job_id):
+            all_stats = engine.run(hcl_file, dry_run_override=dry_run or None)
         summary = {
             s.object_name: {
                 "processed": s.processed,
