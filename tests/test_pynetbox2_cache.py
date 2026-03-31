@@ -205,6 +205,82 @@ class TestGetCacheBackfillOnMiss:
         assert client.adapter.get.call_count == 1  # no new API call
 
 
+class TestListCacheDeduplication:
+    """Verify that list() uses double-check locking and populates get cache keys."""
+
+    def test_list_result_cached_after_miss(self):
+        """A list() miss must store the results so a second call is a hit."""
+        client = _make_client()
+        records = [{"id": 1, "name": "site-a"}, {"id": 2, "name": "site-b"}]
+        client.adapter.list.return_value = records
+
+        result1 = client.list("dcim.sites")
+        assert result1 == records
+        assert client.adapter.list.call_count == 1
+
+        # Second call — must be a cache hit with no extra API call.
+        result2 = client.list("dcim.sites")
+        assert result2 == records
+        assert client.adapter.list.call_count == 1
+
+    def test_list_concurrent_deduplication(self):
+        """Concurrent list() calls for the same resource must only call the
+        adapter once; the second thread must find the list in cache via the
+        double-check locking path."""
+        import threading
+
+        client = _make_client()
+        records = [{"id": 1, "name": "site-a"}]
+
+        call_count = 0
+
+        def slow_list(resource, **filters):
+            nonlocal call_count
+            import time
+            time.sleep(0.05)
+            call_count += 1
+            return records
+
+        client.adapter.list.side_effect = slow_list
+
+        results = []
+
+        def do_list():
+            results.append(client.list("dcim.sites"))
+
+        t1 = threading.Thread(target=do_list)
+        t2 = threading.Thread(target=do_list)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert call_count == 1, "adapter.list must be called exactly once despite concurrent requests"
+        assert all(r == records for r in results)
+
+    def test_list_populates_get_cache_by_id(self):
+        """After list(), individual get() calls by id must hit the cache
+        without making another API call."""
+        client = _make_client()
+        records = [
+            {"id": 10, "name": "site-a"},
+            {"id": 20, "name": "site-b"},
+        ]
+        client.adapter.list.return_value = records
+
+        client.list("dcim.sites")
+
+        # get() by id should now be a cache hit — no adapter.get() call needed.
+        client.adapter.get.return_value = None  # ensure adapter is NOT called
+        result = client.get("dcim.sites", id=10)
+        assert result == records[0]
+        assert client.adapter.get.call_count == 0
+
+        result = client.get("dcim.sites", id=20)
+        assert result == records[1]
+        assert client.adapter.get.call_count == 0
+
+
 class TestPrewarmSentinelKey:
     """Verify that prewarm() sets the sentinel key after a fresh cache load."""
 

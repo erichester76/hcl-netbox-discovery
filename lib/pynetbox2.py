@@ -1994,23 +1994,37 @@ class NetBoxExtendedClient:
             logger.debug("NetBox list cache miss (diode) resource=%s filters=%s", resource, filters)
             return []
 
-        if use_cache:
+        if not use_cache:
+            self._inc_cache_metric("list_bypass")
+            logger.debug("NetBox list bypass cache resource=%s filters=%s", resource, filters)
+            results = self.adapter.list(resource, **filters)
+            logger.debug("NetBox list result resource=%s filters=%s count=%s", resource, filters, len(results))
+            return results
+
+        cached = self.cache.get(key)
+        if cached is not None:
+            self._inc_cache_metric("list_hits")
+            logger.debug("NetBox list cache hit resource=%s filters=%s count=%s", resource, filters, len(cached))
+            return cached
+        self._inc_cache_metric("list_misses")
+        logger.debug("NetBox list cache miss resource=%s filters=%s", resource, filters)
+
+        key_lock = self._get_cache_key_lock(key)
+        with key_lock:
             cached = self.cache.get(key)
             if cached is not None:
                 self._inc_cache_metric("list_hits")
-                logger.debug("NetBox list cache hit resource=%s filters=%s count=%s", resource, filters, len(cached))
+                logger.debug("NetBox list cache hit-after-wait resource=%s filters=%s count=%s", resource, filters, len(cached))
                 return cached
-            self._inc_cache_metric("list_misses")
-            logger.debug("NetBox list cache miss resource=%s filters=%s", resource, filters)
-        else:
-            self._inc_cache_metric("list_bypass")
-            logger.debug("NetBox list bypass cache resource=%s filters=%s", resource, filters)
 
-        results = self.adapter.list(resource, **filters)
-        logger.debug("NetBox list result resource=%s filters=%s count=%s", resource, filters, len(results))
-        if use_cache:
+            results = self.adapter.list(resource, **filters)
+            logger.debug("NetBox list result resource=%s filters=%s count=%s", resource, filters, len(results))
             self.cache.set(key, results)
-        return results
+            for record in results:
+                self._set_get_cache_by_id(resource, record)
+                for derived_filters in self._derived_lookup_filters_for_record(resource, record):
+                    self._set_get_cache_key(resource, derived_filters, record)
+            return results
 
     def create(self, resource: str, data: Mapping[str, Any]) -> Any:
         payload = normalize_fk_fields(resource, dict(data), for_write=True)
