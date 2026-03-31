@@ -24,7 +24,26 @@
     html.dark-mode .card-body { background-color: #1e1e1e; }
     html.dark-mode .table { --bs-table-color: #e0e0e0; --bs-table-bg: #1e1e1e; --bs-table-border-color: #444; }
     html.dark-mode .table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: #2a2a2a; }
-    html.dark-mode .table-hover > tbody > tr:hover > * { --bs-table-accent-bg: #2f2f2f; }
+    html.dark-mode .table-hover > tbody > tr:hover > * { --bs-table-accent-bg: #2f2f2f; color: #e0e0e0; }
+    /* Fix bright-gray table-light headers in dark mode */
+    html.dark-mode .table-light,
+    html.dark-mode thead.table-light { --bs-table-color: #e0e0e0; --bs-table-bg: #2a2a2a; --bs-table-border-color: #444; color: #e0e0e0; background-color: #2a2a2a; }
+    html.dark-mode thead.table-light > tr > th,
+    html.dark-mode thead.table-light > tr > td { color: #e0e0e0; background-color: #2a2a2a; border-color: #444; }
+    /* Fix table-warning rows in dark mode */
+    html.dark-mode tr.table-warning > td,
+    html.dark-mode tr.table-warning > th { --bs-table-accent-bg: #3d3100; background-color: #3d3100; color: #e0e0e0; border-color: #555; }
+    /* Fix outline button text visibility in dark mode */
+    html.dark-mode .btn-outline-secondary { color: #bbb; border-color: #bbb; }
+    html.dark-mode .btn-outline-secondary:hover { color: #fff; background-color: #6c757d; border-color: #6c757d; }
+    html.dark-mode .btn-outline-primary { color: #7aadff; border-color: #7aadff; }
+    html.dark-mode .btn-outline-primary:hover { color: #fff; background-color: #0d6efd; border-color: #0d6efd; }
+    html.dark-mode .btn-outline-warning { color: #ffc107; border-color: #ffc107; }
+    html.dark-mode .btn-outline-warning:hover { color: #000; background-color: #ffc107; border-color: #ffc107; }
+    html.dark-mode .btn-outline-danger { color: #f77; border-color: #f77; }
+    html.dark-mode .btn-outline-danger:hover { color: #fff; background-color: #dc3545; border-color: #dc3545; }
+    html.dark-mode .btn-outline-success { color: #75c97c; border-color: #75c97c; }
+    html.dark-mode .btn-outline-success:hover { color: #fff; background-color: #198754; border-color: #198754; }
     html.dark-mode .modal-content { background-color: #1e1e1e; color: #e0e0e0; }
     html.dark-mode .form-control,
     html.dark-mode .form-select { background-color: #2a2a2a; color: #e0e0e0; border-color: #555; }
