@@ -49,14 +49,15 @@ collector {
 # The source adapter pre-normalises Cisco Nexus model strings and maps
 # NDFC fabric membership to NetBox sites so that HCL expressions stay simple.
 #
-# Each switch is looked up in NetBox by its serial number.  If no matching
-# device exists it is created; otherwise it is updated in place.
+# Each switch is looked up in NetBox by name + site rather than serial number.
+# Querying with serial="" matches every serial-less device and raises
+# "get() returned more than one result".  Name is unique per site in NetBox.
 # ---------------------------------------------------------------------------
 
 object "device" {
   source_collection = "switches"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["name", "site"]
   max_workers       = 4
 
   prerequisite "manufacturer" {
@@ -118,7 +119,9 @@ object "device" {
   }
 
   field "serial" {
-    value = "source('serial')"
+    # Use or None so that an empty string does not overwrite a previously-set
+    # serial number in the destination.
+    value = "source('serial') or None"
   }
 
   field "status" {

@@ -80,7 +80,7 @@ collector {
 object "device" {
   source_collection = "devices"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["name", "site"]
   max_workers       = 4
 
   # --- prerequisites -------------------------------------------------------
@@ -154,8 +154,9 @@ object "device" {
   field "serial" {
     # Prefer the dedicated Juniper MIB serial OID; fall back to the generic
     # serial field (which the SNMP source populates when extra_oids are not
-    # configured).
-    value = "source('jnx_serial') or source('serial')"
+    # configured).  Use or None so that an empty string does not overwrite a
+    # previously-set serial number in the destination.
+    value = "source('jnx_serial') or source('serial') or None"
   }
 
   field "comments" {

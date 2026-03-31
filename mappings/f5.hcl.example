@@ -53,15 +53,16 @@ collector {
 # serial and model from sys/hardware (with fallback to identified-devices),
 # software version from sys/version, and management IP from sys/management-ip.
 #
-# Devices are looked up in NetBox by serial number.  A serial of "" will
-# cause the lookup to fall back to name — set F5_FETCH_INTERFACES=true or
-# ensure the hardware endpoint is reachable to populate serials reliably.
+# Devices are looked up in NetBox by name + site rather than serial number.
+# Querying by serial="" (when the hardware endpoint is unreachable) matches
+# every serial-less device and raises "get() returned more than one result".
+# Name is unique per site in NetBox, so name + site is a safe fallback.
 # ---------------------------------------------------------------------------
 
 object "device" {
   source_collection = "devices"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["name", "site"]
   max_workers       = 1
 
   prerequisite "manufacturer" {
@@ -123,7 +124,9 @@ object "device" {
   }
 
   field "serial" {
-    value = "source('serial')"
+    # Use or None so that an empty string does not overwrite a previously-set
+    # serial number in the destination.
+    value = "source('serial') or None"
   }
 
   field "status" {
