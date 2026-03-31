@@ -137,6 +137,26 @@ class TestResolverEnv:
         r = _make_resolver({})
         assert r.evaluate("env('EMPTY_ENV_VAR')") == ""
 
+    def test_db_value_overrides_env_variable(self, monkeypatch):
+        """DB config_settings value must take priority over os.environ."""
+        from unittest.mock import patch
+
+        monkeypatch.setenv("TEST_DB_OVERRIDE", "from_env")
+        with patch("collector.field_resolvers._get_config", return_value="from_db") as mock_gc:
+            r = _make_resolver({})
+            result = r.evaluate("env('TEST_DB_OVERRIDE')")
+        mock_gc.assert_called_once_with("TEST_DB_OVERRIDE", "")
+        assert result == "from_db"
+
+    def test_env_fallback_when_db_unavailable(self, monkeypatch):
+        """get_config itself falls back to os.environ when DB is unavailable."""
+        monkeypatch.setenv("TEST_FALLBACK_VAR", "env_value")
+        monkeypatch.delenv("COLLECTOR_DB_PATH", raising=False)
+        # Without a real DB, get_config silently falls back to os.environ.
+        r = _make_resolver({})
+        result = r.evaluate("env('TEST_FALLBACK_VAR')")
+        assert result == "env_value"
+
 
 # ---------------------------------------------------------------------------
 # Resolver – string helpers
