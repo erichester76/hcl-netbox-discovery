@@ -60,6 +60,7 @@ COPY regex/     regex/
 COPY web/       web/
 COPY main.py    .
 COPY web_server.py .
+COPY .env.example .
 
 # Run as a non-root user
 RUN useradd -r -u 1001 -g root appuser
