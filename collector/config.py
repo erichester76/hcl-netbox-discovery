@@ -128,6 +128,15 @@ class NetBoxConfig:
     cache_ttl: int = 300
     prewarm_sentinel_ttl: Optional[int] = None
     rate_limit: float = 0.0
+    rate_limit_burst: int = 1
+    retry_attempts: int = 3
+    retry_initial_delay: float = 0.3
+    retry_backoff_factor: float = 2.0
+    retry_max_delay: float = 15.0
+    retry_jitter: float = 0.0
+    retry_on_4xx: str = "408,409,425,429"
+    cache_key_prefix: str = "nbx:"
+    branch: Optional[str] = None
 
 
 @dataclass
@@ -492,6 +501,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
         raise ValueError("HCL file is missing a 'netbox' block")
     netbox_body = _unlabeled_list(netbox_list)[0]
     _raw_sentinel_ttl = _eval_config_str(netbox_body.get("prewarm_sentinel_ttl", ""))
+    _raw_branch = _eval_config_str(netbox_body.get("branch", ""))
     netbox_cfg = NetBoxConfig(
         url=_eval_config_str(netbox_body.get("url", "")),
         token=_eval_config_str(netbox_body.get("token", "")),
@@ -500,6 +510,15 @@ def load_config(mapping_path: str) -> CollectorConfig:
         cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", 300))),
         prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", 0))),
+        rate_limit_burst=_int(_eval_config_str(netbox_body.get("rate_limit_burst", 1)), default=1),
+        retry_attempts=_int(_eval_config_str(netbox_body.get("retry_attempts", 3)), default=3),
+        retry_initial_delay=_float(_eval_config_str(netbox_body.get("retry_initial_delay", 0.3)), default=0.3),
+        retry_backoff_factor=_float(_eval_config_str(netbox_body.get("retry_backoff_factor", 2.0)), default=2.0),
+        retry_max_delay=_float(_eval_config_str(netbox_body.get("retry_max_delay", 15.0)), default=15.0),
+        retry_jitter=_float(_eval_config_str(netbox_body.get("retry_jitter", 0.0)), default=0.0),
+        retry_on_4xx=_eval_config_str(netbox_body.get("retry_on_4xx", "408,409,425,429")),
+        cache_key_prefix=_eval_config_str(netbox_body.get("cache_key_prefix", "nbx:")),
+        branch=_raw_branch if _raw_branch else None,
     )
 
     # --- collector ---

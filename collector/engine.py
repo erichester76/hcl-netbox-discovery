@@ -59,9 +59,28 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         url=cfg_nb.url,
         token=cfg_nb.token,
         rate_limit_per_second=cfg_nb.rate_limit,
+        rate_limit_burst=cfg_nb.rate_limit_burst,
         cache_backend=cfg_nb.cache if cfg_nb.cache in ("none", "redis", "sqlite") else "none",
         cache_ttl_seconds=cfg_nb.cache_ttl,
+        cache_key_prefix=cfg_nb.cache_key_prefix,
+        retry_attempts=cfg_nb.retry_attempts,
+        retry_initial_delay_seconds=cfg_nb.retry_initial_delay,
+        retry_backoff_factor=cfg_nb.retry_backoff_factor,
+        retry_max_delay_seconds=cfg_nb.retry_max_delay,
+        retry_jitter_seconds=cfg_nb.retry_jitter,
     )
+    if cfg_nb.retry_on_4xx:
+        try:
+            kwargs["retry_on_4xx"] = [
+                int(c.strip()) for c in cfg_nb.retry_on_4xx.split(",") if c.strip()
+            ]
+        except ValueError:
+            logger.warning(
+                "NETBOX_RETRY_ON_4XX value %r is malformed; using pynetbox2 default",
+                cfg_nb.retry_on_4xx,
+            )
+    if cfg_nb.branch:
+        kwargs["branch"] = cfg_nb.branch
     if cfg_nb.prewarm_sentinel_ttl is not None:
         kwargs["prewarm_sentinel_ttl_seconds"] = cfg_nb.prewarm_sentinel_ttl
     if cfg_nb.cache == "redis":

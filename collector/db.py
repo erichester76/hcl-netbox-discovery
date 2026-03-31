@@ -101,8 +101,18 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('NETBOX_CACHE_BACKEND', 'none', 'Optional caching: none | redis | sqlite', 'NetBox'),
     ('NETBOX_CACHE_URL', '', 'Redis:  NETBOX_CACHE_URL=redis://redis:6379/0 SQLite: NETBOX_CACHE_URL=/tmp/netbox_cache.db', 'NetBox'),
     ('NETBOX_CACHE_TTL', '300', 'Cache entry TTL in seconds (default: 300)', 'NetBox'),
+    ('NETBOX_CACHE_KEY_PREFIX', 'nbx:', 'Cache key prefix used to namespace keys in redis/sqlite backends (default: nbx:)', 'NetBox'),
     ('NETBOX_PREWARM_SENTINEL_TTL', '', 'Prewarm sentinel TTL in seconds; leave empty to use cache TTL (default: unset)', 'NetBox'),
     ('NETBOX_CACHE_DISABLE_ON_FAILURES', '5', 'Number of consecutive Redis failures before the cache is auto-disabled for the run (default: 5)', 'NetBox'),
+    ('NETBOX_RATE_LIMIT', '0', 'Maximum requests per second sent to NetBox; 0 = unlimited (default: 0)', 'NetBox'),
+    ('NETBOX_RATE_LIMIT_BURST', '1', 'Token-bucket burst size for rate limiting (default: 1)', 'NetBox'),
+    ('NETBOX_RETRY_ATTEMPTS', '3', 'Number of retry attempts on transient failures (default: 3)', 'NetBox'),
+    ('NETBOX_RETRY_INITIAL_DELAY', '0.3', 'Initial delay in seconds before the first retry (default: 0.3)', 'NetBox'),
+    ('NETBOX_RETRY_BACKOFF_FACTOR', '2.0', 'Exponential back-off multiplier applied between retries (default: 2.0)', 'NetBox'),
+    ('NETBOX_RETRY_MAX_DELAY', '15.0', 'Maximum delay in seconds between retries (default: 15.0)', 'NetBox'),
+    ('NETBOX_RETRY_JITTER', '0.0', 'Maximum random jitter in seconds added to each retry delay (default: 0.0)', 'NetBox'),
+    ('NETBOX_RETRY_ON_4XX', '408,409,425,429', 'Comma-separated 4xx HTTP status codes that trigger a retry (default: 408,409,425,429)', 'NetBox'),
+    ('NETBOX_BRANCH', '', 'NetBox branch name for branch-aware deployments; leave empty for default branch', 'NetBox'),
     # --- NetBox Source ---
     ('SOURCE_NETBOX_URL', '', 'URL of the source NetBox instance to read objects from', 'NetBox Source'),
     ('SOURCE_NETBOX_TOKEN', '', 'API token for the source NetBox instance', 'NetBox Source'),
@@ -238,14 +248,27 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists
 
-        # Seed config_settings (INSERT OR IGNORE preserves user-set values)
+        # Seed config_settings.  For each key, use the live env-var value when
+        # set; otherwise fall back to the declared default.  INSERT OR IGNORE
+        # preserves values that the user has already saved via the web UI.
+        # A follow-up UPDATE fills in any rows that were previously inserted
+        # with NULL (old behaviour) so users can see the active value.
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         for key, default_value, description, group_name in _SETTINGS_SEED:
+            seed_value = os.environ.get(key)
+            if seed_value is None:
+                seed_value = default_value
             con.execute(
                 "INSERT OR IGNORE INTO config_settings"
                 " (key, value, default_value, description, group_name, created_at, updated_at)"
-                " VALUES (?, NULL, ?, ?, ?, ?, ?)",
-                (key, default_value, description, group_name, now, now),
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (key, seed_value, default_value, description, group_name, now, now),
+            )
+            # Back-fill rows that were inserted with NULL by older code.
+            con.execute(
+                "UPDATE config_settings"
+                " SET value=?, updated_at=? WHERE key=? AND value IS NULL",
+                (seed_value, now, key),
             )
 
 
