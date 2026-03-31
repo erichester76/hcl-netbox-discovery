@@ -617,14 +617,19 @@ def load_config(mapping_path: str) -> CollectorConfig:
     if not netbox_list:
         raise ValueError("HCL file is missing a 'netbox' block")
     netbox_body = _unlabeled_list(netbox_list)[0]
-    _raw_sentinel_ttl = _eval_config_str(netbox_body.get("prewarm_sentinel_ttl", ""))
-    _raw_branch = _eval_config_str(netbox_body.get("branch", ""))
+    # 2025-03-31 Issue: cache settings not inherited from DB/env when omitted from HCL.
+    # Each setting falls back to the DB-overrideable env var so that e.g.
+    # NETBOX_CACHE_TTL=14400 takes effect even without an explicit HCL entry.
+    _raw_sentinel_ttl = _eval_config_str(
+        netbox_body.get("prewarm_sentinel_ttl", "env('NETBOX_PREWARM_SENTINEL_TTL', '')")
+    )
+    _raw_branch = _eval_config_str(netbox_body.get("branch", "env('NETBOX_BRANCH', '')"))
     netbox_cfg = NetBoxConfig(
         url=_eval_config_str(netbox_body.get("url", "")),
         token=_eval_config_str(netbox_body.get("token", "")),
-        cache=_eval_config_str(netbox_body.get("cache", "none")),
-        cache_url=_eval_config_str(netbox_body.get("cache_url", "")),
-        cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", 300))),
+        cache=_eval_config_str(netbox_body.get("cache", "env('NETBOX_CACHE_BACKEND', 'none')")),
+        cache_url=_eval_config_str(netbox_body.get("cache_url", "env('NETBOX_CACHE_URL', '')")),
+        cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", "env('NETBOX_CACHE_TTL', '300')"))),
         prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", 0))),
         rate_limit_burst=_int(_eval_config_str(netbox_body.get("rate_limit_burst", 1)), default=1),
@@ -634,7 +639,9 @@ def load_config(mapping_path: str) -> CollectorConfig:
         retry_max_delay=_float(_eval_config_str(netbox_body.get("retry_max_delay", 15.0)), default=15.0),
         retry_jitter=_float(_eval_config_str(netbox_body.get("retry_jitter", 0.0)), default=0.0),
         retry_on_4xx=_eval_config_str(netbox_body.get("retry_on_4xx", "408,409,425,429")),
-        cache_key_prefix=_eval_config_str(netbox_body.get("cache_key_prefix", "nbx:")),
+        cache_key_prefix=_eval_config_str(
+            netbox_body.get("cache_key_prefix", "env('NETBOX_CACHE_KEY_PREFIX', 'nbx:')")
+        ),
         branch=_raw_branch if _raw_branch else None,
     )
 
