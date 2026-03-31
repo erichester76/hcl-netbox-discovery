@@ -1,8 +1,8 @@
 """
 File: collector/job_log_handler.py
-Purpose: Logging handler that persists INFO+ log records to the collector DB.
+Purpose: Logging handler that persists log records to the collector DB.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #web-ui
+Last Changed: Copilot 2026-03-31 Issue: #debug-logging
 """
 
 from __future__ import annotations
@@ -15,9 +15,12 @@ from .db import add_log
 class JobLogHandler(logging.Handler):
     """Attach to the root logger during a sync run to capture log records.
 
-    Only records at *INFO* level and above are persisted so that noisy DEBUG
-    output does not flood the database, while still providing a useful audit
-    trail in the UI.
+    By default only records at *INFO* level and above are persisted so that
+    noisy DEBUG output does not flood the database.  When a job is created
+    with ``debug_mode=True`` the caller must also lower the root logger's
+    effective level to DEBUG and pass ``min_level=logging.DEBUG``; otherwise
+    Python's logging framework silently drops DEBUG records at the logger
+    level before they ever reach any handler.
 
     Records are additionally filtered to:
     * Only include log entries whose logger name starts with ``collector``

@@ -273,6 +273,144 @@ def test_check_and_run_queued_jobs_missing_file(tmp_path, tmp_db):
     assert job["status"] == "failed"
 
 
+def test_run_queued_job_debug_mode_captures_debug_logs(tmp_path, tmp_db):
+    """When debug_mode=True, _run_queued_job must persist DEBUG-level records.
+
+    Root cause: the root logger's effective level was left at INFO even when
+    debug_mode=True, so DEBUG records were silently dropped before reaching
+    the JobLogHandler.  The fix temporarily lowers the root logger level to
+    DEBUG and restores it afterwards.
+    """
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "debug.hcl"
+    hcl.write_text("")
+
+    collector_logger = logging.getLogger("collector.engine")
+
+    def fake_run(*args, **kwargs):
+        collector_logger.debug("debug-marker-12345")
+        s = MagicMock()
+        s.object_name = "devices"
+        s.processed = 1
+        s.created = 0
+        s.updated = 0
+        s.skipped = 1
+        s.errored = 0
+        return [s]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=True)
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    logs = get_job_logs(job_id)
+    debug_logs = [lg for lg in logs if lg["level"] == "DEBUG"]
+    assert any("debug-marker-12345" in lg["message"] for lg in debug_logs), (
+        "DEBUG log record was not captured in job logs when debug_mode=True"
+    )
+
+
+def test_run_queued_job_non_debug_mode_drops_debug_logs(tmp_path, tmp_db):
+    """When debug_mode=False, DEBUG records must NOT appear in job logs."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "nodebug.hcl"
+    hcl.write_text("")
+
+    collector_logger = logging.getLogger("collector.engine")
+
+    def fake_run(*args, **kwargs):
+        collector_logger.debug("should-not-appear")
+        s = MagicMock()
+        s.object_name = "devices"
+        s.processed = 1
+        s.created = 0
+        s.updated = 0
+        s.skipped = 1
+        s.errored = 0
+        return [s]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=False)
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    logs = get_job_logs(job_id)
+    debug_logs = [lg for lg in logs if lg["level"] == "DEBUG"]
+    assert not debug_logs, "DEBUG log records must not appear when debug_mode=False"
+
+
+def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
+    """After a debug_mode job, the root logger level must be restored."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    hcl = tmp_path / "restore.hcl"
+    hcl.write_text("")
+
+    root_logger = logging.getLogger()
+    level_before = root_logger.level
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    job_id = db_module.create_job(str(hcl), debug_mode=True)
+
+    import main as main_mod  # noqa: PLC0415
+
+    main_mod._active_queued_job_ids.clear()
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    assert root_logger.level == level_before, (
+        "Root logger level was not restored after debug_mode job completed"
+    )
+
+
 def test_dispatch_job_creates_queued_record(tmp_path, tmp_db, monkeypatch):
     """POSTing /jobs/run must create a 'queued' job without running the engine."""
     import collector.db as db_module  # noqa: PLC0415
