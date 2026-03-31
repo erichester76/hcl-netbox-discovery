@@ -151,6 +151,18 @@ def tenable_config():
 
 
 @pytest.fixture()
+def netbox_config():
+    return SourceConfig(
+        api_type="netbox",
+        url="https://source-netbox.example.com",
+        username="",
+        password="source-api-token",
+        verify_ssl=True,
+        extra={},
+    )
+
+
+@pytest.fixture()
 def nessus_config():
     return SourceConfig(
         api_type="tenable",

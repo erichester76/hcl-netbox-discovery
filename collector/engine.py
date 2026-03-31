@@ -77,6 +77,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.catc import CatalystCenterSource
     from .sources.f5 import F5Source
     from .sources.ldap import LDAPSource
+    from .sources.netbox import NetBoxSource
     from .sources.nexus import NexusDashboardSource
     from .sources.prometheus import PrometheusSource
     from .sources.rest import RestSource
@@ -95,6 +96,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "f5":         F5Source,
         "prometheus": PrometheusSource,
         "tenable":    TenableSource,
+        "netbox":     NetBoxSource,
     }
     cls = registry.get(api_type.lower())
     if cls is None:
