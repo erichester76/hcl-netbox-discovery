@@ -9,6 +9,7 @@ engine.run("mappings/vmware.hcl")
 
 from __future__ import annotations
 
+import contextvars
 import ipaddress
 import logging
 import os
@@ -294,12 +295,18 @@ class Engine:
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
+        # Capture the current contextvars context (which carries the
+        # current_job_id set by job_context()) so that worker threads
+        # inherit it and their log records are routed to the correct job log.
+        current_ctx = contextvars.copy_context()
+
         with ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix=obj_cfg.name[:16],
         ) as executor:
             futures = {
                 executor.submit(
+                    current_ctx.run,
                     self._process_item,
                     item,
                     obj_cfg,

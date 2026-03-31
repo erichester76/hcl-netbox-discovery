@@ -7,10 +7,36 @@ Last Changed: Copilot 2026-03-31 Issue: #debug-logging
 
 from __future__ import annotations
 
+import contextvars
 import logging
-import threading
+from contextlib import contextmanager
+from typing import Generator
 
 from .db import add_log
+
+# Context variable that tracks which job is active in the current execution
+# context.  This propagates automatically to threads started via
+# contextvars.copy_context().run(), which is how the engine's
+# ThreadPoolExecutor worker threads inherit the job context.
+_current_job_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "current_job_id", default=None
+)
+
+
+@contextmanager
+def job_context(job_id: int) -> Generator[None, None, None]:
+    """Context manager that binds *job_id* to the current execution context.
+
+    Use this around any code that should have its log records associated with
+    *job_id*.  The binding is scoped to the current ``contextvars.Context``
+    and is automatically cleared when the ``with`` block exits.
+    """
+    token = _current_job_id.set(job_id)
+    try:
+        yield
+    finally:
+        _current_job_id.reset(token)
+
 
 class JobLogHandler(logging.Handler):
     """Attach to the root logger during a sync run to capture log records.
@@ -26,10 +52,12 @@ class JobLogHandler(logging.Handler):
     * Only include log entries whose logger name starts with ``collector``
       (i.e. originating from the collector package, not from Flask, Redis,
       werkzeug, or any other third-party library running in the same process).
-    * Only include log entries emitted from the same OS thread that created
-      this handler.  This ensures that when multiple mapping jobs run
-      concurrently each job's handler does not accidentally capture log lines
-      produced by other in-flight jobs.
+    * Only include log entries whose execution context carries a
+      ``current_job_id`` that matches this handler's ``job_id``.  This
+      ensures that when multiple mapping jobs run concurrently each job's
+      handler only captures log lines produced in its own execution context,
+      including lines emitted from ``ThreadPoolExecutor`` worker threads when
+      the context is propagated via ``contextvars.copy_context().run()``.
 
     Parameters
     ----------
@@ -42,13 +70,10 @@ class JobLogHandler(logging.Handler):
     def __init__(self, job_id: int, min_level: int = logging.INFO) -> None:
         super().__init__(level=min_level)
         self.job_id = job_id
-        # Capture the thread identity at construction time so that only log
-        # records emitted from the job's own thread are persisted.
-        self._thread_id: int = threading.get_ident()
 
     def emit(self, record: logging.LogRecord) -> None:
-        # Skip records from other threads (concurrent jobs sharing the process).
-        if record.thread != self._thread_id:
+        # Skip records from execution contexts belonging to a different job.
+        if _current_job_id.get() != self.job_id:
             return
         # Skip records that do not originate from the collector package.
         if not (record.name == "collector" or record.name.startswith("collector.")):
