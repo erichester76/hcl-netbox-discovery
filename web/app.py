@@ -2,7 +2,7 @@
 File: web/app.py
 Purpose: Flask web application for monitoring and triggering HCL sync jobs.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #scheduler
+Last Changed: Copilot 2026-03-30 Issue: #debug-mode
 """
 
 from __future__ import annotations
@@ -112,10 +112,11 @@ def create_app() -> Flask:
     def run_job():
         hcl_file = request.form.get("hcl_file", "").strip()
         dry_run = request.form.get("dry_run") == "1"
+        debug_mode = request.form.get("debug_mode") == "1"
         if not hcl_file:
             return redirect(url_for("index"))
 
-        job_id = _dispatch_job(hcl_file, dry_run)
+        job_id = _dispatch_job(hcl_file, dry_run, debug_mode)
         return redirect(url_for("job_detail", job_id=job_id))
 
     @app.route("/cache")
@@ -244,7 +245,7 @@ def create_app() -> Flask:
 # ---------------------------------------------------------------------------
 
 
-def _dispatch_job(hcl_file: str, dry_run: bool = False) -> int:
+def _dispatch_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False) -> int:
     """Resolve *hcl_file*, create a 'queued' DB job record, and return its ID.
 
     The actual execution is handled by the collector container's scheduler loop,
@@ -254,7 +255,7 @@ def _dispatch_job(hcl_file: str, dry_run: bool = False) -> int:
     if not os.path.isabs(hcl_file):
         hcl_file = os.path.join(_ROOT, hcl_file)
 
-    return create_job(hcl_file, dry_run=dry_run)
+    return create_job(hcl_file, dry_run=dry_run, debug_mode=debug_mode)
 
 
 # ---------------------------------------------------------------------------

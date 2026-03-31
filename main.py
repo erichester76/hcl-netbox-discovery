@@ -3,7 +3,7 @@
 File: main.py
 Purpose: Modular NetBox collector — CLI entry point.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #scheduler
+Last Changed: Copilot 2026-03-30 Issue: #debug-mode
 
 Usage
 -----
@@ -320,10 +320,11 @@ def _check_and_run_queued_jobs() -> None:
         )
         t.start()
         logging.info(
-            "Running on-demand queued job %d for %s (dry_run=%s)",
+            "Running on-demand queued job %d for %s (dry_run=%s, debug_mode=%s)",
             job_id,
             job["hcl_file"],
             job.get("dry_run", False),
+            job.get("debug_mode", False),
         )
 
 
@@ -335,6 +336,7 @@ def _run_queued_job(job: dict[str, Any]) -> None:
     job_id = job["id"]
     hcl_file = job["hcl_file"]
     dry_run: bool = job.get("dry_run", False)
+    debug_mode: bool = job.get("debug_mode", False)
 
     start_job(job_id)
 
@@ -346,7 +348,8 @@ def _run_queued_job(job: dict[str, Any]) -> None:
             _active_queued_job_ids.discard(job_id)
         return
 
-    handler = JobLogHandler(job_id)
+    min_level = logging.DEBUG if debug_mode else logging.INFO
+    handler = JobLogHandler(job_id, min_level=min_level)
     handler.setFormatter(
         logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
     )

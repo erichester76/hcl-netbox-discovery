@@ -2,7 +2,7 @@
 File: collector/db.py
 Purpose: SQLite-backed store for sync job status, log records, and schedules.
 Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #141
+Last Changed: Copilot 2026-03-30 Issue: #debug-mode
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     hcl_file    TEXT    NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'queued',
     dry_run     INTEGER NOT NULL DEFAULT 0,
+    debug_mode  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL,
     started_at  TEXT,
     finished_at TEXT,
@@ -112,15 +113,20 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass  # column already exists
+        # Migration: add debug_mode column if it was not present in older DBs
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN debug_mode INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # column already exists
 
 
-def create_job(hcl_file: str, dry_run: bool = False) -> int:
+def create_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False) -> int:
     """Insert a new job row and return its *id*."""
     now = _now()
     with _conn() as con:
         cur = con.execute(
-            "INSERT INTO jobs (hcl_file, status, dry_run, created_at) VALUES (?, 'queued', ?, ?)",
-            (hcl_file, int(dry_run), now),
+            "INSERT INTO jobs (hcl_file, status, dry_run, debug_mode, created_at) VALUES (?, 'queued', ?, ?, ?)",
+            (hcl_file, int(dry_run), int(debug_mode), now),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -177,7 +183,7 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     """Return the *limit* most-recent jobs, newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run "
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -188,7 +194,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run "
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -198,7 +204,7 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
         row = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run "
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -247,6 +253,7 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
         "finished_at": row[5],
         "summary": None,
         "dry_run": bool(row[7]) if len(row) > 7 else False,
+        "debug_mode": bool(row[8]) if len(row) > 8 else False,
     }
     if row[6]:
         try:
@@ -260,7 +267,7 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     """Return all jobs with status='queued', oldest first (FIFO execution order)."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run "
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE status='queued' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
