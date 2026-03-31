@@ -11,6 +11,21 @@
 #   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL      Redis URL or SQLite path
 #   DRY_RUN               Set to "true" to log payloads without writing
+#
+# Multiple vCenter support (iterator):
+#   To collect from more than one vCenter, add an iterator {} block inside
+#   the collector {} block.  Each key in the iterator block maps to a list of
+#   values.  The engine iterates through the lists in lock-step (zip), running
+#   a full collection pass for each index.  The values override env() calls in
+#   the source block for that pass.  Example:
+#
+#     collector {
+#       iterator {
+#         VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
+#         VCENTER_USER = ["admin", "readonly"]
+#         VCENTER_PASS = ["pass1",  "pass2"]
+#       }
+#     }
 
 source "vmware" {
   api_type  = "vmware"
@@ -35,6 +50,13 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = true
   sync_vms         = true
+
+  # Uncomment and populate to collect from multiple vCenters in one run:
+  # iterator {
+  #   VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
+  #   VCENTER_USER = ["admin", "admin"]
+  #   VCENTER_PASS = ["pass1",  "pass2"]
+  # }
 }
 
 # ---------------------------------------------------------------------------

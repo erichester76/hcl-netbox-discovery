@@ -29,6 +29,7 @@ from .config import (
     ObjectConfig,
     PowerInputConfig,
     TaggedVlanConfig,
+    build_source_config,
     load_config,
 )
 from .context import RunContext
@@ -220,7 +221,10 @@ class Engine:
         Returns
         -------
         list[RunStats]
-            One ``RunStats`` instance per ``object`` block, in declaration order.
+            One ``RunStats`` instance per ``object`` block per iteration, in
+            declaration order.  When no ``iterator {}`` block is present the
+            behaviour is identical to previous versions (one pass, one entry
+            per ``object`` block).
         """
         cfg = load_config(mapping_path)
         dry_run = dry_run_override if dry_run_override is not None else cfg.collector.dry_run
@@ -233,21 +237,9 @@ class Engine:
         )
 
         nb = _build_nb_client(cfg.netbox)
-        source = _get_source_adapter(cfg.source.api_type)
-        source.connect(cfg.source)
-
-        base_ctx = RunContext(
-            nb=nb,
-            source_adapter=source,
-            collector_opts=cfg.collector,
-            regex_dir=cfg.collector.regex_dir,
-            prereqs={},
-            source_obj=None,
-            parent_nb_obj=None,
-            dry_run=dry_run,
-        )
 
         if cfg.collector.sync_tag and not dry_run:
+            # Ensure the sync tag exists once (shared across all iterations)
             tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
             if not tag_ok:
                 logger.error(
@@ -257,14 +249,65 @@ class Engine:
                 )
                 cfg.collector.sync_tag = ""
 
+        # Build the list of source configs to run.  When iterator blocks are
+        # present each row produces its own SourceConfig with env() calls
+        # re-evaluated using that row's variable overrides.
+        if cfg.collector.iterators:
+            source_configs = []
+            for iterator in cfg.collector.iterators:
+                n = len(iterator)
+                if n == 0:
+                    logger.warning("Iterator block is empty; skipping")
+                    continue
+                for i in range(n):
+                    overrides = iterator.get_row(i)
+                    logger.debug(
+                        "Iterator %d/%d  overrides=%s",
+                        i + 1,
+                        n,
+                        list(overrides.keys()),
+                    )
+                    source_configs.append(
+                        build_source_config(cfg.raw_source_body, cfg.source_label, overrides)
+                    )
+        else:
+            source_configs = [cfg.source]
+
+        total_iterations = len(source_configs)
         all_stats: list[RunStats] = []
+
         try:
-            for obj_cfg in cfg.objects:
-                stats = self._process_object(obj_cfg, base_ctx)
-                all_stats.append(stats)
-                stats.log_summary()
+            for idx, source_cfg in enumerate(source_configs):
+                if total_iterations > 1:
+                    logger.info(
+                        "Iterator pass %d/%d  url=%s",
+                        idx + 1,
+                        total_iterations,
+                        source_cfg.url,
+                    )
+
+                source = _get_source_adapter(source_cfg.api_type)
+                source.connect(source_cfg)
+
+                base_ctx = RunContext(
+                    nb=nb,
+                    source_adapter=source,
+                    collector_opts=cfg.collector,
+                    regex_dir=cfg.collector.regex_dir,
+                    prereqs={},
+                    source_obj=None,
+                    parent_nb_obj=None,
+                    dry_run=dry_run,
+                )
+
+                try:
+                    for obj_cfg in cfg.objects:
+                        stats = self._process_object(obj_cfg, base_ctx)
+                        all_stats.append(stats)
+                        stats.log_summary()
+                finally:
+                    source.close()
         finally:
-            source.close()
             nb.close()
 
         logger.info("Collector run complete  objects=%d", len(all_stats))
