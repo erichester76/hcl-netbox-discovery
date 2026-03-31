@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Settings – HCL NetBox Discovery{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+  <div class="col">
+    <h4 class="fw-semibold">⚙️ Configuration Settings</h4>
+    <p class="text-muted small mb-0">
+      Values set here override environment variables and are stored in the SQLite database.
+      Leave a field empty and click <strong>Save</strong> to clear the override and fall back
+      to the environment variable (or the default).  Click <strong>Reset</strong> to immediately
+      clear a DB override.
+    </p>
+  </div>
+</div>
+
+{% if groups %}
+  {% for group_name, settings in groups.items() %}
+  <div class="card shadow-sm mb-4">
+    <div class="card-header card-header-cu fw-semibold">
+      {{ group_name }}
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-hover table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:22%">Key</th>
+            <th style="width:28%">Description</th>
+            <th style="width:10%">Default</th>
+            <th style="width:30%">Value</th>
+            <th style="width:10%"></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for s in settings %}
+          <tr class="{% if s.is_overridden %}table-warning{% endif %}">
+            <td class="font-monospace align-middle small">
+              {{ s.key }}
+              {% if s.is_overridden %}
+                <span class="badge bg-warning text-dark ms-1" title="DB override active">DB</span>
+              {% endif %}
+            </td>
+            <td class="align-middle small text-muted">{{ s.description or '—' }}</td>
+            <td class="font-monospace align-middle small text-muted">
+              {% if s.is_sensitive and s.default_value %}
+                <span class="text-muted">••••</span>
+              {% else %}
+                {{ s.default_value or '—' }}
+              {% endif %}
+            </td>
+            <td class="align-middle">
+              <form method="POST" action="/settings/update" class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="key" value="{{ s.key }}" />
+                <input type="hidden" name="action" value="save" />
+                {% if s.is_sensitive %}
+                <input type="password"
+                       class="form-control form-control-sm font-monospace"
+                       name="value"
+                       value="{{ s.effective_value if s.is_overridden else '' }}"
+                       placeholder="{{ '(from env)' if not s.is_overridden else '' }}"
+                       autocomplete="new-password" />
+                {% else %}
+                <input type="text"
+                       class="form-control form-control-sm font-monospace"
+                       name="value"
+                       value="{{ s.effective_value }}"
+                       placeholder="{{ s.default_value or '' }}" />
+                {% endif %}
+                <button type="submit" class="btn btn-sm btn-primary text-nowrap"
+                        style="background-color:#522D80;border-color:#522D80;">Save</button>
+              </form>
+            </td>
+            <td class="align-middle text-center">
+              {% if s.is_overridden %}
+              <form method="POST" action="/settings/update">
+                <input type="hidden" name="key" value="{{ s.key }}" />
+                <input type="hidden" name="action" value="reset" />
+                <button type="submit" class="btn btn-sm btn-outline-secondary"
+                        title="Clear DB override, revert to env var / default">Reset</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="alert alert-info">
+    No configuration settings found. Ensure the database has been initialized.
+  </div>
+{% endif %}
+{% endblock %}

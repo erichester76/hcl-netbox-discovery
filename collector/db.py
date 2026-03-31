@@ -1,6 +1,6 @@
 """
 File: collector/db.py
-Purpose: SQLite-backed store for sync job status, log records, and schedules.
+Purpose: SQLite-backed store for sync job status, log records, schedules, and config settings.
 Created: 2026-03-30
 Last Changed: Copilot 2026-03-30 Issue: #debug-mode
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 from collections.abc import Generator
@@ -70,7 +71,98 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_run_at TEXT,
     next_run_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS config_settings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    key           TEXT    NOT NULL UNIQUE,
+    value         TEXT,
+    default_value TEXT,
+    description   TEXT,
+    group_name    TEXT    NOT NULL DEFAULT 'General',
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT    NOT NULL
+);
 """
+
+# ---------------------------------------------------------------------------
+# .env.example parser – seeds the config_settings table on first run
+# ---------------------------------------------------------------------------
+
+_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+_ENV_EXAMPLE = os.path.join(_ROOT, ".env.example")
+
+
+def _parse_env_example(path: str) -> list[dict[str, str]]:
+    """Parse *path* (.env.example) and return a list of setting dicts.
+
+    Each dict has keys: key, default_value, description, group_name.
+    Duplicate keys are skipped (first definition wins).
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        logger.debug("Could not read %s – config_settings will not be seeded.", path)
+        return []
+
+    settings: list[dict[str, str]] = []
+    seen: set[str] = set()
+    group = "General"
+    pending_desc: list[str] = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Detect a three-line section header:
+        #   # ----...\n# Group Name (context)\n# ----...
+        if re.match(r"^# -{10,}$", line) and i + 2 < len(lines):
+            next1 = lines[i + 1]
+            next2 = lines[i + 2]
+            if next1.startswith("# ") and re.match(r"^# -{10,}$", next2):
+                raw = next1[2:].strip()
+                # Strip trailing parenthetical context: "Web UI  (web_server.py)"
+                raw = re.sub(r"\s*\(.*", "", raw).strip()
+                # Keep only the first segment if slash-separated: "SNMP / Linux"
+                raw = raw.split("/")[0].strip()
+                group = raw or group
+                pending_desc = []
+                i += 3
+                continue
+
+        # Comment line – accumulate as description
+        if line.startswith("#"):
+            text = line[2:].strip() if len(line) > 1 else ""
+            if text and not re.match(r"^-+$", text):
+                pending_desc.append(text)
+            i += 1
+            continue
+
+        # Blank line – clear pending description
+        if not line.strip():
+            pending_desc = []
+            i += 1
+            continue
+
+        # Variable assignment: KEY=value
+        m = re.match(r"^([A-Z][A-Z0-9_]*)=(.*)$", line)
+        if m:
+            key, default = m.group(1), m.group(2).strip()
+            if key not in seen:
+                settings.append(
+                    {
+                        "key": key,
+                        "default_value": default,
+                        "description": " ".join(pending_desc).strip(),
+                        "group_name": group,
+                    }
+                )
+                seen.add(key)
+            pending_desc = []
+
+        i += 1
+
+    return settings
 
 _lock = threading.Lock()
 
@@ -103,7 +195,7 @@ def _conn() -> Generator[sqlite3.Connection, None, None]:
 
 
 def init_db() -> None:
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist and seed config_settings from .env.example."""
     path = _db_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with _conn() as con:
@@ -118,6 +210,16 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN debug_mode INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass  # column already exists
+
+        # Seed config_settings from .env.example (INSERT OR IGNORE preserves user values)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        for s in _parse_env_example(_ENV_EXAMPLE):
+            con.execute(
+                "INSERT OR IGNORE INTO config_settings"
+                " (key, value, default_value, description, group_name, created_at, updated_at)"
+                " VALUES (?, NULL, ?, ?, ?, ?, ?)",
+                (s["key"], s["default_value"], s["description"], s["group_name"], now, now),
+            )
 
 
 def create_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False) -> int:
@@ -375,4 +477,91 @@ def _row_to_schedule(row: tuple) -> dict[str, Any]:
         "created_at": row[6],
         "last_run_at": row[7],
         "next_run_at": row[8],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Config settings CRUD
+# ---------------------------------------------------------------------------
+
+# Sensitive key name fragments – rendered as password inputs in the UI.
+_SENSITIVE_PATTERNS = ("PASS", "TOKEN", "SECRET", "KEY", "CLIENT_SECRET")
+
+
+def get_config(key: str, default: str = "") -> str:
+    """Return the effective config value for *key*.
+
+    Priority: DB config_settings.value → os.environ[key] → *default*.
+
+    Silently falls back to the environment when the DB is unavailable (e.g.
+    before ``init_db()`` has been called, or during unit tests that do not
+    set up the DB).
+    """
+    try:
+        with _conn() as con:
+            row = con.execute(
+                "SELECT value FROM config_settings WHERE key=?", (key,)
+            ).fetchone()
+        if row is not None and row[0] is not None:
+            return row[0]
+    except Exception:
+        pass  # DB not ready – fall through to env var
+    return os.environ.get(key, default)
+
+
+def get_all_settings() -> list[dict[str, Any]]:
+    """Return all config settings ordered by group_name then key."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT id, key, value, default_value, description, group_name, updated_at"
+            " FROM config_settings ORDER BY group_name ASC, key ASC"
+        ).fetchall()
+    return [_row_to_setting(r) for r in rows]
+
+
+def get_settings_by_group() -> dict[str, list[dict[str, Any]]]:
+    """Return config settings as an ordered dict keyed by group_name."""
+    settings = get_all_settings()
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for s in settings:
+        groups.setdefault(s["group_name"], []).append(s)
+    return groups
+
+
+def set_setting(key: str, value: str | None) -> None:
+    """Persist *value* for *key* in config_settings.
+
+    Pass ``None`` to clear the DB override and fall back to the environment
+    variable (same effect as ``reset_setting``).
+    """
+    now = _now()
+    with _conn() as con:
+        con.execute(
+            "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
+            (value, now, key),
+        )
+
+
+def reset_setting(key: str) -> None:
+    """Clear the DB override for *key*, restoring the env-var / default fallback."""
+    set_setting(key, None)
+
+
+def _row_to_setting(row: tuple) -> dict[str, Any]:
+    key = row[1]
+    db_value = row[2]
+    default_value = row[3] or ""
+    effective = db_value if db_value is not None else os.environ.get(key, default_value)
+    is_sensitive = any(pat in key for pat in _SENSITIVE_PATTERNS)
+    return {
+        "id": row[0],
+        "key": key,
+        "value": db_value,
+        "default_value": default_value,
+        "description": row[4] or "",
+        "group_name": row[5] or "General",
+        "updated_at": row[6],
+        "effective_value": effective,
+        "is_sensitive": is_sensitive,
+        "is_overridden": db_value is not None,
     }
