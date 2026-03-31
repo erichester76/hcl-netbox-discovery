@@ -50,12 +50,17 @@ collector {
 #
 # The source adapter pre-normalises all Cisco-specific model strings and site
 # hierarchy extraction so that HCL expressions stay simple.
+#
+# Devices are looked up by name + site rather than serial because some CATC
+# device types (patch panels, virtual nodes) report an empty serial.  Querying
+# with serial="" matches every serial-less device and raises "get() returned
+# more than one result".  Name is unique per site in NetBox.
 # ---------------------------------------------------------------------------
 
 object "device" {
   source_collection = "devices"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["name", "site"]
   max_workers       = 4
 
   prerequisite "manufacturer" {
@@ -115,7 +120,9 @@ object "device" {
   }
 
   field "serial" {
-    value = "source('serial')"
+    # Use or None so that an empty string does not overwrite a previously-set
+    # serial number in the destination.
+    value = "source('serial') or None"
   }
 
   field "status" {

@@ -52,9 +52,15 @@ collector {
 # ---------------------------------------------------------------------------
 # Devices
 #
-# Each device from the source NetBox is looked up by serial number in the
+# Each device from the source NetBox is looked up by name + site in the
 # destination NetBox.  If no match is found the device is created; otherwise
 # it is updated in place.
+#
+# We use ["name", "site"] instead of ["serial"] because source devices may
+# have no serial number (patch panels, virtual devices, etc.).  Querying
+# NetBox with serial="" matches every serial-less device and raises
+# "get() returned more than one result".  Name is unique per site in NetBox,
+# so name + site is always a safe, unambiguous lookup key.
 #
 # The prerequisite blocks below ensure that the manufacturer, device type,
 # role, site, location, rack, and platform referenced by the source device
@@ -64,7 +70,7 @@ collector {
 object "device" {
   source_collection = "dcim.devices"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["name", "site"]
   max_workers       = 4
 
   prerequisite "manufacturer" {
@@ -166,7 +172,9 @@ object "device" {
   }
 
   field "serial" {
-    value = "source('serial')"
+    # Use or None so that an empty string from the source does not overwrite
+    # a previously-set serial number in the destination.
+    value = "source('serial') or None"
   }
 
   field "asset_tag" {
