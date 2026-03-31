@@ -1849,10 +1849,16 @@ class NetBoxExtendedClient:
             name_val = None
             if isinstance(value, dict):
                 name_val = value.get("name")
-            elif hasattr(value, "name"):
-                name_val = getattr(value, "name", None)
             elif isinstance(value, str):
                 name_val = value
+            elif value is not None:
+                # Read "name" directly from __dict__ to avoid triggering pynetbox's
+                # Record.__getattr__, which calls full_details() (an HTTP GET request)
+                # when the attribute is not in the pre-loaded data. For example,
+                # device_type Records have "model" but not "name"; accessing "name"
+                # via hasattr/getattr would fetch the full object from the API once
+                # per record during cache warm. 2026-03-31 #cache-warm
+                name_val = getattr(value, "__dict__", {}).get("name")
             # Always include the raw value as well
             field_values[field] = {"id": id_val, "name": name_val, "raw": value}
 
@@ -1876,8 +1882,11 @@ class NetBoxExtendedClient:
                     opts.append((field, vals["id"]))
                 if vals["name"] is not None:
                     opts.append((field, vals["name"]))
-                if vals["raw"] is not None and vals["raw"] != vals["id"] and vals["raw"] != vals["name"]:
-                    opts.append((field, vals["raw"]))
+                # Only include raw primitive values to avoid storing nested Records
+                # in filter combinations (non-primitives are already covered by id/name).
+                raw = vals["raw"]
+                if isinstance(raw, (str, int, float, bool)) and raw != vals["id"] and raw != vals["name"]:
+                    opts.append((field, raw))
                 value_options.append(opts)
             # Cartesian product of all field options
             for prod in product(*value_options):
