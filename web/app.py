@@ -8,13 +8,17 @@ Last Changed: Copilot 2026-03-30 Issue: #debug-mode
 from __future__ import annotations
 
 import glob
+import hmac
 import logging
 import os
+import secrets
 import sys
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any, Generator
+from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash
 
 # Ensure the project root is on sys.path so that collector and lib are importable
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,7 +32,6 @@ from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
     delete_schedule,
-    get_all_settings,
     get_config,
     get_job,
     get_job_logs,
@@ -53,10 +56,22 @@ logger = logging.getLogger(__name__)
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates")
     app.config["SECRET_KEY"] = get_config("WEB_SECRET_KEY", "dev-change-me")
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("WEB_SESSION_COOKIE_SECURE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     # Initialise the job database on first request
     with app.app_context():
         init_db()
+
+    auth_error = _auth_configuration_error()
+    if auth_error:
+        raise RuntimeError(auth_error)
 
     # ------------------------------------------------------------------
     # Jinja2 filters
@@ -66,9 +81,63 @@ def create_app() -> Flask:
     def _basename_filter(path: str) -> str:
         return os.path.basename(path)
 
+    @app.context_processor
+    def inject_security_helpers() -> dict[str, Any]:
+        return {
+            "csrf_token": _csrf_token,
+            "web_auth_enabled": _auth_enabled(),
+            "web_authenticated": _is_authenticated(),
+            "web_username": session.get("username", _configured_username()),
+        }
+
+    @app.before_request
+    def require_web_auth() -> Any | None:
+        if not _auth_enabled():
+            return None
+        is_auth_exempt = _is_auth_exempt(request.endpoint)
+        if not is_auth_exempt and not _is_authenticated():
+            return redirect(url_for("login", next=_safe_next_target(request.full_path)))
+        if request.method == "POST":
+            _validate_csrf()
+        return None
+
     # ------------------------------------------------------------------
     # Routes
     # ------------------------------------------------------------------
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if not _auth_enabled():
+            return redirect(url_for("index"))
+
+        next_target = _safe_next_target(request.values.get("next", ""))
+        if _is_authenticated():
+            return redirect(next_target or url_for("index"))
+        if request.method == "POST":
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            if _credentials_match(username, password):
+                session.clear()
+                session["authenticated"] = True
+                session["username"] = username
+                _csrf_token()
+                return redirect(next_target or url_for("index"))
+            return render_template(
+                "login.html",
+                invalid_credentials=True,
+                next_target=next_target or url_for("index"),
+            ), 401
+
+        return render_template(
+            "login.html",
+            invalid_credentials=False,
+            next_target=next_target or url_for("index"),
+        )
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
 
     @app.route("/")
     def index():
@@ -282,6 +351,79 @@ def _dispatch_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False
         hcl_file = os.path.join(_ROOT, hcl_file)
 
     return create_job(hcl_file, dry_run=dry_run, debug_mode=debug_mode)
+
+
+def _auth_enabled() -> bool:
+    return os.environ.get("WEB_AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _configured_username() -> str:
+    return os.environ.get("WEB_USERNAME", "admin").strip() or "admin"
+
+
+def _configured_password() -> str:
+    return os.environ.get("WEB_PASSWORD", "")
+
+
+def _configured_password_hash() -> str:
+    return os.environ.get("WEB_PASSWORD_HASH", "").strip()
+
+
+def _auth_configuration_error() -> str | None:
+    if not _auth_enabled():
+        return None
+    if _configured_password_hash() or _configured_password():
+        return None
+    return "WEB auth is enabled but no credentials are configured. Set WEB_PASSWORD or WEB_PASSWORD_HASH."
+
+
+def _credentials_match(username: str, password: str) -> bool:
+    expected_username = _configured_username()
+    if not hmac.compare_digest(username, expected_username):
+        return False
+
+    password_hash = _configured_password_hash()
+    if password_hash:
+        return check_password_hash(password_hash, password)
+
+    expected_password = _configured_password()
+    return bool(expected_password) and hmac.compare_digest(password, expected_password)
+
+
+def _is_authenticated() -> bool:
+    return bool(session.get("authenticated"))
+
+
+def _is_auth_exempt(endpoint: str | None) -> bool:
+    return endpoint in {"login", "static"}
+
+
+def _safe_next_target(target: str) -> str:
+    cleaned = (target or "").strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("http://") or cleaned.startswith("https://") or cleaned.startswith("//"):
+        return ""
+    if not cleaned.startswith("/"):
+        return ""
+    if cleaned.endswith("?"):
+        cleaned = cleaned[:-1]
+    return cleaned or ""
+
+
+def _csrf_token() -> str:
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return token
+
+
+def _validate_csrf() -> None:
+    supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
+    expected = _csrf_token()
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        abort(400, description="Invalid CSRF token")
 
 
 # ---------------------------------------------------------------------------

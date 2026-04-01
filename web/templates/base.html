@@ -113,10 +113,19 @@
       <span class="text-orange">HCL</span> NetBox Discovery
     </a>
     <div class="navbar-nav ms-auto d-flex align-items-center">
+      {% if not web_auth_enabled or web_authenticated %}
       <a class="nav-link" href="/">Dashboard</a>
       <a class="nav-link" href="/schedules">Scheduler</a>
       <a class="nav-link" href="/cache">Cache</a>
       <a class="nav-link" href="/settings">Settings</a>
+      {% endif %}
+      {% if web_auth_enabled and web_authenticated %}
+      <span class="navbar-text text-white-50 small me-2">{{ web_username }}</span>
+      <form method="POST" action="/logout" class="ms-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <button type="submit" class="btn btn-sm btn-outline-light">Log Out</button>
+      </form>
+      {% endif %}
       <!-- Dark mode toggle icon -- 2026-03-31 -->
       <button id="dark-mode-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
         <span id="dark-mode-icon">🌙</span>

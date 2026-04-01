@@ -12,6 +12,7 @@
       <div class="card-header card-header-cu fw-semibold">Add Schedule</div>
       <div class="card-body">
         <form method="POST" action="/schedules/create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
 
           <div class="mb-3">
             <label for="name" class="form-label">Schedule Name</label>
@@ -110,17 +111,20 @@
                 <a href="/schedules/{{ s.id }}/edit"
                    class="btn btn-sm btn-outline-secondary me-1">Edit</a>
                 <form method="POST" action="/schedules/{{ s.id }}/toggle" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                   <button type="submit"
                           class="btn btn-sm {% if s.enabled %}btn-outline-warning{% else %}btn-outline-success{% endif %} me-1">
                     {{ 'Disable' if s.enabled else 'Enable' }}
                   </button>
                 </form>
                 <form method="POST" action="/schedules/{{ s.id }}/run-now" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                   <button type="submit" class="btn btn-sm btn-outline-primary me-1"
                           title="Run this schedule immediately">▶ Now</button>
                 </form>
                 <form method="POST" action="/schedules/{{ s.id }}/delete" class="d-inline"
                       onsubmit="return confirm('Delete schedule {{ s.name }}?')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                   <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
                 </form>
               </td>

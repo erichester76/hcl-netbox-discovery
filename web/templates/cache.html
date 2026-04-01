@@ -35,6 +35,7 @@
   </div>
   <div class="col-auto d-flex align-items-center">
     <form method="POST" action="/cache/flush">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <button type="submit" class="btn btn-danger"
               onclick="return confirm('Flush the entire cache?')">
         Flush All Cache
@@ -43,6 +44,7 @@
   </div>
   <div class="col-auto d-flex align-items-center">
     <form method="POST" action="/cache/prewarm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <button type="submit" class="btn btn-primary"
               onclick="return confirm('Pre-warm the entire cache? This will refresh all currently cached resources from NetBox.')">
         Pre-warm Cache
@@ -86,6 +88,7 @@
           </td>
           <td class="text-end">
             <form method="POST" action="/cache/flush" class="d-inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="resource" value="{{ res }}" />
               <button type="submit" class="btn btn-sm btn-outline-warning"
                       onclick="return confirm('Flush cache for {{ res }}?')">
@@ -93,6 +96,7 @@
               </button>
             </form>
             <form method="POST" action="/cache/prewarm" class="d-inline ms-1">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
               <input type="hidden" name="resource" value="{{ res }}" />
               <button type="submit" class="btn btn-sm btn-outline-primary"
                       onclick="return confirm('Pre-warm cache for {{ res }}?')">
