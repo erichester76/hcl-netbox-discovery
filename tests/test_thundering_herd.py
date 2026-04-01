@@ -196,6 +196,7 @@ class TestBackendAdapterCooldown:
             with pytest.raises(Exception):
                 adapter._call(fail_once)
 
+        # attempt=0 → cooldown = 5.0 * (1.0 ** 0) = 5.0
         adapter.rate_limiter.trigger_cooldown.assert_called_with(5.0)
 
     def test_504_triggers_global_cooldown(self):
@@ -212,6 +213,31 @@ class TestBackendAdapterCooldown:
                 adapter._call(fail_once)
 
         adapter.rate_limiter.trigger_cooldown.assert_called_with(5.0)
+
+    def test_cooldown_scales_with_attempt(self):
+        """Each successive 5xx must trigger a longer cooldown (backoff_factor=2)."""
+        adapter = _ConcreteAdapter(
+            rate_limiter=MagicMock(spec=RateLimiter),
+            retry_attempts=2,
+            retry_initial_delay_seconds=0.0,
+            retry_backoff_factor=2.0,
+            retry_max_delay_seconds=0.0,
+            retry_5xx_cooldown_seconds=10.0,
+        )
+        adapter.rate_limiter.acquire = MagicMock(return_value=0.0)
+
+        def always_fails():
+            raise _exc_with_status(503)
+
+        with patch("time.sleep"):
+            with pytest.raises(Exception):
+                adapter._call(always_fails)
+
+        calls = [c.args[0] for c in adapter.rate_limiter.trigger_cooldown.call_args_list]
+        # attempt 0 (retried): 10 * 2^0 = 10.0
+        # attempt 1 (retried): 10 * 2^1 = 20.0
+        # attempt 2 (final, re-raises immediately): no cooldown triggered
+        assert calls == pytest.approx([10.0, 20.0])
 
     def test_4xx_does_not_trigger_cooldown(self):
         """A 404 error must NOT trigger the global cooldown."""

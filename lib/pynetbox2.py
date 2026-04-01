@@ -729,6 +729,16 @@ class BackendAdapter(ABC):
             delay += random.uniform(0.0, self.retry_jitter_seconds)
         return delay
 
+    def _compute_5xx_cooldown(self, attempt: int) -> float:
+        """Return the global cooldown duration for a 5xx error on *attempt*.
+
+        The cooldown grows by ``retry_backoff_factor`` with each attempt so that
+        repeated overload responses (e.g. a 504 caused by a massive implicit
+        bay-creation followed by cascading 503s) result in progressively longer
+        shared pauses across all threads.
+        """
+        return self.retry_5xx_cooldown_seconds * (self.retry_backoff_factor ** attempt)
+
     def _call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         for attempt in range(self.retry_attempts + 1):
             self.rate_limiter.acquire()
@@ -746,8 +756,12 @@ class BackendAdapter(ABC):
                 # cooldown so that ALL threads back off together.  This prevents the
                 # thundering-herd where every thread independently wakes up after the
                 # same short delay and immediately re-storms the server.
+                # The cooldown grows with each attempt so that a 504 (which often
+                # signals a long background operation like mass bay creation) gets
+                # progressively more recovery time on every retry.
                 if status_code in self.retry_on_5xx and self.retry_5xx_cooldown_seconds > 0:
-                    self.rate_limiter.trigger_cooldown(self.retry_5xx_cooldown_seconds)
+                    cooldown = self._compute_5xx_cooldown(attempt)
+                    self.rate_limiter.trigger_cooldown(cooldown)
 
                 logger.warning(
                     "Retrying API call after transient error (status=%s, attempt=%s/%s, sleep=%.2fs): %s",
