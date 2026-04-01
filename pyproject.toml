@@ -6,7 +6,7 @@ build-backend = "setuptools.backends.legacy:build"
 name = "hcl-netbox-discovery"
 version = "0.1.0"
 description = "Modular HCL-driven NetBox discovery engine"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<4.0"
 dependencies = [
     "pynetbox==7.3.3",
     "pyvmomi==8.0.3.0.1",
