@@ -8,15 +8,7 @@ services:
   # Set DRY_RUN=true (in .env or environment) to log payloads without writing.
   # ---------------------------------------------------------------------------
   collector:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        PYTHON_VER: "3.12"
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
-    image: clemson-netbox-discovery:latest
+    image: ghcr.io/erichester76/hcl-netbox-discovery:latest
     restart: unless-stopped
 
     # Mount local directories so you can edit mappings/regex without rebuilding.
@@ -44,15 +36,7 @@ services:
   # Persist the job database with a named volume so history survives restarts.
   # ---------------------------------------------------------------------------
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        PYTHON_VER: "3.12"
-        HTTP_PROXY:  ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY:    ${NO_PROXY:-}
-    image: clemson-netbox-discovery:latest
+    image: ghcr.io/erichester76/hcl-netbox-discovery:latest
     entrypoint: ["python", "web_server.py"]
     restart: unless-stopped
     ports:
