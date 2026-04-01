@@ -77,7 +77,7 @@ netbox {
   token      = "env('NETBOX_TOKEN')"
   cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
   cache_url  = "env('NETBOX_CACHE_URL', '')"
-  rate_limit = 0
+  rate_limit = "env('NETBOX_RATE_LIMIT', '0')"
 }
 
 collector {
