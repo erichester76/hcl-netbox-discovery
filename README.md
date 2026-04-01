@@ -200,8 +200,15 @@ The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job hist
 | `WEB_PORT` | `5000` | TCP port the web server listens on |
 | `WEB_HOST` | `0.0.0.0` | Bind address |
 | `WEB_SECRET_KEY` | `change-me-in-production` | Flask session secret — **change this** |
+| `WEB_AUTH_ENABLED` | `true` | Require login for the web UI and enforce CSRF on state-changing routes |
+| `WEB_USERNAME` | `admin` | Username for the built-in web UI login |
+| `WEB_PASSWORD_HASH` | empty | Preferred password hash for the built-in web UI login |
+| `WEB_PASSWORD` | empty | Optional plaintext fallback when `WEB_PASSWORD_HASH` is not set |
+| `WEB_SESSION_COOKIE_SECURE` | `false` | Mark session cookies secure when serving the UI over HTTPS |
 | `COLLECTOR_DB_PATH` | `<project root>/collector_jobs.sqlite3` | Path to the SQLite job database |
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
+
+Web UI authentication settings are environment-only on purpose; they are not editable through the Settings page.
 
 ---
 
@@ -247,6 +254,11 @@ Startup settings stay in the process environment:
 | `WEB_PORT` | TCP port the web server listens on |
 | `WEB_HOST` | Bind address |
 | `WEB_SECRET_KEY` | Flask session secret |
+| `WEB_AUTH_ENABLED` | Toggle built-in login protection and CSRF enforcement |
+| `WEB_USERNAME` | Built-in web UI username |
+| `WEB_PASSWORD_HASH` | Preferred password hash for the built-in web UI login |
+| `WEB_PASSWORD` | Optional plaintext fallback for local/dev use |
+| `WEB_SESSION_COOKIE_SECURE` | Mark session cookies secure when serving over HTTPS |
 | `COLLECTOR_DB_PATH` | Path to the SQLite job/config database |
 | `FLASK_DEBUG` | Flask debug toggle |
 | `LOG_LEVEL` | Process log level |
