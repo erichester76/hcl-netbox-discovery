@@ -225,127 +225,40 @@ python main.py --mapping mappings/vmware.hcl
 python main.py
 ```
 
-Create a `.env` file (and add it to `.gitignore`) to store credentials securely:
+Create a `.env` file (and add it to `.gitignore`) to store startup settings securely:
 
 ```bash
 # .env — never commit this file
-NETBOX_URL=https://netbox.example.com
-NETBOX_TOKEN=your-netbox-api-token
-VCENTER_URL=vcenter.example.com
-VCENTER_USER=administrator@vsphere.local
-VCENTER_PASS=secret
+WEB_SECRET_KEY=change-me-in-production
+COLLECTOR_DB_PATH=./data/collector_jobs.sqlite3
+LOG_LEVEL=INFO
 ```
 
 ---
 
 ## Configuration
 
-### Environment Variables
+### Source Of Truth
 
-All sensitive values are read from environment variables inside the HCL files using the `env()` expression. The following variables are used across the included mappings:
-
-#### NetBox (required by all mappings)
+Startup settings stay in the process environment:
 
 | Variable | Description |
 |---|---|
-| `NETBOX_URL` | NetBox base URL (e.g., `https://netbox.example.com`) |
-| `NETBOX_TOKEN` | NetBox API token |
-| `NETBOX_CACHE_BACKEND` | Cache backend: `none` \| `memory` \| `redis` \| `sqlite` (default: `none`) |
-| `NETBOX_CACHE_URL` | Redis URL or SQLite file path when using those backends |
-| `DRY_RUN` | Set to `"true"` to log payloads without writing to NetBox |
+| `WEB_PORT` | TCP port the web server listens on |
+| `WEB_HOST` | Bind address |
+| `WEB_SECRET_KEY` | Flask session secret |
+| `COLLECTOR_DB_PATH` | Path to the SQLite job/config database |
+| `FLASK_DEBUG` | Flask debug toggle |
+| `LOG_LEVEL` | Process log level |
 
-#### VMware (`mappings/vmware.hcl.example`)
+All non-startup collector and source settings are DB-backed runtime configuration. That includes:
+- NetBox URL/token and cache/retry tuning
+- source credentials and connection settings
+- global collector sync flags such as `DRY_RUN`
 
-| Variable | Description |
-|---|---|
-| `VCENTER_URL` | vCenter hostname or IP (no `https://`) |
-| `VCENTER_USER` | vCenter username |
-| `VCENTER_PASS` | vCenter password |
+The `env()` helper in HCL is retained for compatibility, but it now resolves DB-backed runtime settings rather than reading directly from `os.environ`.
 
-#### Lenovo XClarity (`mappings/xclarity.hcl.example`, `mappings/xclarity-modules.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `XCLARITY_HOST` | XClarity Controller hostname or IP |
-| `XCLARITY_USER` | XClarity username |
-| `XCLARITY_PASS` | XClarity password |
-| `XCLARITY_VERIFY_SSL` | TLS verification: `"true"` or `"false"` (default: `"true"`) |
-
-#### Microsoft Azure (`mappings/azure.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `AZURE_AUTH_METHOD` | `"default"` (az login / managed identity) or `"service_principal"` |
-| `AZURE_SUBSCRIPTION_IDS` | Comma-separated subscription IDs (leave empty for all visible subscriptions) |
-| `AZURE_TENANT_ID` | Azure tenant ID (required for service-principal auth) |
-| `AZURE_CLIENT_ID` | Service principal client ID |
-| `AZURE_CLIENT_SECRET` | Service principal client secret |
-
-#### Cisco Catalyst Center (`mappings/catc.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `CATC_HOST` | Catalyst Center base URL |
-| `CATC_USER` | Catalyst Center username |
-| `CATC_PASS` | Catalyst Center password |
-| `CATC_VERIFY_SSL` | TLS verification: `"true"` or `"false"` (default: `"true"`) |
-
-#### LDAP (`mappings/ldap.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `LDAP_SERVER` | LDAP server URI (e.g., `ldaps://ldap.example.com:636`) |
-| `LDAP_USER` | Bind DN |
-| `LDAP_PASS` | Bind password |
-| `LDAP_SEARCH_BASE` | LDAP search base DN |
-| `LDAP_FILTER` | LDAP search filter (default: `"(objectClass=*)"`) |
-
-#### Cisco Nexus Dashboard Fabric Controller (`mappings/nexus.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `NDFC_HOST` | Nexus Dashboard hostname or IP |
-| `NDFC_USER` | Nexus Dashboard username |
-| `NDFC_PASS` | Nexus Dashboard password |
-| `NDFC_VERIFY_SSL` | TLS verification (default: `"true"`) |
-| `NDFC_FETCH_INTERFACES` | Fetch per-switch interfaces: `"true"` or `"false"` (default: `"false"`) |
-
-#### F5 BIG-IP (`mappings/f5.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `F5_HOST` | BIG-IP hostname or IP |
-| `F5_USER` | BIG-IP username |
-| `F5_PASS` | BIG-IP password |
-| `F5_VERIFY_SSL` | TLS verification (default: `"true"`) |
-| `F5_FETCH_INTERFACES` | Fetch physical interfaces and self-IPs: `"true"` or `"false"` (default: `"false"`) |
-| `F5_SITE` | NetBox site name to assign the appliance to (default: `"Default"`) |
-
-#### Prometheus node-exporter (`mappings/prometheus.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `PROMETHEUS_URL` | Prometheus server base URL (e.g., `http://prometheus:9090`) |
-| `PROMETHEUS_USER` | HTTP basic auth username (optional) |
-| `PROMETHEUS_PASS` | HTTP basic auth password (optional) |
-| `PROMETHEUS_VERIFY_SSL` | TLS verification (default: `"true"`) |
-| `PROMETHEUS_FETCH_INTERFACES` | Fetch per-node network interface info (default: `"true"`) |
-
-#### SNMP / Juniper (`mappings/juniper-snmp.hcl.example`)
-
-| Variable | Description |
-|---|---|
-| `SNMP_HOSTS` | Comma-separated list of hostnames or IP addresses to poll |
-| `SNMP_COMMUNITY` | SNMP v2c community string (default: `"public"`) |
-| `SNMP_VERSION` | SNMP version: `"1"`, `"2c"`, or `"3"` (default: `"2c"`) |
-| `SNMP_PORT` | UDP port (default: `"161"`) |
-| `SNMP_TIMEOUT` | Request timeout in seconds (default: `"5"`) |
-| `SNMP_RETRIES` | Retry count (default: `"1"`) |
-| `SNMP_V3_USER` | SNMPv3 username (only when `SNMP_VERSION=3`) |
-| `SNMP_V3_AUTH_PASS` | SNMPv3 authentication password |
-| `SNMP_V3_AUTH_PROTO` | Auth protocol: `md5`, `sha`, `sha256`, etc. (default: `"sha"`) |
-| `SNMP_V3_PRIV_PASS` | SNMPv3 privacy (encryption) password |
-| `SNMP_V3_PRIV_PROTO` | Privacy protocol: `des`, `aes`, `aes256`, etc. (default: `"aes"`) |
+Use the web Settings UI, or write directly to the `config_settings` table, to manage runtime values.
 
 ---
 
