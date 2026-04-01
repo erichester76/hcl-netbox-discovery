@@ -442,6 +442,91 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache == "redis"
         assert cfg.netbox.cache_ttl == 600
 
+    def test_rate_limit_fallback_to_env(self, tmp_path, monkeypatch):
+        """rate_limit and rate_limit_burst omitted from HCL should fall back to env vars."""
+        monkeypatch.setenv("NETBOX_RATE_LIMIT", "5")
+        monkeypatch.setenv("NETBOX_RATE_LIMIT_BURST", "3")
+
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.netbox.rate_limit == pytest.approx(5.0)
+        assert cfg.netbox.rate_limit_burst == 3
+
+    def test_rate_limit_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
+        """Explicit rate_limit in HCL must override the env var."""
+        monkeypatch.setenv("NETBOX_RATE_LIMIT", "99")
+
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url        = "https://nb.example.com"
+              token      = "tok"
+              rate_limit = 2
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.netbox.rate_limit == pytest.approx(2.0)
+
+    def test_retry_settings_fallback_to_env(self, tmp_path, monkeypatch):
+        """Retry settings omitted from HCL should fall back to environment variables."""
+        monkeypatch.setenv("NETBOX_RETRY_ATTEMPTS", "7")
+        monkeypatch.setenv("NETBOX_RETRY_INITIAL_DELAY", "0.5")
+        monkeypatch.setenv("NETBOX_RETRY_BACKOFF_FACTOR", "3.0")
+        monkeypatch.setenv("NETBOX_RETRY_MAX_DELAY", "30.0")
+        monkeypatch.setenv("NETBOX_RETRY_JITTER", "0.1")
+        monkeypatch.setenv("NETBOX_RETRY_ON_4XX", "429,503")
+
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.netbox.retry_attempts == 7
+        assert cfg.netbox.retry_initial_delay == pytest.approx(0.5)
+        assert cfg.netbox.retry_backoff_factor == pytest.approx(3.0)
+        assert cfg.netbox.retry_max_delay == pytest.approx(30.0)
+        assert cfg.netbox.retry_jitter == pytest.approx(0.1)
+        assert cfg.netbox.retry_on_4xx == "429,503"
+
+    def test_retry_settings_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
+        """Explicit retry settings in HCL must override env vars."""
+        monkeypatch.setenv("NETBOX_RETRY_ATTEMPTS", "99")
+        monkeypatch.setenv("NETBOX_RETRY_ON_4XX", "503")
+
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url            = "https://nb.example.com"
+              token          = "tok"
+              retry_attempts = 2
+              retry_on_4xx   = "429"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.netbox.retry_attempts == 2
+        assert cfg.netbox.retry_on_4xx == "429"
+
 
 class TestDataclasses:
     def test_source_config_defaults(self):

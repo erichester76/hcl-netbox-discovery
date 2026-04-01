@@ -202,6 +202,11 @@ class RateLimiter:
             self.tokens = 0.0
 
         if sleep_for > 0:
+            logger.debug(
+                "Rate limiter throttling: sleeping %.3fs (limit=%.1f calls/s)",
+                sleep_for,
+                self.calls_per_second,
+            )
             time.sleep(sleep_for)
             with self.lock:
                 self.last_refill = time.perf_counter()
@@ -1511,6 +1516,12 @@ class NetBoxExtendedClient:
             calls_per_second=self.config.rate_limit_per_second,
             burst=self.config.rate_limit_burst,
         )
+        if self.config.rate_limit_per_second > 0:
+            logger.info(
+                "NetBox rate limiting enabled: %.1f calls/s (burst=%d)",
+                self.config.rate_limit_per_second,
+                self.config.rate_limit_burst,
+            )
         self._cache_metrics_lock = threading.Lock()
         self._cache_metrics: dict[str, int] = {
             "get_hits": 0,
