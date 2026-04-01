@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import threading
 import textwrap
 from pathlib import Path
 
 import pytest
 
+import collector.db as db_module
 from collector.config import (
     CollectionConfig,
     CollectorConfig,
@@ -27,6 +29,7 @@ from collector.config import (
     build_source_config,
     load_config,
 )
+from collector.db import init_db, set_setting
 
 
 # ---------------------------------------------------------------------------
@@ -101,9 +104,9 @@ class TestEvalConfigStr:
     def test_plain_string_returned_as_is(self):
         assert _eval_config_str("hello") == "hello"
 
-    def test_env_call_resolved(self, monkeypatch):
-        monkeypatch.setenv("MY_URL", "https://example.com")
-        assert _eval_config_str("env('MY_URL')") == "https://example.com"
+    def test_env_call_resolved_from_runtime_config(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="https://example.com")
+        assert _eval_config_str("env('NETBOX_URL')") == "https://example.com"
 
     def test_env_call_with_default(self, monkeypatch):
         monkeypatch.delenv("MISSING_VAR_ZZZ", raising=False)
@@ -128,6 +131,15 @@ def _write_hcl(tmp_path: Path, content: str) -> str:
     mapping = tmp_path / "test_mapping.hcl"
     mapping.write_text(textwrap.dedent(content))
     return str(mapping)
+
+
+def _init_runtime_config_db(tmp_path: Path, monkeypatch, **values: str) -> None:
+    db_path = str(tmp_path / "test_config.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_lock", threading.Lock())
+    init_db()
+    for key, value in values.items():
+        set_setting(key, value)
 
 
 class TestLoadConfigMinimal:
@@ -303,7 +315,7 @@ class TestLoadConfigWithObjects:
 
 class TestLoadConfigEnvResolution:
     def test_env_resolved_in_url(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("VCENTER_URL", "vcenter.prod.example.com")
+        _init_runtime_config_db(tmp_path, monkeypatch, VCENTER_URL="vcenter.prod.example.com")
         path = _write_hcl(tmp_path, """
             source "vmware" {
               api_type = "vmware"
@@ -393,16 +405,18 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache_url == "redis://localhost:6379/0"
         assert cfg.netbox.rate_limit == pytest.approx(0.5)
 
-    def test_cache_settings_fallback_to_env(self, tmp_path, monkeypatch):
-        """Cache settings omitted from HCL should fall back to environment variables."""
-        monkeypatch.setenv("NETBOX_CACHE_BACKEND", "redis")
-        monkeypatch.setenv("NETBOX_CACHE_URL", "redis://redis:6379/0")
-        monkeypatch.setenv("NETBOX_CACHE_TTL", "14400")
-        monkeypatch.setenv("NETBOX_CACHE_KEY_PREFIX", "myapp:")
-        monkeypatch.setenv("NETBOX_PREWARM_SENTINEL_TTL", "7200")
+    def test_cache_settings_fallback_to_runtime_config(self, tmp_path, monkeypatch):
+        """Cache settings omitted from HCL should fall back to DB-backed runtime settings."""
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            NETBOX_CACHE_BACKEND="redis",
+            NETBOX_CACHE_URL="redis://redis:6379/0",
+            NETBOX_CACHE_TTL="14400",
+            NETBOX_CACHE_KEY_PREFIX="myapp:",
+            NETBOX_PREWARM_SENTINEL_TTL="7200",
+        )
 
-        # HCL intentionally omits all cache-related keys – they should be
-        # picked up transparently from the environment.
         path = _write_hcl(tmp_path, """
             source "vmware" {
               api_type = "vmware"
@@ -420,10 +434,14 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache_key_prefix == "myapp:"
         assert cfg.netbox.prewarm_sentinel_ttl == 7200
 
-    def test_cache_settings_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
-        """Explicit HCL values must override env vars."""
-        monkeypatch.setenv("NETBOX_CACHE_BACKEND", "sqlite")
-        monkeypatch.setenv("NETBOX_CACHE_TTL", "9999")
+    def test_cache_settings_hcl_takes_priority_over_runtime_config(self, tmp_path, monkeypatch):
+        """Explicit HCL values must override DB-backed runtime settings."""
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            NETBOX_CACHE_BACKEND="sqlite",
+            NETBOX_CACHE_TTL="9999",
+        )
 
         path = _write_hcl(tmp_path, """
             source "vmware" {
@@ -438,14 +456,18 @@ class TestLoadConfigNetBoxOptions:
             }
         """)
         cfg = load_config(path)
-        # HCL wins over env
+        # HCL wins over DB-backed runtime settings
         assert cfg.netbox.cache == "redis"
         assert cfg.netbox.cache_ttl == 600
 
-    def test_rate_limit_fallback_to_env(self, tmp_path, monkeypatch):
-        """rate_limit and rate_limit_burst omitted from HCL should fall back to env vars."""
-        monkeypatch.setenv("NETBOX_RATE_LIMIT", "5")
-        monkeypatch.setenv("NETBOX_RATE_LIMIT_BURST", "3")
+    def test_rate_limit_fallback_to_runtime_config(self, tmp_path, monkeypatch):
+        """rate_limit and rate_limit_burst omitted from HCL should fall back to DB-backed runtime settings."""
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            NETBOX_RATE_LIMIT="5",
+            NETBOX_RATE_LIMIT_BURST="3",
+        )
 
         path = _write_hcl(tmp_path, """
             source "vmware" {
@@ -461,9 +483,9 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.rate_limit == pytest.approx(5.0)
         assert cfg.netbox.rate_limit_burst == 3
 
-    def test_rate_limit_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
-        """Explicit rate_limit in HCL must override the env var."""
-        monkeypatch.setenv("NETBOX_RATE_LIMIT", "99")
+    def test_rate_limit_hcl_takes_priority_over_runtime_config(self, tmp_path, monkeypatch):
+        """Explicit rate_limit in HCL must override the DB-backed runtime setting."""
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_RATE_LIMIT="99")
 
         path = _write_hcl(tmp_path, """
             source "vmware" {
@@ -479,14 +501,18 @@ class TestLoadConfigNetBoxOptions:
         cfg = load_config(path)
         assert cfg.netbox.rate_limit == pytest.approx(2.0)
 
-    def test_retry_settings_fallback_to_env(self, tmp_path, monkeypatch):
-        """Retry settings omitted from HCL should fall back to environment variables."""
-        monkeypatch.setenv("NETBOX_RETRY_ATTEMPTS", "7")
-        monkeypatch.setenv("NETBOX_RETRY_INITIAL_DELAY", "0.5")
-        monkeypatch.setenv("NETBOX_RETRY_BACKOFF_FACTOR", "3.0")
-        monkeypatch.setenv("NETBOX_RETRY_MAX_DELAY", "30.0")
-        monkeypatch.setenv("NETBOX_RETRY_JITTER", "0.1")
-        monkeypatch.setenv("NETBOX_RETRY_ON_4XX", "429,503")
+    def test_retry_settings_fallback_to_runtime_config(self, tmp_path, monkeypatch):
+        """Retry settings omitted from HCL should fall back to DB-backed runtime settings."""
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            NETBOX_RETRY_ATTEMPTS="7",
+            NETBOX_RETRY_INITIAL_DELAY="0.5",
+            NETBOX_RETRY_BACKOFF_FACTOR="3.0",
+            NETBOX_RETRY_MAX_DELAY="30.0",
+            NETBOX_RETRY_JITTER="0.1",
+            NETBOX_RETRY_ON_4XX="429,503",
+        )
 
         path = _write_hcl(tmp_path, """
             source "vmware" {
@@ -506,10 +532,14 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.retry_jitter == pytest.approx(0.1)
         assert cfg.netbox.retry_on_4xx == "429,503"
 
-    def test_retry_settings_hcl_takes_priority_over_env(self, tmp_path, monkeypatch):
-        """Explicit retry settings in HCL must override env vars."""
-        monkeypatch.setenv("NETBOX_RETRY_ATTEMPTS", "99")
-        monkeypatch.setenv("NETBOX_RETRY_ON_4XX", "503")
+    def test_retry_settings_hcl_takes_priority_over_runtime_config(self, tmp_path, monkeypatch):
+        """Explicit retry settings in HCL must override DB-backed runtime settings."""
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            NETBOX_RETRY_ATTEMPTS="99",
+            NETBOX_RETRY_ON_4XX="503",
+        )
 
         path = _write_hcl(tmp_path, """
             source "vmware" {
@@ -601,15 +631,15 @@ class TestIteratorConfig:
 
 
 class TestEvalConfigStrWithOverrides:
-    def test_override_takes_precedence_over_env(self, monkeypatch):
-        monkeypatch.setenv("MY_VAR", "from_env")
-        result = _eval_config_str_with_overrides("env('MY_VAR')", {"MY_VAR": "from_override"})
+    def test_override_takes_precedence_over_runtime_config(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="from_db")
+        result = _eval_config_str_with_overrides("env('NETBOX_URL')", {"NETBOX_URL": "from_override"})
         assert result == "from_override"
 
-    def test_falls_back_to_env_when_no_override(self, monkeypatch):
-        monkeypatch.setenv("MY_VAR", "from_env")
-        result = _eval_config_str_with_overrides("env('MY_VAR')", {})
-        assert result == "from_env"
+    def test_falls_back_to_runtime_config_when_no_override(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="from_db")
+        result = _eval_config_str_with_overrides("env('NETBOX_URL')", {})
+        assert result == "from_db"
 
     def test_plain_string_returned_as_is(self):
         result = _eval_config_str_with_overrides("hello", {"hello": "world"})
@@ -625,15 +655,15 @@ class TestEvalConfigStrWithOverrides:
 
 
 class TestBuildSourceConfig:
-    def test_builds_source_config_without_overrides(self, monkeypatch):
-        monkeypatch.setenv("VCENTER_URL", "vc.example.com")
+    def test_builds_source_config_without_overrides(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, VCENTER_URL="vc.example.com")
         body = {"api_type": "vmware", "url": "env('VCENTER_URL')", "username": "admin"}
         cfg = build_source_config(body, "vmware")
         assert cfg.api_type == "vmware"
         assert cfg.url == "vc.example.com"
 
-    def test_builds_source_config_with_overrides(self, monkeypatch):
-        monkeypatch.setenv("VCENTER_URL", "should_not_be_used")
+    def test_builds_source_config_with_overrides(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, VCENTER_URL="should_not_be_used")
         body = {"api_type": "vmware", "url": "env('VCENTER_URL')", "username": "admin"}
         cfg = build_source_config(body, "vmware", overrides={"VCENTER_URL": "vc2.example.com"})
         assert cfg.url == "vc2.example.com"
