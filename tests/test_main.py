@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import collector.db as db_module
-from collector.db import get_job, get_jobs, init_db
+from collector.db import get_jobs, init_db
 from main import _parse_args, _setup_logging
 
 
@@ -152,12 +152,15 @@ def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):
     assert jobs[0]["status"] == "failed"
 
 
-def test_main_missing_mapping_does_not_create_db_job(tmp_db):
-    """main() must not create a DB job for a mapping file that does not exist."""
+def test_main_missing_mapping_persists_failed_job(tmp_db):
+    """main() must persist a failed DB job for a mapping file that does not exist."""
     from main import main  # noqa: PLC0415
     rc = main(["--mapping", "/nonexistent/path.hcl"])
     assert rc == 1
-    assert get_jobs() == []
+    jobs = get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "failed"
+    assert jobs[0]["hcl_file"] == "/nonexistent/path.hcl"
 
 
 def test_main_no_args_returns_error(tmp_db):
@@ -183,36 +186,20 @@ def test_parse_args_run_scheduler_default():
 
 def test_check_and_fire_due_schedules_fires_job(tmp_path, tmp_db):
     """_check_and_fire_due_schedules() must create a job for a due schedule."""
-    import time as _time  # noqa: PLC0415
-
     import collector.db as db_module  # noqa: PLC0415
 
     hcl = tmp_path / "test.hcl"
     hcl.write_text("")
 
-    from datetime import datetime, timezone  # noqa: PLC0415
-
     # Create a schedule with next_run_at in the past
     past = "2000-01-01T00:00:00"
     db_module.create_schedule("test-sched", str(hcl), "0 * * * *", next_run_at=past)
-
-    fake_engine = MagicMock()
-    fake_engine.run.return_value = [_fake_stat()]
-
-    import main as main_mod  # noqa: PLC0415
-
-    # Reset the active schedule set between tests
-    main_mod._active_schedule_ids.clear()
-
-    with patch("collector.engine.Engine", return_value=fake_engine):
-        from main import _check_and_fire_due_schedules  # noqa: PLC0415
-        _check_and_fire_due_schedules()
-
-    # Give the background thread a moment to finish
-    _time.sleep(0.5)
+    from main import _check_and_fire_due_schedules  # noqa: PLC0415
+    _check_and_fire_due_schedules()
 
     jobs = get_jobs()
     assert len(jobs) >= 1
+    assert jobs[0]["status"] == "queued"
 
 
 def test_check_and_run_queued_jobs_picks_up_queued_job(tmp_path, tmp_db):
@@ -231,10 +218,6 @@ def test_check_and_run_queued_jobs_picks_up_queued_job(tmp_path, tmp_db):
 
     fake_engine = MagicMock()
     fake_engine.run.return_value = [_fake_stat()]
-
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
 
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
 
@@ -260,10 +243,6 @@ def test_check_and_run_queued_jobs_missing_file(tmp_path, tmp_db):
     job_id = db_module.create_job("/nonexistent/path.hcl")
     assert db_module.get_job(job_id)["status"] == "queued"
 
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
-
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
     _check_and_run_queued_jobs()
 
@@ -271,6 +250,96 @@ def test_check_and_run_queued_jobs_missing_file(tmp_path, tmp_db):
 
     job = db_module.get_job(job_id)
     assert job["status"] == "failed"
+
+
+def test_check_and_run_queued_jobs_marks_partial_when_stats_have_errors(tmp_path, tmp_db):
+    """Queued runs with item-level errors must persist status='partial'."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    hcl = tmp_path / "partial.hcl"
+    hcl.write_text("")
+
+    stat = _fake_stat()
+    stat.errored = 2
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [stat]
+
+    job_id = db_module.create_job(str(hcl), dry_run=False)
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+    finally:
+        patcher.stop()
+
+    job = db_module.get_job(job_id)
+    assert job["status"] == "partial"
+
+
+def test_due_schedule_execution_marks_partial_when_stats_have_errors(tmp_path, tmp_db):
+    """Scheduled runs should enqueue then execute with status='partial' on item errors."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    hcl = tmp_path / "scheduled_partial.hcl"
+    hcl.write_text("")
+
+    sid = db_module.create_schedule(
+        "scheduled-partial",
+        str(hcl),
+        "*/10 * * * *",
+        next_run_at="2000-01-01T00:00:00",
+    )
+    sched = db_module.get_schedule(sid)
+    assert sched is not None
+
+    stat = _fake_stat()
+    stat.errored = 1
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [stat]
+
+    from main import _check_and_fire_due_schedules, _check_and_run_queued_jobs  # noqa: PLC0415
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        _check_and_fire_due_schedules()
+        _check_and_run_queued_jobs()
+        _time.sleep(0.5)
+
+    jobs = get_jobs()
+    assert jobs, "Scheduled run did not create a job record"
+    assert jobs[0]["status"] == "partial"
+
+
+def test_due_schedule_missing_file_persists_failed_job(tmp_db):
+    """Missing-file scheduled executions should queue then persist a failed job."""
+    import time as _time  # noqa: PLC0415
+
+    import collector.db as db_module  # noqa: PLC0415
+
+    db_module.create_schedule(
+        "missing-file-sched",
+        "/nonexistent/path.hcl",
+        "*/5 * * * *",
+        next_run_at="2000-01-01T00:00:00",
+    )
+
+    from main import _check_and_fire_due_schedules, _check_and_run_queued_jobs  # noqa: PLC0415
+    _check_and_fire_due_schedules()
+    _check_and_run_queued_jobs()
+    _time.sleep(0.3)
+
+    jobs = get_jobs()
+    assert jobs, "Expected a failed job record for missing scheduled mapping"
+    assert jobs[0]["status"] == "failed"
 
 
 def test_run_queued_job_debug_mode_captures_debug_logs(tmp_path, tmp_db):
@@ -306,10 +375,6 @@ def test_run_queued_job_debug_mode_captures_debug_logs(tmp_path, tmp_db):
     fake_engine.run.side_effect = fake_run
 
     job_id = db_module.create_job(str(hcl), debug_mode=True)
-
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
 
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
 
@@ -356,10 +421,6 @@ def test_run_queued_job_non_debug_mode_drops_debug_logs(tmp_path, tmp_db):
 
     job_id = db_module.create_job(str(hcl), debug_mode=False)
 
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
-
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
 
     patcher = patch("collector.engine.Engine", return_value=fake_engine)
@@ -390,11 +451,7 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     fake_engine = MagicMock()
     fake_engine.run.return_value = [_fake_stat()]
 
-    job_id = db_module.create_job(str(hcl), debug_mode=True)
-
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
+    db_module.create_job(str(hcl), debug_mode=True)
 
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
 
@@ -460,10 +517,6 @@ def test_run_queued_job_debug_captures_logs_from_executor_threads(tmp_path, tmp_
 
     job_id = db_module.create_job(str(hcl), debug_mode=True)
 
-    import main as main_mod  # noqa: PLC0415
-
-    main_mod._active_queued_job_ids.clear()
-
     from main import _check_and_run_queued_jobs  # noqa: PLC0415
 
     patcher = patch("collector.engine.Engine", return_value=fake_engine)
@@ -483,9 +536,7 @@ def test_run_queued_job_debug_captures_logs_from_executor_threads(tmp_path, tmp_
 
 def test_dispatch_job_creates_queued_record(tmp_path, tmp_db, monkeypatch):
     """POSTing /jobs/run must create a 'queued' job without running the engine."""
-    import collector.db as db_module  # noqa: PLC0415
     from collector.db import get_jobs  # noqa: PLC0415
-
     from web.app import create_app  # noqa: PLC0415
 
     flask_app = create_app()

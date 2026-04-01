@@ -425,6 +425,44 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     return [_row_to_job(r) for r in rows]
 
 
+def claim_next_queued_job() -> dict[str, Any] | None:
+    """Atomically claim the oldest queued job and mark it running.
+
+    Returns the claimed job row (including updated ``status`` and ``started_at``),
+    or ``None`` when no queued jobs are available.
+
+    This uses a single SQLite transaction with ``BEGIN IMMEDIATE`` so competing
+    scheduler processes cannot claim the same queued row.
+    """
+    started_at = _now()
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+
+        row = con.execute(
+            "SELECT id FROM jobs WHERE status='queued' ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+
+        job_id = int(row[0])
+        cur = con.execute(
+            "UPDATE jobs SET status='running', started_at=? WHERE id=? AND status='queued'",
+            (started_at, job_id),
+        )
+        if cur.rowcount != 1:
+            # Another process claimed this row first.
+            return None
+
+        claimed = con.execute(
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+        if claimed is None:
+            return None
+        return _row_to_job(claimed)
+
+
 # ---------------------------------------------------------------------------
 # Schedule CRUD
 # ---------------------------------------------------------------------------
@@ -514,6 +552,78 @@ def update_schedule_run(schedule_id: int, last_run_at: str, next_run_at: str) ->
             "UPDATE schedules SET last_run_at=?, next_run_at=? WHERE id=?",
             (last_run_at, next_run_at, schedule_id),
         )
+
+
+def dispatch_next_due_schedule() -> dict[str, Any] | None:
+    """Atomically dispatch one due schedule by queueing exactly one job.
+
+    The function performs all steps in one transaction:
+    1. Find one enabled due schedule.
+    2. Advance its ``last_run_at`` and ``next_run_at``.
+    3. Insert a queued job row with the schedule's ``hcl_file`` and ``dry_run``.
+
+    Returns the newly created queued job row, or ``None`` when no due schedule
+    exists.  ``debug_mode`` is always ``False`` for schedule-dispatched jobs.
+
+    Concurrency note:
+    ``BEGIN IMMEDIATE`` ensures only one competing scheduler process can dispatch
+    a given due schedule at a time.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from croniter import croniter  # noqa: PLC0415
+
+    now_dt = datetime.now(timezone.utc)
+    now_str = now_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+
+        sched_row = con.execute(
+            "SELECT id, hcl_file, cron_expr, dry_run, next_run_at "
+            "FROM schedules "
+            "WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= ? "
+            "ORDER BY next_run_at ASC, id ASC "
+            "LIMIT 1",
+            (now_str,),
+        ).fetchone()
+        if sched_row is None:
+            return None
+
+        schedule_id = int(sched_row[0])
+        hcl_file = str(sched_row[1])
+        cron_expr = str(sched_row[2])
+        dry_run = bool(sched_row[3])
+        observed_next_run_at = sched_row[4]
+
+        cron = croniter(cron_expr, now_dt)
+        next_dt = cron.get_next(datetime)
+        next_run_str = next_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        cur = con.execute(
+            "UPDATE schedules SET last_run_at=?, next_run_at=? "
+            "WHERE id=? AND enabled=1 AND next_run_at=?",
+            (now_str, next_run_str, schedule_id, observed_next_run_at),
+        )
+        if cur.rowcount != 1:
+            # Another process likely dispatched this schedule first.
+            return None
+
+        cur = con.execute(
+            "INSERT INTO jobs (hcl_file, status, dry_run, debug_mode, created_at) "
+            "VALUES (?, 'queued', ?, 0, ?)",
+            (hcl_file, int(dry_run), now_str),
+        )
+        job_id = int(cur.lastrowid)
+
+        job_row = con.execute(
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+        if job_row is None:
+            return None
+        return _row_to_job(job_row)
 
 
 def _row_to_schedule(row: tuple) -> dict[str, Any]:
