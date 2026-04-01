@@ -670,11 +670,35 @@ class Engine:
                 stats.record("skipped")
             return None
         try:
-            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            outcome = "created"
+            obj = None
+            if hasattr(ctx.nb, "upsert_with_outcome"):
+                result = ctx.nb.upsert_with_outcome(
+                    resource,
+                    payload,
+                    lookup_fields=lookup_fields,
+                )
+                outcome = getattr(result, "outcome", "created")
+                obj = getattr(result, "object", None)
+            else:
+                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
-            logger.info("Upserted  resource=%-30s  %s", resource, lookup_display)
+            logger.info(
+                "Upserted  resource=%-30s  %s  outcome=%s",
+                resource,
+                lookup_display,
+                outcome,
+            )
             if stats is not None:
-                stats.record("created")
+                if outcome == "created":
+                    stats.record("created")
+                elif outcome == "updated":
+                    stats.record("updated")
+                elif outcome == "noop":
+                    stats.record("skipped")
+                else:
+                    # Be defensive with unknown adapters/outcomes.
+                    stats.record("created")
             return obj
         except Exception as exc:
             logger.error(
