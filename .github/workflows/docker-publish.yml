@@ -1,7 +1,7 @@
 # File: .github/workflows/docker-publish.yml
-# Purpose: Build the Docker image and push it to GitHub Container Registry (ghcr.io).
+# Purpose: Run tests, then build and push Docker image to GitHub Container Registry (ghcr.io).
 # Created: 2026-04-01
-# Last Changed: GitHub Copilot Issue: #build-pipeline
+# Last Changed: GitHub Copilot Issue: #add-test-suite-run-to-pipeline
 
 name: Build and Push Docker Image
 
@@ -20,8 +20,33 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pip install --no-cache-dir poetry
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Run test suite
+        run: poetry run pytest
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: test
 
     permissions:
       contents: read
