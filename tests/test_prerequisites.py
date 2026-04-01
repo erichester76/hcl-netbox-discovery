@@ -272,3 +272,209 @@ class TestResolvePlacement:
             "rack_position": None,
         }
         nb.upsert.assert_not_called()
+
+
+class TestEnsureTenantGroup:
+    """_ensure_tenant_group should upsert tenancy.tenant_groups."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=10)
+        runner = self._make_runner(nb)
+        result = runner._ensure_tenant_group({"name": "Engineering"}, dry_run=False)
+        assert result == 10
+        nb.upsert.assert_called_once()
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "tenancy.tenant_groups"
+        assert payload["name"] == "Engineering"
+        assert payload["slug"] == "engineering"
+
+    def test_returns_none_for_missing_name(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_tenant_group({}, dry_run=False)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_returns_none_without_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_tenant_group({"name": "Engineering"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_description_included_in_payload(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=5)
+        runner = self._make_runner(nb)
+        runner._ensure_tenant_group(
+            {"name": "Engineering", "description": "Eng teams"}, dry_run=False
+        )
+        payload = nb.upsert.call_args[0][1]
+        assert payload["description"] == "Eng teams"
+
+
+class TestEnsureContactGroup:
+    """_ensure_contact_group should upsert tenancy.contact_groups."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=20)
+        runner = self._make_runner(nb)
+        result = runner._ensure_contact_group({"name": "NOC"}, dry_run=False)
+        assert result == 20
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "tenancy.contact_groups"
+        assert payload["name"] == "NOC"
+        assert payload["slug"] == "noc"
+
+    def test_returns_none_for_missing_name(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_contact_group({}, dry_run=False)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_returns_none_without_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_contact_group({"name": "NOC"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+
+class TestEnsureRegion:
+    """_ensure_region should upsert dcim.regions."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=30)
+        runner = self._make_runner(nb)
+        result = runner._ensure_region({"name": "North America"}, dry_run=False)
+        assert result == 30
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "dcim.regions"
+        assert payload["name"] == "North America"
+        assert payload["slug"] == "north-america"
+
+    def test_returns_none_for_missing_name(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_region({}, dry_run=False)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_returns_none_without_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_region({"name": "EMEA"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_description_included_in_payload(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=31)
+        runner = self._make_runner(nb)
+        runner._ensure_region({"name": "APAC", "description": "Asia Pacific"}, dry_run=False)
+        payload = nb.upsert.call_args[0][1]
+        assert payload["description"] == "Asia Pacific"
+
+
+class TestEnsureVlanGroup:
+    """_ensure_vlan_group should upsert ipam.vlan_groups with min/max_vid defaults."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_with_default_vid_range(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=40)
+        runner = self._make_runner(nb)
+        result = runner._ensure_vlan_group({"name": "Office VLANs"}, dry_run=False)
+        assert result == 40
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "ipam.vlan_groups"
+        assert payload["name"] == "Office VLANs"
+        assert payload["slug"] == "office-vlans"
+        assert payload["min_vid"] == 1
+        assert payload["max_vid"] == 4094
+
+    def test_custom_vid_range_is_forwarded(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=41)
+        runner = self._make_runner(nb)
+        runner._ensure_vlan_group({"name": "Core", "min_vid": 100, "max_vid": 200}, dry_run=False)
+        payload = nb.upsert.call_args[0][1]
+        assert payload["min_vid"] == 100
+        assert payload["max_vid"] == 200
+
+    def test_returns_none_for_missing_name(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_vlan_group({}, dry_run=False)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_returns_none_without_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_vlan_group({"name": "Core"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+
+class TestEnsureVrf:
+    """_ensure_vrf should upsert ipam.vrfs by name."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=50)
+        runner = self._make_runner(nb)
+        result = runner._ensure_vrf({"name": "MGMT"}, dry_run=False)
+        assert result == 50
+        resource, payload = nb.upsert.call_args[0][:2]
+        assert resource == "ipam.vrfs"
+        assert payload["name"] == "MGMT"
+        assert "rd" not in payload
+
+    def test_rd_included_when_provided(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=51)
+        runner = self._make_runner(nb)
+        runner._ensure_vrf({"name": "MGMT", "rd": "65000:1"}, dry_run=False)
+        payload = nb.upsert.call_args[0][1]
+        assert payload["rd"] == "65000:1"
+
+    def test_returns_none_for_missing_name(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_vrf({}, dry_run=False)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_returns_none_without_upsert(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+        result = runner._ensure_vrf({"name": "MGMT"}, dry_run=True)
+        assert result is None
+        nb.upsert.assert_not_called()
+
+    def test_description_included_in_payload(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=52)
+        runner = self._make_runner(nb)
+        runner._ensure_vrf({"name": "PROD", "description": "Production VRF"}, dry_run=False)
+        payload = nb.upsert.call_args[0][1]
+        assert payload["description"] == "Production VRF"
