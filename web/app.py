@@ -372,9 +372,14 @@ def _configured_password_hash() -> str:
 def _auth_configuration_error() -> str | None:
     if not _auth_enabled():
         return None
-    if _configured_password_hash() or _configured_password():
+    if _configured_password_hash():
         return None
-    return "WEB auth is enabled but no credentials are configured. Set WEB_PASSWORD or WEB_PASSWORD_HASH."
+    password = _configured_password()
+    if not password:
+        return "WEB auth is enabled but no credentials are configured. Set WEB_PASSWORD or WEB_PASSWORD_HASH."
+    if password == "change-me-in-production":
+        return "WEB_PASSWORD must be changed from the default placeholder before starting the web UI."
+    return None
 
 
 def _credentials_match(username: str, password: str) -> bool:

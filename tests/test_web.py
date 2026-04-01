@@ -104,6 +104,23 @@ def test_dashboard_redirects_to_login_when_auth_enabled(secured_app):
     assert parsed.path == "/login"
 
 
+def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_web_invalid_auth.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("WEB_USERNAME", "admin")
+    monkeypatch.setenv("WEB_PASSWORD", "change-me-in-production")
+    monkeypatch.delenv("WEB_PASSWORD_HASH", raising=False)
+    monkeypatch.setenv("WEB_SECRET_KEY", "invalid-auth-secret")
+    monkeypatch.setattr(db_module, "_lock", threading.Lock())
+    init_db()
+
+    from web.app import create_app  # noqa: PLC0415
+
+    with pytest.raises(RuntimeError, match="default placeholder"):
+        create_app()
+
+
 def test_protected_post_redirects_to_login_when_not_authenticated(secured_app):
     from collector.db import get_jobs  # noqa: PLC0415
 
