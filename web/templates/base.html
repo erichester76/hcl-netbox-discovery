@@ -30,9 +30,14 @@
     html.dark-mode thead.table-light { --bs-table-color: #e0e0e0; --bs-table-bg: #2a2a2a; --bs-table-border-color: #444; color: #e0e0e0; background-color: #2a2a2a; }
     html.dark-mode thead.table-light > tr > th,
     html.dark-mode thead.table-light > tr > td { color: #e0e0e0; background-color: #2a2a2a; border-color: #444; }
-    /* Fix table-warning rows in dark mode */
-    html.dark-mode tr.table-warning > td,
-    html.dark-mode tr.table-warning > th { --bs-table-accent-bg: #3d3100; background-color: #3d3100; color: #e0e0e0; border-color: #555; }
+    /* DB-override row highlight – light mode */
+    tr.table-cu-override > td,
+    tr.table-cu-override > th { background-color: #fff0e6; color: #333; border-color: #f5c6a0; }
+    /* DB-override row highlight – dark mode */
+    html.dark-mode tr.table-cu-override > td,
+    html.dark-mode tr.table-cu-override > th { background-color: #2e1a08; color: #e0e0e0; border-color: #6b3a12; }
+    /* DB-override badge */
+    .badge-cu-override { background-color: var(--cu-orange); color: #fff; }
     /* Fix outline button text visibility in dark mode */
     html.dark-mode .btn-outline-secondary { color: #bbb; border-color: #bbb; }
     html.dark-mode .btn-outline-secondary:hover { color: #fff; background-color: #6c757d; border-color: #6c757d; }
