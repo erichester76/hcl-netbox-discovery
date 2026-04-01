@@ -19,8 +19,8 @@ source(path)
       "list[*]"         – flatten/iterate all items in list
 
 env(name, default="")
-    get_config(name, default) – DB config_settings value is authoritative;
-    falls back to os.environ[name], then *default*.
+    get_config(name, default) – DB-backed runtime configuration is authoritative
+    for non-startup settings and falls back to *default* when unset.
 
 regex_file(value, filename)
     Apply pattern/replacement pairs from ``regex/<filename>`` to *value*.
@@ -103,7 +103,7 @@ try:
     from .db import get_config as _get_config
 except ImportError:
     def _get_config(key: str, default: str = "") -> str:  # type: ignore[misc]
-        return os.environ.get(key, default)
+        return default
 
 logger = logging.getLogger(__name__)
 

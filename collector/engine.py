@@ -672,14 +672,22 @@ class Engine:
         try:
             outcome = "created"
             obj = None
-            if hasattr(ctx.nb, "upsert_with_outcome"):
+            upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+            if callable(upsert_with_outcome):
                 result = ctx.nb.upsert_with_outcome(
                     resource,
                     payload,
                     lookup_fields=lookup_fields,
                 )
-                outcome = getattr(result, "outcome", "created")
-                obj = getattr(result, "object", None)
+                candidate_outcome = getattr(result, "outcome", None)
+                if candidate_outcome in {"created", "updated", "noop"}:
+                    outcome = candidate_outcome
+                    obj = getattr(result, "object", None)
+                else:
+                    # Plain MagicMock instances fabricate arbitrary attributes,
+                    # so treat unknown outcomes as lack of structured support
+                    # and fall back to the legacy upsert() path.
+                    obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
             else:
                 obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
