@@ -238,6 +238,47 @@ class Engine:
             dry_run,
         )
 
+        # Log a summary of the active tuning configuration so operators can
+        # confirm effective settings at a glance without needing DEBUG level. #2025-04-01
+        nb_cfg = cfg.netbox
+        col_cfg = cfg.collector
+        masked_token = (nb_cfg.token[:4] + "****") if nb_cfg.token and len(nb_cfg.token) > 4 else "****"
+        logger.info(
+            "NetBox config  url=%s  token=%s  branch=%s",
+            nb_cfg.url,
+            masked_token,
+            nb_cfg.branch or "(default)",
+        )
+        logger.info(
+            "Cache config  backend=%s  ttl=%ss  key_prefix=%s  url=%s",
+            nb_cfg.cache,
+            nb_cfg.cache_ttl,
+            nb_cfg.cache_key_prefix,
+            nb_cfg.cache_url or "(none)",
+        )
+        logger.info(
+            "Rate-limit config  rate_limit=%.1f req/s  burst=%d",
+            nb_cfg.rate_limit,
+            nb_cfg.rate_limit_burst,
+        )
+        logger.info(
+            "Retry config  attempts=%d  initial_delay=%.2fs  backoff=%.1f  "
+            "max_delay=%.1fs  jitter=%.2fs  retry_on_4xx=%s  5xx_cooldown=%.1fs",
+            nb_cfg.retry_attempts,
+            nb_cfg.retry_initial_delay,
+            nb_cfg.retry_backoff_factor,
+            nb_cfg.retry_max_delay,
+            nb_cfg.retry_jitter,
+            nb_cfg.retry_on_4xx,
+            nb_cfg.retry_5xx_cooldown,
+        )
+        logger.info(
+            "Collector options  max_workers=%d  sync_tag=%r  dry_run=%s",
+            col_cfg.max_workers,
+            col_cfg.sync_tag,
+            dry_run,
+        )
+
         nb = _build_nb_client(cfg.netbox)
 
         if cfg.collector.sync_tag and not dry_run:
