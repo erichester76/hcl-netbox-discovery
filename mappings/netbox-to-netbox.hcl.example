@@ -1,9 +1,22 @@
-# NetBox → NetBox device sync mapping
+# NetBox → NetBox full sync mapping
 #
-# Syncs devices (and their interfaces) from one NetBox instance to another.
-# All device-level prerequisites (manufacturer, device type, role, site,
-# location, rack, platform) are auto-created in the destination NetBox as
-# needed.
+# Syncs tenants, contacts, regions, sites, locations, racks, VLANs, prefixes,
+# IP addresses, and devices (with interfaces) from one NetBox instance to
+# another.  Prerequisites (manufacturer, device type, role, site, location,
+# rack, platform) are auto-created in the destination NetBox as needed.
+#
+# Object blocks are ordered so that dependencies are synced before dependants:
+#   1. tenant_group  → tenants depend on groups
+#   2. tenant        → sites/contacts/racks/VLANs/prefixes may reference tenants
+#   3. contact       → standalone; no upstream dependencies modelled here
+#   4. region        → sites reference regions
+#   5. site          → locations, racks, VLANs, prefixes, and devices reference sites
+#   6. location      → racks and devices reference locations
+#   7. rack          → devices reference racks
+#   8. vlan          → prefixes may reference VLANs
+#   9. prefix        → standalone IPAM prefix records
+#  10. ip_address    → standalone IP address records
+#  11. device        → depends on all of the above
 #
 # Required environment variables:
 #   SOURCE_NETBOX_URL     Base URL of the source NetBox (e.g. https://source.example.com)
@@ -47,6 +60,627 @@ collector {
   sync_tag         = "env('NETBOX_SYNC_TAG', 'netbox-sync')"
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# Tenant Groups
+#
+# Syncs tenant groups from the source NetBox.  Groups are looked up by slug
+# in the destination NetBox; created when missing, updated otherwise.
+# Sync tenant groups before tenants so parent groups already exist when
+# tenants are processed.
+# ---------------------------------------------------------------------------
+
+object "tenant_group" {
+  source_collection = "tenancy.tenant_groups"
+  netbox_resource   = "tenancy.tenant_groups"
+  lookup_by         = ["slug"]
+  max_workers       = 4
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Tenants
+#
+# Syncs tenants from the source NetBox.  The tenant group is auto-created in
+# the destination NetBox via ensure_tenant_group when the source record
+# carries a group assignment.
+# ---------------------------------------------------------------------------
+
+object "tenant" {
+  source_collection = "tenancy.tenants"
+  netbox_resource   = "tenancy.tenants"
+  lookup_by         = ["slug"]
+  max_workers       = 4
+
+  prerequisite "group" {
+    method   = "ensure_tenant_group"
+    args     = { name = "when(source('group') != None, source('group.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "group" {
+    value = "prereq('group')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Contacts
+#
+# Syncs contacts from the source NetBox.  All core contact fields (name,
+# title, phone, email, address, link, description, comments) are copied.
+# Contact group membership uses an FK lookup so the group must already exist
+# in the destination NetBox (create it manually or add a contact_groups
+# object block if needed).
+# ---------------------------------------------------------------------------
+
+object "contact" {
+  source_collection = "tenancy.contacts"
+  netbox_resource   = "tenancy.contacts"
+  lookup_by         = ["name"]
+  max_workers       = 4
+
+  prerequisite "group" {
+    method   = "ensure_contact_group"
+    args     = { name = "when(source('group') != None, source('group.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "title" {
+    value = "source('title') or ''"
+  }
+
+  field "phone" {
+    value = "source('phone') or ''"
+  }
+
+  field "email" {
+    value = "source('email') or ''"
+  }
+
+  field "address" {
+    value = "source('address') or ''"
+  }
+
+  field "link" {
+    value = "source('link') or ''"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "comments" {
+    value = "source('comments') or ''"
+  }
+
+  field "group" {
+    value = "prereq('group')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Regions
+#
+# Syncs regions from the source NetBox.  Regions are looked up by slug.
+# Regions are hierarchical; a parent region is auto-created via ensure_region
+# when the source record has one.  Sync regions before sites so that every
+# region referenced by a site already exists in the destination.
+# ---------------------------------------------------------------------------
+
+object "region" {
+  source_collection = "dcim.regions"
+  netbox_resource   = "dcim.regions"
+  lookup_by         = ["slug"]
+  max_workers       = 4
+
+  # Parent region — auto-created when present on the source record.
+  prerequisite "parent" {
+    method   = "ensure_region"
+    args     = { name = "when(source('parent') != None, source('parent.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "parent" {
+    value = "prereq('parent')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Sites
+#
+# Syncs sites from the source NetBox.  Sites are looked up by name.
+# Sync sites before locations, racks, VLANs, prefixes, and devices so that
+# the destination site records exist when those objects are written.
+# ---------------------------------------------------------------------------
+
+object "site" {
+  source_collection = "dcim.sites"
+  netbox_resource   = "dcim.sites"
+  lookup_by         = ["name"]
+  max_workers       = 4
+
+  prerequisite "region" {
+    method   = "ensure_region"
+    args     = { name = "when(source('region') != None, source('region.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "region" {
+    value = "prereq('region')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "facility" {
+    value = "source('facility') or ''"
+  }
+
+  field "physical_address" {
+    value = "source('physical_address') or ''"
+  }
+
+  field "shipping_address" {
+    value = "source('shipping_address') or ''"
+  }
+
+  field "latitude" {
+    value = "source('latitude')"
+  }
+
+  field "longitude" {
+    value = "source('longitude')"
+  }
+
+  field "time_zone" {
+    value = "source('time_zone') or None"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "comments" {
+    value = "source('comments') or ''"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Locations
+#
+# Syncs locations from the source NetBox.  Each location is looked up by
+# name + site; the site is auto-created via ensure_site when missing.
+# ---------------------------------------------------------------------------
+
+object "location" {
+  source_collection = "dcim.locations"
+  netbox_resource   = "dcim.locations"
+  lookup_by         = ["name", "site"]
+  max_workers       = 4
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "source('site.name') or 'Unknown'" }
+    optional = false
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Racks
+#
+# Syncs racks from the source NetBox.  Each rack is looked up by name + site.
+# The site is required; the location is optional (skipped when the source
+# rack has no location assignment).
+# ---------------------------------------------------------------------------
+
+object "rack" {
+  source_collection = "dcim.racks"
+  netbox_resource   = "dcim.racks"
+  lookup_by         = ["name", "site"]
+  max_workers       = 4
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "source('site.name') or 'Unknown'" }
+    optional = false
+  }
+
+  prerequisite "location" {
+    method   = "ensure_location"
+    args     = {
+      name = "when(source('location') != None, source('location.name'), None)"
+      site = "prereq('site')"
+    }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "location" {
+    value = "prereq('location')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "serial" {
+    value = "source('serial') or None"
+  }
+
+  field "asset_tag" {
+    value = "source('asset_tag')"
+  }
+
+  field "type" {
+    value = "when(source('type') != None, source('type.value'), None)"
+  }
+
+  field "width" {
+    value = "source('width.value') or 19"
+  }
+
+  field "u_height" {
+    value = "source('u_height') or 42"
+  }
+
+  field "starting_unit" {
+    value = "source('starting_unit') or 1"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "comments" {
+    value = "source('comments') or ''"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# VLANs
+#
+# Syncs VLANs from the source NetBox.  VLANs are looked up by vid + name.
+# Site and tenant assignments are preserved via optional prerequisites.
+# ---------------------------------------------------------------------------
+
+object "vlan" {
+  source_collection = "ipam.vlans"
+  netbox_resource   = "ipam.vlans"
+  lookup_by         = ["vid", "name"]
+  max_workers       = 4
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "when(source('site') != None, source('site.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "group" {
+    method   = "ensure_vlan_group"
+    args     = { name = "when(source('group') != None, source('group.name'), None)" }
+    optional = true
+  }
+
+  field "vid" {
+    value = "source('vid')"
+  }
+
+  field "name" {
+    value = "source('name') or 'Unknown'"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "group" {
+    value = "prereq('group')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Prefixes
+#
+# Syncs IP prefixes from the source NetBox.  Prefixes are looked up by the
+# CIDR notation string (e.g. "10.0.0.0/24").  Site and tenant assignments
+# are preserved; VLAN association is carried over via an FK lookup.
+# ---------------------------------------------------------------------------
+
+object "prefix" {
+  source_collection = "ipam.prefixes"
+  netbox_resource   = "ipam.prefixes"
+  lookup_by         = ["prefix"]
+  max_workers       = 4
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "when(source('site') != None, source('site.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "vrf" {
+    method   = "ensure_vrf"
+    args     = { name = "when(source('vrf') != None, source('vrf.name'), None)" }
+    optional = true
+  }
+
+  field "prefix" {
+    value = "source('prefix')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "vrf" {
+    value = "prereq('vrf')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "is_pool" {
+    value = "source('is_pool') or False"
+  }
+
+  field "mark_utilized" {
+    value = "source('mark_utilized') or False"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  # vlan: looked up in the destination by vid; returns None when the source
+  # prefix has no VLAN assignment.
+  field "vlan" {
+    type     = "fk"
+    resource = "ipam.vlans"
+    lookup   = { vid = "when(source('vlan') != None, source('vlan.vid'), None)" }
+  }
+
+  field "comments" {
+    value = "source('comments') or ''"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# IP Addresses
+#
+# Syncs IP addresses from the source NetBox.  Addresses are looked up by
+# the address string including prefix length (e.g. "192.0.2.1/24").
+# ---------------------------------------------------------------------------
+
+object "ip_address" {
+  source_collection = "ipam.ip_addresses"
+  netbox_resource   = "ipam.ip_addresses"
+  lookup_by         = ["address"]
+  max_workers       = 4
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = { name = "when(source('tenant') != None, source('tenant.name'), None)" }
+    optional = true
+  }
+
+  prerequisite "vrf" {
+    method   = "ensure_vrf"
+    args     = { name = "when(source('vrf') != None, source('vrf.name'), None)" }
+    optional = true
+  }
+
+  field "address" {
+    value = "source('address')"
+  }
+
+  field "vrf" {
+    value = "prereq('vrf')"
+  }
+
+  field "status" {
+    value = "source('status.value') or 'active'"
+  }
+
+  field "dns_name" {
+    value = "source('dns_name') or ''"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
+  }
+
+  field "comments" {
+    value = "source('comments') or ''"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['netbox-sync']"
+  }
 }
 
 # ---------------------------------------------------------------------------

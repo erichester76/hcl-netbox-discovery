@@ -10,6 +10,17 @@ Return values:
   - resolve_placement          → dict with keys site_id, location_id,
                                  rack_id, rack_position
   - lookup_tenant              → integer NetBox ID or None
+
+Available methods:
+  ensure_manufacturer, ensure_device_type, ensure_device_role,
+  ensure_site, ensure_location, ensure_rack, ensure_platform,
+  ensure_cluster_type, ensure_cluster_group, ensure_cluster,
+  ensure_inventory_item_role,
+  ensure_tenant_group, ensure_contact_group,
+  ensure_region, ensure_vlan_group, ensure_vrf,
+  ensure_tenant, lookup_tenant, resolve_placement,
+  ensure_module_bay_template, ensure_module_bay,
+  ensure_module_type_profile, ensure_module_type
 """
 
 from __future__ import annotations
@@ -307,12 +318,90 @@ class PrerequisiteRunner:
 
         return result
 
+    def _ensure_tenant_group(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name")
+        if not name:
+            return None
+        slug = slugify(name)
+        payload: dict[str, Any] = {"name": name, "slug": slug}
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_tenant_group name=%s", name)
+            return None
+        obj = self.nb.upsert("tenancy.tenant_groups", payload, lookup_fields=["slug"])
+        return extract_id(obj)
+
+    def _ensure_contact_group(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name")
+        if not name:
+            return None
+        slug = slugify(name)
+        payload: dict[str, Any] = {"name": name, "slug": slug}
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_contact_group name=%s", name)
+            return None
+        obj = self.nb.upsert("tenancy.contact_groups", payload, lookup_fields=["slug"])
+        return extract_id(obj)
+
+    def _ensure_region(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name")
+        if not name:
+            return None
+        slug = slugify(name)
+        payload: dict[str, Any] = {"name": name, "slug": slug}
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_region name=%s", name)
+            return None
+        obj = self.nb.upsert("dcim.regions", payload, lookup_fields=["slug"])
+        return extract_id(obj)
+
+    def _ensure_vlan_group(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name")
+        if not name:
+            return None
+        slug = slugify(name)
+        payload: dict[str, Any] = {
+            "name": name,
+            "slug": slug,
+            "min_vid": args.get("min_vid", 1),
+            "max_vid": args.get("max_vid", 4094),
+        }
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_vlan_group name=%s", name)
+            return None
+        obj = self.nb.upsert("ipam.vlan_groups", payload, lookup_fields=["slug"])
+        return extract_id(obj)
+
+    def _ensure_vrf(self, args: dict, dry_run: bool) -> Optional[int]:
+        name = args.get("name")
+        if not name:
+            return None
+        payload: dict[str, Any] = {"name": name}
+        if args.get("rd"):
+            payload["rd"] = args["rd"]
+        if args.get("description"):
+            payload["description"] = args["description"]
+        if dry_run:
+            logger.info("[DRY-RUN] ensure_vrf name=%s", name)
+            return None
+        obj = self.nb.upsert("ipam.vrfs", payload, lookup_fields=["name"])
+        return extract_id(obj)
+
     def _ensure_tenant(self, args: dict, dry_run: bool) -> Optional[int]:
         name = args.get("name") or "Unknown"
         slug = slugify(name)
         payload: dict[str, Any] = {"name": name, "slug": slug}
         if args.get("description"):
             payload["description"] = args["description"]
+        if args.get("group") is not None:
+            payload["group"] = args["group"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_tenant name=%s", name)
             return None
