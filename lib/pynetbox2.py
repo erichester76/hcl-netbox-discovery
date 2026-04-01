@@ -173,7 +173,15 @@ def normalize_fk_fields(resource: str, payload: dict, for_write: bool = False) -
     return payload
 
 class RateLimiter:
-    """Thread-safe token bucket limiter for API calls per connection."""
+    """Thread-safe token bucket limiter for API calls per connection.
+
+    Also holds a shared global-cooldown timestamp.  When any thread calls
+    :meth:`trigger_cooldown` (e.g. after receiving a 503/504 that signals the
+    server is overwhelmed) all threads block in :meth:`acquire` until the
+    cooldown expires.  A small per-thread random jitter is added on top so
+    that threads don't all burst through at exactly the same moment once the
+    cooldown lifts (thundering-herd prevention).
+    """
 
     def __init__(self, calls_per_second: float = 0.0, burst: int = 1) -> None:
         self.calls_per_second = max(float(calls_per_second), 0.0)
@@ -181,11 +189,56 @@ class RateLimiter:
         self.tokens = float(self.burst)
         self.last_refill = time.perf_counter()
         self.lock = threading.Lock()
+        # Global cooldown: perf_counter() timestamp after which calls are allowed.
+        self._cooldown_until: float = 0.0
+
+    def trigger_cooldown(self, seconds: float) -> None:
+        """Set (or extend) a shared cross-thread cooldown for *seconds*.
+
+        Only extends the cooldown; never shortens an already-longer one.
+        Safe to call from any thread.
+        """
+        if seconds <= 0:
+            return
+        until = time.perf_counter() + seconds
+        with self.lock:
+            if until > self._cooldown_until:
+                self._cooldown_until = until
+                logger.warning(
+                    "Global API cooldown triggered: all threads will pause for %.1fs",
+                    seconds,
+                )
 
     def acquire(self) -> float:
-        """Acquire one token and sleep if needed. Returns sleep seconds."""
+        """Acquire one token and sleep if needed. Returns total sleep seconds.
+
+        If a global cooldown is active, this call blocks until the cooldown
+        has expired.  A small per-thread random jitter (up to 10 % of the
+        remaining cooldown, max 5 s) is added after the mandatory wait to
+        stagger thread wake-ups and avoid a secondary thundering herd.
+        """
+        total_slept = 0.0
+
+        # --- global cooldown check (shared across all threads) ---------------
+        with self.lock:
+            cooldown_remaining = self._cooldown_until - time.perf_counter()
+
+        if cooldown_remaining > 0:
+            # Per-thread jitter: up to 10% of the remaining cooldown, capped at 5 s.
+            jitter = random.uniform(0.0, min(cooldown_remaining * 0.10, 5.0))
+            wait = cooldown_remaining + jitter
+            logger.warning(
+                "Global API cooldown active: sleeping %.1fs (%.1fs remaining + %.1fs jitter)",
+                wait,
+                cooldown_remaining,
+                jitter,
+            )
+            time.sleep(wait)
+            total_slept += wait
+
+        # --- token-bucket rate limiting (unchanged) --------------------------
         if self.calls_per_second <= 0:
-            return 0.0
+            return total_slept
 
         sleep_for = 0.0
         with self.lock:
@@ -196,7 +249,7 @@ class RateLimiter:
 
             if self.tokens >= 1.0:
                 self.tokens -= 1.0
-                return 0.0
+                return total_slept
 
             sleep_for = (1.0 - self.tokens) / self.calls_per_second
             self.tokens = 0.0
@@ -210,8 +263,9 @@ class RateLimiter:
             time.sleep(sleep_for)
             with self.lock:
                 self.last_refill = time.perf_counter()
+            total_slept += sleep_for
 
-        return sleep_for
+        return total_slept
 
 
 class CacheBackend(ABC):
@@ -610,6 +664,7 @@ class BackendAdapter(ABC):
         retry_jitter_seconds: float = 0.0,
         retry_on_4xx: Sequence[int] = (408, 409, 425, 429),
         retry_on_5xx: Sequence[int] = (502, 503, 504),
+        retry_5xx_cooldown_seconds: float = 60.0,
     ) -> None:
         self.rate_limiter = rate_limiter
         self.retry_attempts = max(int(retry_attempts), 0)
@@ -619,6 +674,7 @@ class BackendAdapter(ABC):
         self.retry_jitter_seconds = max(float(retry_jitter_seconds), 0.0)
         self.retry_on_4xx = {int(code) for code in retry_on_4xx}
         self.retry_on_5xx = {int(code) for code in retry_on_5xx}
+        self.retry_5xx_cooldown_seconds = max(float(retry_5xx_cooldown_seconds), 0.0)
 
     @staticmethod
     def _extract_status_code(exc: Exception) -> Optional[int]:
@@ -673,6 +729,16 @@ class BackendAdapter(ABC):
             delay += random.uniform(0.0, self.retry_jitter_seconds)
         return delay
 
+    def _compute_5xx_cooldown(self, attempt: int) -> float:
+        """Return the global cooldown duration for a 5xx error on *attempt*.
+
+        The cooldown grows by ``retry_backoff_factor`` with each attempt so that
+        repeated overload responses (e.g. a 504 caused by a massive implicit
+        bay-creation followed by cascading 503s) result in progressively longer
+        shared pauses across all threads.
+        """
+        return self.retry_5xx_cooldown_seconds * (self.retry_backoff_factor ** attempt)
+
     def _call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         for attempt in range(self.retry_attempts + 1):
             self.rate_limiter.acquire()
@@ -685,6 +751,18 @@ class BackendAdapter(ABC):
 
                 status_code = self._extract_status_code(exc)
                 sleep_seconds = self._compute_backoff(attempt)
+
+                # For 5xx overload codes (503/504) trigger a shared cross-thread
+                # cooldown so that ALL threads back off together.  This prevents the
+                # thundering-herd where every thread independently wakes up after the
+                # same short delay and immediately re-storms the server.
+                # The cooldown grows with each attempt so that a 504 (which often
+                # signals a long background operation like mass bay creation) gets
+                # progressively more recovery time on every retry.
+                if status_code in self.retry_on_5xx and self.retry_5xx_cooldown_seconds > 0:
+                    cooldown = self._compute_5xx_cooldown(attempt)
+                    self.rate_limiter.trigger_cooldown(cooldown)
+
                 logger.warning(
                     "Retrying API call after transient error (status=%s, attempt=%s/%s, sleep=%.2fs): %s",
                     status_code,
@@ -732,6 +810,7 @@ class PynetboxAdapter(BackendAdapter):
         retry_max_delay_seconds: float = 15.0,
         retry_jitter_seconds: float = 0.0,
         retry_on_4xx: Sequence[int] = (408, 409, 425, 429),
+        retry_5xx_cooldown_seconds: float = 60.0,
         branch: Optional[str] = None,
     ) -> None:
         super().__init__(
@@ -742,6 +821,7 @@ class PynetboxAdapter(BackendAdapter):
             retry_max_delay_seconds=retry_max_delay_seconds,
             retry_jitter_seconds=retry_jitter_seconds,
             retry_on_4xx=retry_on_4xx,
+            retry_5xx_cooldown_seconds=retry_5xx_cooldown_seconds,
         )
         self.api = pynetbox.api(url=url, token=token)
         self.branch = branch.strip() if isinstance(branch, str) and branch.strip() else None
@@ -1107,6 +1187,7 @@ class DiodeAdapter(BackendAdapter):
         retry_max_delay_seconds: float = 15.0,
         retry_jitter_seconds: float = 0.0,
         retry_on_4xx: Sequence[int] = (408, 409, 425, 429),
+        retry_5xx_cooldown_seconds: float = 60.0,
         branch: Optional[str] = None,
         entity_builder: Optional[Callable[[str, Mapping[str, Any]], Any]] = None,
         read_fallback: Optional[PynetboxAdapter] = None,
@@ -1120,6 +1201,7 @@ class DiodeAdapter(BackendAdapter):
             retry_max_delay_seconds=retry_max_delay_seconds,
             retry_jitter_seconds=retry_jitter_seconds,
             retry_on_4xx=retry_on_4xx,
+            retry_5xx_cooldown_seconds=retry_5xx_cooldown_seconds,
         )
         self.target = target
         self.client_id = client_id
@@ -1232,6 +1314,7 @@ class NetBoxExtendedConfig:
     retry_max_delay_seconds: float = 15.0
     retry_jitter_seconds: float = 0.0
     retry_on_4xx: Sequence[int] = (408, 409, 425, 429)
+    retry_5xx_cooldown_seconds: float = 60.0
     prewarm_sentinel_ttl_seconds: Optional[int] = None
 
     diode_target: str = "grpcs://localhost:8080"
@@ -1473,6 +1556,7 @@ class NetBoxExtendedClient:
         retry_max_delay_seconds: float = 15.0,
         retry_jitter_seconds: float = 0.0,
         retry_on_4xx: Sequence[int] = (408, 409, 425, 429),
+        retry_5xx_cooldown_seconds: float = 60.0,
         prewarm_sentinel_ttl_seconds: Optional[int] = None,
         diode_target: str = "grpcs://localhost:8080",
         diode_client_id: str = "",
@@ -1501,6 +1585,7 @@ class NetBoxExtendedClient:
             retry_max_delay_seconds=retry_max_delay_seconds,
             retry_jitter_seconds=retry_jitter_seconds,
             retry_on_4xx=retry_on_4xx,
+            retry_5xx_cooldown_seconds=retry_5xx_cooldown_seconds,
             prewarm_sentinel_ttl_seconds=prewarm_sentinel_ttl_seconds,
             diode_target=diode_target,
             diode_client_id=diode_client_id,
@@ -1587,6 +1672,7 @@ class NetBoxExtendedClient:
                 retry_max_delay_seconds=cfg.retry_max_delay_seconds,
                 retry_jitter_seconds=cfg.retry_jitter_seconds,
                 retry_on_4xx=cfg.retry_on_4xx,
+                retry_5xx_cooldown_seconds=cfg.retry_5xx_cooldown_seconds,
                 branch=cfg.branch,
             )
 
@@ -1603,6 +1689,7 @@ class NetBoxExtendedClient:
                     retry_max_delay_seconds=cfg.retry_max_delay_seconds,
                     retry_jitter_seconds=cfg.retry_jitter_seconds,
                     retry_on_4xx=cfg.retry_on_4xx,
+                    retry_5xx_cooldown_seconds=cfg.retry_5xx_cooldown_seconds,
                     branch=cfg.branch,
                 )
             return DiodeAdapter(
@@ -1618,6 +1705,7 @@ class NetBoxExtendedClient:
                 retry_max_delay_seconds=cfg.retry_max_delay_seconds,
                 retry_jitter_seconds=cfg.retry_jitter_seconds,
                 retry_on_4xx=cfg.retry_on_4xx,
+                retry_5xx_cooldown_seconds=cfg.retry_5xx_cooldown_seconds,
                 branch=cfg.branch,
                 entity_builder=cfg.diode_entity_builder,
                 read_fallback=read_fallback,

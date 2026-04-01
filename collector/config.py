@@ -214,6 +214,7 @@ class NetBoxConfig:
     retry_max_delay: float = 15.0
     retry_jitter: float = 0.0
     retry_on_4xx: str = "408,409,425,429"
+    retry_5xx_cooldown: float = 60.0
     cache_key_prefix: str = "nbx:"
     branch: Optional[str] = None
 
@@ -639,6 +640,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
         retry_max_delay=_float(_eval_config_str(netbox_body.get("retry_max_delay", "env('NETBOX_RETRY_MAX_DELAY', '15.0')")), default=15.0),
         retry_jitter=_float(_eval_config_str(netbox_body.get("retry_jitter", "env('NETBOX_RETRY_JITTER', '0.0')")), default=0.0),
         retry_on_4xx=_eval_config_str(netbox_body.get("retry_on_4xx", "env('NETBOX_RETRY_ON_4XX', '408,409,425,429')")),
+        retry_5xx_cooldown=_float(_eval_config_str(netbox_body.get("retry_5xx_cooldown", "env('NETBOX_RETRY_5XX_COOLDOWN', '60.0')")), default=60.0),
         cache_key_prefix=_eval_config_str(
             netbox_body.get("cache_key_prefix", "env('NETBOX_CACHE_KEY_PREFIX', 'nbx:')")
         ),

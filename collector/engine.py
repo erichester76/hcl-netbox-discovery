@@ -70,6 +70,7 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         retry_backoff_factor=cfg_nb.retry_backoff_factor,
         retry_max_delay_seconds=cfg_nb.retry_max_delay,
         retry_jitter_seconds=cfg_nb.retry_jitter,
+        retry_5xx_cooldown_seconds=cfg_nb.retry_5xx_cooldown,
     )
     if cfg_nb.retry_on_4xx:
         try:
