@@ -359,3 +359,18 @@ class TestRetry5xxCooldownConfig:
         )
         assert client.config.retry_5xx_cooldown_seconds == pytest.approx(77.0)
         assert client.adapter.retry_5xx_cooldown_seconds == pytest.approx(77.0)
+
+    def test_api_factory_forwards_retry_5xx_cooldown(self):
+        """api() factory must accept and forward retry_5xx_cooldown_seconds.
+
+        Regression test: the parameter was present on NetBoxExtendedClient but
+        was missing from the api() wrapper, causing a TypeError at runtime.
+        """
+        import pynetbox2 as pynetbox
+        client = pynetbox.api(
+            "http://nb.example.com",
+            "token",
+            retry_5xx_cooldown_seconds=33.0,
+        )
+        assert client.config.retry_5xx_cooldown_seconds == pytest.approx(33.0)
+        assert client.adapter.retry_5xx_cooldown_seconds == pytest.approx(33.0)
