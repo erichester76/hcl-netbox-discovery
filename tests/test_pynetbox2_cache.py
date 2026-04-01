@@ -331,3 +331,90 @@ class TestPrewarmSentinelKey:
             "Per-resource sentinel key was not written after filtered prewarm"
         )
         assert sentinel_value["count"] == 1
+
+
+class _FakeDeviceTypeRecord:
+    """Minimal stub that mimics a pynetbox nested device_type Record.
+
+    Has 'id', 'model', 'slug' in __dict__ (as returned by the list API) but
+    NOT 'name'.  Accessing 'name' raises AttributeError — exactly what
+    pynetbox does when it would call full_details() to fetch the object from
+    the API.  Tracks whether 'name' was ever accessed.
+    """
+
+    lazy_accessed: list
+
+    def __init__(self, dt_id: int):
+        self.id = dt_id
+        self.url = f"https://nb.example.com/api/dcim/device-types/{dt_id}/"
+        self.model = f"Model-{dt_id}"
+        self.slug = f"model-{dt_id}"
+        self.lazy_accessed = []
+
+    def __getattr__(self, k: str):
+        # Simulate pynetbox calling full_details() for missing attributes.
+        # 2026-03-31 #cache-warm — this is what triggered one API GET per template.
+        self.lazy_accessed.append(k)
+        raise AttributeError(
+            f"'{k}' not in pre-loaded data; would trigger full_details() in pynetbox"
+        )
+
+
+class TestPrewarmNoLazyLoading:
+    """Regression tests for cache warm triggering pynetbox lazy loading.
+
+    Pynetbox's Record.__getattr__ calls full_details() (an HTTP GET) when an
+    attribute is not in the pre-loaded data.  _derived_lookup_filters_for_record
+    must not use hasattr()/getattr() on nested Record objects in a way that
+    triggers this lazy loading.  2026-03-31 #cache-warm
+    """
+
+    def test_device_type_nested_record_no_full_details_call(self):
+        """_derived_lookup_filters_for_record must not trigger full_details()
+        on a nested device_type Record that has 'model' but not 'name'."""
+        client = _make_client()
+        device_type_record = _FakeDeviceTypeRecord(2)
+
+        module_bay_template = {
+            "id": 100,
+            "device_type": device_type_record,
+            "name": "Bay 1",
+        }
+
+        # This must NOT access device_type.name and must NOT trigger __getattr__.
+        derived = client._derived_lookup_filters_for_record(
+            "dcim.module_bay_templates", module_bay_template
+        )
+
+        assert device_type_record.lazy_accessed == [], (
+            "Accessing device_type.name triggered lazy loading (full_details) — "
+            "this would make one GET /api/dcim/device-types/X/ call per template "
+            "during cache warm."
+        )
+        # Derived filters should include device_type_id and name combinations.
+        filter_keys_found = [frozenset(f.keys()) for f in derived]
+        assert any("device_type_id" in keys for keys in filter_keys_found), (
+            "Expected device_type_id in derived filter keys"
+        )
+
+    def test_prewarm_module_bay_templates_no_extra_api_calls(self):
+        """prewarm() for dcim.module_bay_templates must not make extra get()
+        calls for device_type (the adapter.get call count must stay at 0)."""
+        client = _make_client()
+        client.config.prewarm_sentinel_ttl_seconds = None
+
+        templates = [
+            {"id": 1, "device_type": _FakeDeviceTypeRecord(2), "name": "Bay 1"},
+            {"id": 2, "device_type": _FakeDeviceTypeRecord(2), "name": "Bay 2"},
+            {"id": 3, "device_type": _FakeDeviceTypeRecord(3), "name": "Bay 1"},
+        ]
+        client.adapter.list.return_value = templates
+
+        summary = client.prewarm(["dcim.module_bay_templates"])
+
+        assert summary["dcim.module_bay_templates"] == 3
+        # No get() calls should have been made to device-types or anything else.
+        assert client.adapter.get.call_count == 0, (
+            f"adapter.get was called {client.adapter.get.call_count} time(s); "
+            "expected 0 — cache warm must not trigger per-record API calls"
+        )
