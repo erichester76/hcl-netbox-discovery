@@ -10,6 +10,7 @@ services:
   collector:
     image: ghcr.io/erichester76/hcl-netbox-discovery:latest
     restart: unless-stopped
+    pull_policy: always
 
     # Mount local directories so you can edit mappings/regex without rebuilding.
     # Share the named volume with the web service so job history is visible in the UI.
