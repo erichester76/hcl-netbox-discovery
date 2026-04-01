@@ -1327,6 +1327,20 @@ class NetBoxExtendedConfig:
     diode_batch_size: int = 1  # Default: 1 (no batching)
 
 
+@dataclass(frozen=True)
+class UpsertOutcome:
+    """Structured result for upsert operations.
+
+    outcome values:
+    - ``created``: object did not exist and was created
+    - ``updated``: object existed and was updated
+    - ``noop``: object existed and payload diff was empty
+    """
+
+    object: Any
+    outcome: str
+
+
 class CachedEndpoint:
     """Resource-scoped CRUD wrapper bound to NetBoxExtendedClient."""
 
@@ -1753,6 +1767,7 @@ class NetBoxExtendedClient:
             return record.get(field)
         return getattr(record, field, None)
 
+    @staticmethod
     def _normalize_for_compare(value, resource=None, key=None):
         """
         Robust normalization for NetBox compare:
@@ -2178,6 +2193,23 @@ class NetBoxExtendedClient:
         preserve_fields: Optional[Sequence[str]] = None,
         use_cache_for_lookup: bool = True,
     ) -> Any:
+        return self.upsert_with_outcome(
+            resource,
+            data,
+            lookup_fields=lookup_fields,
+            preserve_fields=preserve_fields,
+            use_cache_for_lookup=use_cache_for_lookup,
+        ).object
+
+    def upsert_with_outcome(
+        self,
+        resource: str,
+        data: Mapping[str, Any],
+        *,
+        lookup_fields: Optional[Sequence[str]] = None,
+        preserve_fields: Optional[Sequence[str]] = None,
+        use_cache_for_lookup: bool = True,
+    ) -> UpsertOutcome:
         payload = normalize_fk_fields(resource, dict(data), for_write=True)
         if isinstance(self.adapter, DiodeAdapter):
             logger.debug(
@@ -2185,7 +2217,7 @@ class NetBoxExtendedClient:
                 resource,
                 sorted(payload.keys()),
             )
-            return self.create(resource, payload)
+            return UpsertOutcome(object=self.create(resource, payload), outcome="created")
 
         if lookup_fields is None:
             if payload.get("id") is not None:
@@ -2240,7 +2272,7 @@ class NetBoxExtendedClient:
                     self._set_get_cache_key(resource, filters, created)
                 else:
                     self._invalidate_get_cache_key(resource, filters)
-            return created
+            return UpsertOutcome(object=created, outcome="created")
 
         object_id = self._extract_id(existing)
         if object_id is None:
@@ -2251,7 +2283,7 @@ class NetBoxExtendedClient:
                     self._set_get_cache_key(resource, filters, created)
                 else:
                     self._invalidate_get_cache_key(resource, filters)
-            return created
+            return UpsertOutcome(object=created, outcome="created")
 
         update_payload = dict(payload)
         if preserve_fields:
@@ -2287,7 +2319,7 @@ class NetBoxExtendedClient:
             self._set_get_cache_by_id(resource, existing)
             if filters:
                 self._set_get_cache_key(resource, filters, existing)
-            return existing
+            return UpsertOutcome(object=existing, outcome="noop")
 
         logger.debug("NetBox upsert updating resource=%s id=%s", resource, object_id)
         updated = self.update(resource, object_id, update_payload)
@@ -2296,7 +2328,7 @@ class NetBoxExtendedClient:
                 self._set_get_cache_key(resource, filters, updated)
             else:
                 self._invalidate_get_cache_key(resource, filters)
-        return updated
+        return UpsertOutcome(object=updated, outcome="updated")
 
     def delete(self, resource: str, object_id: Any) -> bool:
         logger.debug("NetBox delete resource=%s id=%s", resource, object_id)
@@ -2615,4 +2647,3 @@ __all__ = [
     "CachedEndpoint",
     "api",
 ]
-
