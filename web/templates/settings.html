@@ -33,11 +33,11 @@
         </thead>
         <tbody>
         {% for s in settings %}
-          <tr class="{% if s.is_overridden %}table-warning{% endif %}">
+          <tr class="{% if s.is_overridden %}table-cu-override{% endif %}">
             <td class="font-monospace align-middle small">
               {{ s.key }}
               {% if s.is_overridden %}
-                <span class="badge bg-warning text-dark ms-1" title="DB override active">DB</span>
+                <span class="badge badge-cu-override ms-1" title="DB override active">DB</span>
               {% endif %}
             </td>
             <td class="align-middle small text-muted">{{ s.description or '—' }}</td>
