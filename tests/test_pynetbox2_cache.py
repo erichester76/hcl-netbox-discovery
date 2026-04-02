@@ -332,6 +332,20 @@ class TestPrewarmSentinelKey:
         )
         assert sentinel_value["count"] == 1
 
+    def test_prewarm_does_not_retry_adapter_list(self):
+        """prewarm() should rely on adapter-level retries instead of looping itself."""
+        client = _make_client()
+        client.config.retry_attempts = 2
+        client.config.prewarm_sentinel_ttl_seconds = 3600
+        client.adapter._should_retry_exception.return_value = True
+        client.adapter._compute_backoff.return_value = 0.0
+        client.adapter.list.side_effect = Exception("HTTP 503")
+
+        with pytest.raises(Exception, match="HTTP 503"):
+            client.prewarm(["dcim.sites"])
+
+        assert client.adapter.list.call_count == 1
+
 
 class _FakeDeviceTypeRecord:
     """Minimal stub that mimics a pynetbox nested device_type Record.

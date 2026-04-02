@@ -296,6 +296,37 @@ class TestBackendAdapterCooldown:
         assert len(calls) == 2
 
 
+class TestPynetboxListRetryOwnership:
+    def test_list_page_fetch_uses_only_backend_retry_loop(self):
+        with patch("pynetbox2.pynetbox.api"):
+            adapter = PynetboxAdapter(
+                url="http://nb.example.com",
+                token="token",
+                rate_limiter=RateLimiter(),
+                retry_attempts=1,
+                retry_initial_delay_seconds=0.0,
+                retry_backoff_factor=1.0,
+                retry_max_delay_seconds=0.0,
+                retry_jitter_seconds=0.0,
+                retry_5xx_cooldown_seconds=0.0,
+            )
+
+        endpoint = MagicMock()
+        endpoint.filter.side_effect = lambda **kwargs: (
+            SimpleNamespace(count=1001)
+            if kwargs["limit"] == 0
+            else (_ for _ in ()).throw(_exc_with_status(503))
+        )
+
+        with patch.object(adapter, "_endpoint", return_value=endpoint), patch("time.sleep") as mock_sleep:
+            with pytest.raises(Exception):
+                adapter.list("dcim.sites")
+
+        # One count request plus two page attempts from BackendAdapter._call().
+        assert endpoint.filter.call_count == 3
+        assert mock_sleep.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Config: retry_5xx_cooldown propagates from HCL / env-var
 # ---------------------------------------------------------------------------
