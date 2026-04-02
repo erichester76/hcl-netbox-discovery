@@ -308,11 +308,11 @@ class TestGetObjects:
         assert result[0]["name"] == "192.168.1.50"
         assert result[0]["ip_address"] == "192.168.1.50"
 
-    def test_get_assets_returns_empty_on_error(self):
+    def test_get_assets_raises_on_error(self):
         src = self._connected_source()
         src._session.get.side_effect = Exception("connection refused")
-        result = src.get_objects("assets")
-        assert result == []
+        with pytest.raises(Exception, match="connection refused"):
+            src.get_objects("assets")
 
     def test_get_vulnerabilities_returns_normalised_dicts(self):
         src = self._connected_source()
@@ -349,11 +349,11 @@ class TestGetObjects:
         assert v["state"] == "open"
         assert v["solution"] == "Apply vendor patch."
 
-    def test_get_vulnerabilities_returns_empty_on_error(self):
+    def test_get_vulnerabilities_raises_on_error(self):
         src = self._connected_source()
         src._session.get.side_effect = Exception("timeout")
-        result = src.get_objects("vulnerabilities")
-        assert result == []
+        with pytest.raises(Exception, match="timeout"):
+            src.get_objects("vulnerabilities")
 
     def test_get_findings_warns_when_details_disabled(self, caplog):
         src = self._connected_source()
@@ -408,6 +408,39 @@ class TestGetObjects:
         assert f["cve_id"] == "CVE-2021-9999"
         assert f["name"] == "server01"
         assert f["severity"] == "medium"
+
+    def test_get_findings_raises_on_asset_fetch_error(self):
+        src = self._connected_source()
+        src._include_asset_details = True
+        src._session.get.side_effect = Exception("asset fetch failed")
+
+        with pytest.raises(Exception, match="asset fetch failed"):
+            src.get_objects("findings")
+
+    def test_get_findings_raises_on_asset_vulnerability_fetch_error(self):
+        src = self._connected_source()
+        src._include_asset_details = True
+
+        raw_asset = {
+            "id": "asset-uuid-004",
+            "ipv4": ["10.10.10.2"],
+            "fqdn": ["server02.corp.com"],
+            "netbios_name": [],
+            "operating_system": ["Linux"],
+            "mac_address": [],
+            "system_type": ["Server"],
+            "sources": [],
+            "severities": [],
+        }
+
+        asset_list_resp = MagicMock()
+        asset_list_resp.raise_for_status = MagicMock()
+        asset_list_resp.json.return_value = {"assets": [raw_asset]}
+
+        src._session.get.side_effect = [asset_list_resp, Exception("detail fetch failed")]
+
+        with pytest.raises(Exception, match="detail fetch failed"):
+            src.get_objects("findings")
 
 
 # ---------------------------------------------------------------------------
