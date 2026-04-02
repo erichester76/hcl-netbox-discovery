@@ -859,30 +859,15 @@ class PynetboxAdapter(BackendAdapter):
             total = None  # fallback to unknown total
         # If count is not available, just loop until no more results
         while True:
-            page_attempts = 0
-            while page_attempts <= self.retry_attempts:
-                try:
-                    page = self._call(endpoint.filter, limit=PAGE_SIZE, offset=offset, **filters)
-                    page_items = list(page)
-                    # Remove duplicates (can happen if NetBox data changes during paging)
-                    new_items = [item for item in page_items if getattr(item, 'id', None) not in seen_ids]
-                    for item in new_items:
-                        item_id = getattr(item, 'id', None)
-                        if item_id is not None:
-                            seen_ids.add(item_id)
-                    results.extend(new_items)
-                    break
-                except Exception as exc:
-                    page_attempts += 1
-                    should_retry = self._should_retry_exception(exc) if hasattr(self, '_should_retry_exception') else False
-                    if page_attempts > self.retry_attempts or not should_retry:
-                        raise
-                    sleep_seconds = self._compute_backoff(page_attempts - 1) if hasattr(self, '_compute_backoff') else 1.0
-                    logger.warning(
-                        "Retrying NetBox page fetch after error (resource=%s, offset=%s, attempt=%s/%s, sleep=%.2fs): %s",
-                        resource, offset, page_attempts, self.retry_attempts + 1, sleep_seconds, exc,
-                    )
-                    time.sleep(sleep_seconds)
+            page = self._call(endpoint.filter, limit=PAGE_SIZE, offset=offset, **filters)
+            page_items = list(page)
+            # Remove duplicates (can happen if NetBox data changes during paging)
+            new_items = [item for item in page_items if getattr(item, 'id', None) not in seen_ids]
+            for item in new_items:
+                item_id = getattr(item, 'id', None)
+                if item_id is not None:
+                    seen_ids.add(item_id)
+            results.extend(new_items)
             # If fewer than PAGE_SIZE returned, or we've reached total, we're done
             if total is not None and len(results) >= total:
                 break
@@ -2406,41 +2391,7 @@ class NetBoxExtendedClient:
                 resource,
                 filters,
             )
-
-            objects = None
-            last_exc: Optional[Exception] = None
-            for attempt in range(self.config.retry_attempts + 1):
-                try:
-                    objects = self.adapter.list(resource, **dict(filters))
-                    break
-                except Exception as exc:
-                    last_exc = exc
-                    should_retry = False
-                    if hasattr(self.adapter, "_should_retry_exception"):
-                        should_retry = bool(self.adapter._should_retry_exception(exc))
-
-                    if attempt >= self.config.retry_attempts or not should_retry:
-                        raise
-
-                    sleep_seconds = 0.0
-                    if hasattr(self.adapter, "_compute_backoff"):
-                        sleep_seconds = float(self.adapter._compute_backoff(attempt))
-
-                    logger.warning(
-                        "Retrying prewarm after transient error resource=%s attempt=%s/%s sleep=%.2fs error=%s",
-                        resource,
-                        attempt + 1,
-                        self.config.retry_attempts + 1,
-                        sleep_seconds,
-                        exc,
-                    )
-                    if sleep_seconds > 0:
-                        time.sleep(sleep_seconds)
-
-            if objects is None:
-                if last_exc is not None:
-                    raise last_exc
-                raise RuntimeError(f"Prewarm failed for resource={resource} without details")
+            objects = self.adapter.list(resource, **dict(filters))
 
             self.cache.set(list_key, objects)
 
