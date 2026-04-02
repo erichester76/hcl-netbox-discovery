@@ -11,9 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from collector.config import CollectionConfig, SourceConfig
+from collector.config import CollectionConfig
 from collector.sources.rest import RestSource
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -290,6 +289,65 @@ class TestRestEnrichWithDetail:
 
         src._session.get.assert_not_called()
         assert result == items
+
+    def test_named_placeholder_uses_matching_item_field(self):
+        src = RestSource()
+        src._session = MagicMock()
+        src._base_url = "https://api.example.com"
+
+        def get_side_effect(url, timeout=30):
+            resp = MagicMock()
+            if "/sites/site-a/devices/node-1" in url:
+                resp.json.return_value = {"uuid": "node-1", "serial": "SN001"}
+            resp.raise_for_status.return_value = None
+            return resp
+
+        src._session.get.side_effect = get_side_effect
+
+        col = CollectionConfig(
+            name="nodes",
+            endpoint="/nodes",
+            detail_endpoint="/sites/{site_slug}/devices/{uuid}",
+            detail_id_field="uuid",
+        )
+        items = [{"uuid": "node-1", "site_slug": "site-a", "name": "blade-01"}]
+
+        result = src._enrich_with_detail(items, col)
+
+        src._session.get.assert_called_once_with(
+            "https://api.example.com/sites/site-a/devices/node-1",
+            timeout=30,
+        )
+        assert result[0]["serial"] == "SN001"
+
+    def test_placeholder_does_not_collapse_to_detail_id_field(self):
+        src = RestSource()
+        src._session = MagicMock()
+        src._base_url = "https://api.example.com"
+
+        def get_side_effect(url, timeout=30):
+            resp = MagicMock()
+            if "/clusters/cluster-a/nodes/node-1" in url:
+                resp.json.return_value = {"uuid": "node-1", "cluster": "cluster-a"}
+            resp.raise_for_status.return_value = None
+            return resp
+
+        src._session.get.side_effect = get_side_effect
+
+        col = CollectionConfig(
+            name="nodes",
+            endpoint="/nodes",
+            detail_endpoint="/clusters/{cluster}/nodes/{uuid}",
+            detail_id_field="uuid",
+        )
+        items = [{"uuid": "node-1", "cluster": "cluster-a"}]
+
+        result = src._enrich_with_detail(items, col)
+
+        requested_url = src._session.get.call_args.args[0]
+        assert requested_url.endswith("/clusters/cluster-a/nodes/node-1")
+        assert "/clusters/node-1/" not in requested_url
+        assert result[0]["cluster"] == "cluster-a"
 
 
 # ---------------------------------------------------------------------------
