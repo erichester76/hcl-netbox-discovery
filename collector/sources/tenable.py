@@ -231,7 +231,7 @@ class TenableSource(DataSource):
             data = self._get("/workbenches/assets", params=params)
         except Exception as exc:
             logger.error("TenableSource: failed to fetch assets: %s", exc)
-            return []
+            raise
 
         raw_assets = _extract_list(data, ("assets", "items", "data"))
         logger.debug("TenableSource: fetched %d raw assets", len(raw_assets))
@@ -250,7 +250,7 @@ class TenableSource(DataSource):
             data = self._get("/workbenches/vulnerabilities", params=params)
         except Exception as exc:
             logger.error("TenableSource: failed to fetch vulnerabilities: %s", exc)
-            return []
+            raise
 
         raw_vulns = _extract_list(data, ("vulnerabilities", "items", "data"))
         logger.debug(
@@ -278,7 +278,7 @@ class TenableSource(DataSource):
             data = self._get("/workbenches/assets", params=params)
         except Exception as exc:
             logger.error("TenableSource: failed to fetch assets for findings: %s", exc)
-            return []
+            raise
 
         raw_assets = _extract_list(data, ("assets", "items", "data"))
         findings: list[dict] = []
@@ -313,11 +313,11 @@ class TenableSource(DataSource):
                 params={"date_range": self._date_range},
             )
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 "TenableSource: failed to fetch vulns for asset %s: %s",
                 asset_id, exc,
             )
-            return []
+            raise
         raw = _extract_list(data, ("vulnerabilities", "items", "data"))
         return [self._enrich_vulnerability(v) for v in raw if isinstance(v, dict)]
 
