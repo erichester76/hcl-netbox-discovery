@@ -610,6 +610,9 @@ class Engine:
     ) -> Any:
         """Evaluate a single field and return the value for the payload."""
 
+        def _is_missing_lookup_value(value: Any) -> bool:
+            return value is None or (isinstance(value, str) and not value.strip())
+
         # --- tags field ---
         if field_cfg.type == "tags":
             raw = (
@@ -625,14 +628,22 @@ class Engine:
         # --- FK field ---
         if field_cfg.type == "fk":
             lookup: dict[str, Any] = {}
+            missing_lookup_keys: list[str] = []
             for k, v in (field_cfg.lookup or {}).items():
                 resolved = (
                     resolver.evaluate_strict(v, f"{field_cfg.name}.{k}")
                     if strict and isinstance(v, str)
                     else resolver.evaluate(v) if isinstance(v, str) else v
                 )
-                if resolved is not None:
-                    lookup[k] = resolved
+                if _is_missing_lookup_value(resolved):
+                    if strict:
+                        missing_lookup_keys.append(k)
+                    continue
+                lookup[k] = resolved
+            if strict and missing_lookup_keys:
+                raise ValueError(
+                    f"Required FK field {field_cfg.name!r} missing lookup values for {missing_lookup_keys}"
+                )
             if not lookup:
                 if strict:
                     raise ValueError(
