@@ -16,20 +16,14 @@ import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any
 
 from .config import (
     CollectorConfig,
-    CollectorOptions,
-    DiskConfig,
     FieldConfig,
     InterfaceConfig,
-    InventoryItemConfig,
-    ModuleConfig,
     ObjectConfig,
-    PowerInputConfig,
     SourceConfig,
-    TaggedVlanConfig,
     build_source_config,
     load_config,
 )
@@ -205,10 +199,21 @@ class RunStats:
 class Engine:
     """Drive a full collector run from an HCL mapping file."""
 
+    @staticmethod
+    def _missing_lookup_fields(payload: dict, lookup_fields: list[str]) -> list[str]:
+        missing: list[str] = []
+        for field in lookup_fields:
+            value = payload.get(field)
+            if value is None:
+                missing.append(field)
+            elif isinstance(value, str) and not value.strip():
+                missing.append(field)
+        return missing
+
     def run(
         self,
         mapping_path: str,
-        dry_run_override: Optional[bool] = None,
+        dry_run_override: bool | None = None,
     ) -> list[RunStats]:
         """Parse *mapping_path* and sync all objects to NetBox.
 
@@ -657,7 +662,7 @@ class Engine:
         resource: str,
         payload: dict,
         lookup_fields: list[str],
-        stats: Optional[RunStats] = None,
+        stats: RunStats | None = None,
     ) -> Any:
         if ctx.dry_run:
             logger.info(
@@ -668,6 +673,17 @@ class Engine:
             )
             if stats is not None:
                 stats.record("skipped")
+            return None
+        missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
+        if missing_lookup_fields:
+            logger.warning(
+                "Skipping upsert  resource=%s  missing_lookup=%s  keys=%s",
+                resource,
+                missing_lookup_fields,
+                sorted(payload.keys()),
+            )
+            if stats is not None:
+                stats.record_error()
             return None
         try:
             outcome = "created"
@@ -1025,7 +1041,7 @@ class Engine:
 
         for existing_vlan in existing_vlans:
             existing_site = getattr(existing_vlan, "site", None)
-            existing_site_id: Optional[int] = None
+            existing_site_id: int | None = None
             if existing_site is not None:
                 if isinstance(existing_site, dict):
                     existing_site_id = existing_site.get("id")
@@ -1101,7 +1117,7 @@ class Engine:
             parent_id = extract_id(parent_nb_obj)
 
             # Ensure the inventory item role exists once per block
-            role_id: Optional[int] = None
+            role_id: int | None = None
             if inv_cfg.role and not ctx.dry_run:
                 try:
                     role_id = prereq_runner._ensure_inventory_item_role(
@@ -1209,7 +1225,7 @@ class Engine:
 
         # Derive device_type_id from the parent NetBox device so we can add
         # bay templates without an extra API call.
-        device_type_id: Optional[int] = None
+        device_type_id: int | None = None
         if parent_nb_obj is not None:
             dt = (
                 parent_nb_obj.get("device_type")
@@ -1274,7 +1290,7 @@ class Engine:
                     continue
 
                 # 1. Resolve manufacturer ID (optional)
-                manufacturer_id: Optional[int] = None
+                manufacturer_id: int | None = None
                 if manufacturer_name:
                     try:
                         manufacturer_id = prereq_runner._ensure_manufacturer(
@@ -1302,7 +1318,7 @@ class Engine:
                         )
 
                 # 3. Ensure bay instance on device
-                bay_id: Optional[int] = None
+                bay_id: int | None = None
                 if parent_id is not None:
                     try:
                         bay_id = prereq_runner._ensure_module_bay(
@@ -1326,7 +1342,7 @@ class Engine:
                     continue
 
                 # 4. Ensure module type
-                module_type_id: Optional[int] = None
+                module_type_id: int | None = None
                 try:
                     # Evaluate ``attribute {}`` field expressions for this item.
                     # These are applied to the ModuleType record (not the Module

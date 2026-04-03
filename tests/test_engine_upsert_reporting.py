@@ -112,3 +112,43 @@ class TestEngineUpsertReporting:
         assert stats.skipped == 0
         assert stats.errored == 0
 
+    def test_missing_lookup_field_records_error_without_writing(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+
+        result = engine._upsert(
+            _ctx(nb=nb),
+            "dcim.devices",
+            {"role": 7},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.created == 0
+        assert stats.updated == 0
+        assert stats.skipped == 0
+        assert stats.errored == 1
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
+
+    def test_blank_lookup_field_is_treated_as_missing(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+
+        result = engine._upsert(
+            _ctx(nb=nb),
+            "dcim.devices",
+            {"name": "   "},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.errored == 1
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
