@@ -1356,7 +1356,25 @@ class Engine:
                         seen_dedup_keys.add(dedup_key)
 
                 # Evaluate all field expressions for this item
-                raw_payload = self._build_payload(mod_cfg.fields, mod_resolver, nested_ctx)
+                required_module_fields = {"model"}
+                field_names = {field.name for field in mod_cfg.fields}
+                if "bay_name" in field_names:
+                    required_module_fields.add("bay_name")
+                elif "name" in field_names:
+                    required_module_fields.add("name")
+                try:
+                    raw_payload = self._build_payload(
+                        mod_cfg.fields,
+                        mod_resolver,
+                        nested_ctx,
+                        required_field_names=required_module_fields,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Skipping module item due to required field error: %s",
+                        exc,
+                    )
+                    continue
                 if not raw_payload:
                     continue
 
@@ -1367,7 +1385,7 @@ class Engine:
                 manufacturer_name = raw_payload.get("manufacturer")
 
                 if not bay_name or not model:
-                    logger.debug(
+                    logger.warning(
                         "Module item missing bay_name or model — skipping (bay=%r model=%r)",
                         bay_name, model,
                     )
@@ -1388,7 +1406,7 @@ class Engine:
                             {"name": manufacturer_name}, dry_run=False
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_manufacturer for module %r failed: %s", bay_name, exc
                         )
 
@@ -1404,7 +1422,7 @@ class Engine:
                             dry_run=False,
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_module_bay_template %r failed: %s", bay_name, exc
                         )
 
@@ -1421,12 +1439,12 @@ class Engine:
                             dry_run=False,
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_module_bay %r failed: %s", bay_name, exc
                         )
 
                 if bay_id is None:
-                    logger.debug(
+                    logger.warning(
                         "Could not obtain module_bay for %r — skipping module install",
                         bay_name,
                     )
@@ -1445,7 +1463,7 @@ class Engine:
                             if val is not None:
                                 attrs[attr_cfg.name] = val
                         except Exception as exc:
-                            logger.debug(
+                            logger.warning(
                                 "Module attribute %r evaluation error: %s",
                                 attr_cfg.name, exc,
                             )
@@ -1460,10 +1478,10 @@ class Engine:
                         dry_run=False,
                     )
                 except Exception as exc:
-                    logger.debug("ensure_module_type %r failed: %s", model, exc)
+                    logger.warning("ensure_module_type %r failed: %s", model, exc)
 
                 if module_type_id is None:
-                    logger.debug(
+                    logger.warning(
                         "Could not obtain module_type for %r — skipping module install",
                         model,
                     )

@@ -10,18 +10,16 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from collector.config import (
     ModuleConfig,
     load_config,
 )
 from collector.prerequisites import PrerequisiteRunner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -933,6 +931,114 @@ class TestProcessModules:
         ]
         assert len(module_calls) == 0
 
+    def test_invalid_model_expression_skips_module_before_writes(self, caplog):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+
+        mod_cfg = ModuleConfig(
+            source_items="processors",
+            profile="CPU",
+            fields=[
+                FieldConfig(name="bay_name", value="source('socket')"),
+                FieldConfig(name="model", value="undefined_func()"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+
+        with caplog.at_level(logging.WARNING):
+            engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        assert "Skipping module item due to required field error" in caplog.text
+        nb.upsert.assert_not_called()
+
+    def test_module_bay_failure_logs_warning_and_skips_install(self, caplog):
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=10),  # ensure_module_bay_template
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_obj_cfg_with_module()
+
+        with patch.object(
+            PrerequisiteRunner,
+            "_ensure_module_bay",
+            side_effect=Exception("module bay failed"),
+        ), caplog.at_level(logging.WARNING):
+            engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        assert "ensure_module_bay 'CPU Socket 1' failed: module bay failed" in caplog.text
+        assert "Could not obtain module_bay for 'CPU Socket 1'" in caplog.text
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 0
+
+    def test_module_type_failure_logs_warning_and_skips_install(self, caplog):
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = self._make_obj_cfg_with_module()
+
+        with patch.object(
+            PrerequisiteRunner,
+            "_ensure_module_type",
+            side_effect=Exception("module type failed"),
+        ), caplog.at_level(logging.WARNING):
+            engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        assert "ensure_module_type 'Intel Xeon Gold 6240' failed: module type failed" in caplog.text
+        assert "Could not obtain module_type for 'Intel Xeon Gold 6240'" in caplog.text
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 0
+
     def test_dry_run_logs_without_writing(self):
         engine = self._make_engine()
         source_obj = {
@@ -1464,7 +1570,7 @@ class TestProcessModulesPowerInput:
             if c[0][0] == "dcim.power_ports"
         ]
         assert len(power_port_calls) == 2, (
-            "Expected one power port per PSU; got %d" % len(power_port_calls)
+            f"Expected one power port per PSU; got {len(power_port_calls)}"
         )
         names = {c[0][1]["name"] for c in power_port_calls}
         assert names == {"Power Input Power Supply 1", "Power Input Power Supply 2"}
