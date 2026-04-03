@@ -530,7 +530,12 @@ class Engine:
 
         # 2. Build payload from field blocks
         try:
-            payload = self._build_payload(obj_cfg.fields, resolver, ctx)
+            payload = self._build_payload(
+                obj_cfg.fields,
+                resolver,
+                ctx,
+                required_field_names=set(obj_cfg.lookup_by),
+            )
         except Exception as exc:
             logger.warning("Payload build failed for %r: %s", obj_cfg.name, exc)
             stats.record_error()
@@ -572,14 +577,25 @@ class Engine:
         fields: list[FieldConfig],
         resolver: Resolver,
         ctx: RunContext,
+        required_field_names: set[str] | None = None,
     ) -> dict:
+        required_field_names = required_field_names or set()
         payload: dict[str, Any] = {}
         for field_cfg in fields:
             try:
-                value = self._eval_field(field_cfg, resolver, ctx)
+                value = self._eval_field(
+                    field_cfg,
+                    resolver,
+                    ctx,
+                    strict=field_cfg.name in required_field_names,
+                )
                 if value is not None:
                     payload[field_cfg.name] = value
             except Exception as exc:
+                if field_cfg.name in required_field_names:
+                    raise ValueError(
+                        f"Required field {field_cfg.name!r} failed: {exc}"
+                    ) from exc
                 logger.debug(
                     "Field %r evaluation error: %s", field_cfg.name, exc
                 )
@@ -590,12 +606,17 @@ class Engine:
         field_cfg: FieldConfig,
         resolver: Resolver,
         ctx: RunContext,
+        strict: bool = False,
     ) -> Any:
         """Evaluate a single field and return the value for the payload."""
 
         # --- tags field ---
         if field_cfg.type == "tags":
-            raw = resolver.evaluate(field_cfg.value)
+            raw = (
+                resolver.evaluate_strict(field_cfg.value, field_cfg.name)
+                if strict
+                else resolver.evaluate(field_cfg.value)
+            )
             if not isinstance(raw, list):
                 raw = [raw] if raw else []
             # Normalize plain strings to the dict form NetBox expects.
@@ -605,10 +626,18 @@ class Engine:
         if field_cfg.type == "fk":
             lookup: dict[str, Any] = {}
             for k, v in (field_cfg.lookup or {}).items():
-                resolved = resolver.evaluate(v) if isinstance(v, str) else v
+                resolved = (
+                    resolver.evaluate_strict(v, f"{field_cfg.name}.{k}")
+                    if strict and isinstance(v, str)
+                    else resolver.evaluate(v) if isinstance(v, str) else v
+                )
                 if resolved is not None:
                     lookup[k] = resolved
             if not lookup:
+                if strict:
+                    raise ValueError(
+                        f"Required FK field {field_cfg.name!r} could not resolve lookup"
+                    )
                 return None
             if ctx.dry_run:
                 logger.debug("[DRY-RUN] FK lookup %s %s", field_cfg.resource, lookup)
@@ -624,6 +653,10 @@ class Engine:
                     obj = ctx.nb.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
+                if strict:
+                    raise ValueError(
+                        f"Required FK field {field_cfg.name!r} lookup failed: {exc}"
+                    ) from exc
                 logger.debug(
                     "FK lookup failed resource=%s lookup=%s: %s",
                     field_cfg.resource, lookup, exc,
@@ -631,6 +664,8 @@ class Engine:
                 return None
 
         # --- scalar field (default) ---
+        if strict:
+            return resolver.evaluate_strict(field_cfg.value, field_cfg.name)
         return resolver.evaluate(field_cfg.value)
 
     # ------------------------------------------------------------------
