@@ -672,14 +672,22 @@ class Engine:
         try:
             outcome = "created"
             obj = None
-            if hasattr(ctx.nb, "upsert_with_outcome"):
+            upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+            if callable(upsert_with_outcome):
                 result = ctx.nb.upsert_with_outcome(
                     resource,
                     payload,
                     lookup_fields=lookup_fields,
                 )
-                outcome = getattr(result, "outcome", "created")
-                obj = getattr(result, "object", None)
+                candidate_outcome = getattr(result, "outcome", None)
+                if candidate_outcome in {"created", "updated", "noop"}:
+                    outcome = candidate_outcome
+                    obj = getattr(result, "object", None)
+                else:
+                    # Plain MagicMock instances fabricate arbitrary attributes,
+                    # so treat unknown outcomes as lack of structured support
+                    # and fall back to the legacy upsert() path.
+                    obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
             else:
                 obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
@@ -764,6 +772,18 @@ class Engine:
                     payload,
                     ["name", parent_field],
                 )
+                iface_id = extract_id(nb_iface)
+
+                # A failed interface write must not cascade into unattached
+                # child writes on the same interface item. Preserve dry-run
+                # traversal so nested payloads are still visible in previews.
+                if not nested_ctx.dry_run and iface_id is None:
+                    logger.warning(
+                        "Skipping nested interface data because %s upsert for %r did not return an id",
+                        iface_resource,
+                        payload.get("name"),
+                    )
+                    continue
 
                 # Nested IP addresses
                 for ip_cfg in iface_cfg.ip_addresses:
@@ -785,15 +805,13 @@ class Engine:
                             continue
 
                         # Attach IP to interface
-                        if nb_iface is not None:
-                            iface_id = extract_id(nb_iface)
-                            if iface_id is not None:
-                                ip_payload["assigned_object_type"] = (
-                                    "dcim.interface"
-                                    if iface_resource == "dcim.interfaces"
-                                    else "virtualization.vminterface"
-                                )
-                                ip_payload["assigned_object_id"] = iface_id
+                        if iface_id is not None:
+                            ip_payload["assigned_object_type"] = (
+                                "dcim.interface"
+                                if iface_resource == "dcim.interfaces"
+                                else "virtualization.vminterface"
+                            )
+                            ip_payload["assigned_object_id"] = iface_id
 
                         self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
                         nb_ip = self._upsert(ip_ctx, "ipam.ip_addresses", ip_payload, ["address"])

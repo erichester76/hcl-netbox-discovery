@@ -11,6 +11,7 @@ from collector.db import (
     create_schedule,
     delete_schedule,
     finish_job,
+    get_config,
     get_due_schedules,
     get_job,
     get_job_logs,
@@ -19,6 +20,8 @@ from collector.db import (
     get_schedule,
     get_schedules,
     init_db,
+    reset_setting,
+    set_setting,
     start_job,
     update_schedule,
     update_schedule_run,
@@ -209,6 +212,28 @@ def test_init_db_idempotent():
     job = get_job(job_id)
     assert job is not None
     assert job["hcl_file"] == "mappings/stable.hcl"
+
+
+def test_runtime_config_defaults_do_not_require_env(monkeypatch):
+    monkeypatch.delenv("NETBOX_URL", raising=False)
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_runtime_config_ignores_env_fallback(monkeypatch):
+    monkeypatch.setenv("NETBOX_URL", "https://env.example.com")
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_runtime_config_db_override_wins():
+    set_setting("NETBOX_URL", "https://db.example.com")
+    assert get_config("NETBOX_URL", "") == "https://db.example.com"
+    reset_setting("NETBOX_URL")
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_startup_config_stays_env_only(monkeypatch):
+    monkeypatch.setenv("WEB_PORT", "5999")
+    assert get_config("WEB_PORT", "5000") == "5999"
 
 
 # ---------------------------------------------------------------------------

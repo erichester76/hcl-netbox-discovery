@@ -21,9 +21,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import collector.db as db_module
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
+from collector.db import init_db, set_setting
 from pynetbox2 import RateLimiter, BackendAdapter, PynetboxAdapter  # noqa: E402
 
 
@@ -294,6 +296,37 @@ class TestBackendAdapterCooldown:
         assert len(calls) == 2
 
 
+class TestPynetboxListRetryOwnership:
+    def test_list_page_fetch_uses_only_backend_retry_loop(self):
+        with patch("pynetbox2.pynetbox.api"):
+            adapter = PynetboxAdapter(
+                url="http://nb.example.com",
+                token="token",
+                rate_limiter=RateLimiter(),
+                retry_attempts=1,
+                retry_initial_delay_seconds=0.0,
+                retry_backoff_factor=1.0,
+                retry_max_delay_seconds=0.0,
+                retry_jitter_seconds=0.0,
+                retry_5xx_cooldown_seconds=0.0,
+            )
+
+        endpoint = MagicMock()
+        endpoint.filter.side_effect = lambda **kwargs: (
+            SimpleNamespace(count=1001)
+            if kwargs["limit"] == 0
+            else (_ for _ in ()).throw(_exc_with_status(503))
+        )
+
+        with patch.object(adapter, "_endpoint", return_value=endpoint), patch("time.sleep") as mock_sleep:
+            with pytest.raises(Exception):
+                adapter.list("dcim.sites")
+
+        # One count request plus two page attempts from BackendAdapter._call().
+        assert endpoint.filter.call_count == 3
+        assert mock_sleep.call_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Config: retry_5xx_cooldown propagates from HCL / env-var
 # ---------------------------------------------------------------------------
@@ -304,8 +337,12 @@ class TestRetry5xxCooldownConfig:
         cfg = NetBoxConfig(url="http://nb", token="x")
         assert cfg.retry_5xx_cooldown == pytest.approx(60.0)
 
-    def test_env_var_sets_cooldown(self, monkeypatch):
-        monkeypatch.setenv("NETBOX_RETRY_5XX_COOLDOWN", "45.0")
+    def test_runtime_setting_sets_cooldown(self, monkeypatch, tmp_path):
+        db_path = str(tmp_path / "thundering_herd.sqlite3")
+        monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+        monkeypatch.setattr(db_module, "_lock", threading.Lock())
+        init_db()
+        set_setting("NETBOX_RETRY_5XX_COOLDOWN", "45.0")
         hcl = """
             source "vmware" {
               api_type = "vmware"
@@ -326,8 +363,12 @@ class TestRetry5xxCooldownConfig:
             os.unlink(path)
         assert cfg.netbox.retry_5xx_cooldown == pytest.approx(45.0)
 
-    def test_hcl_setting_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("NETBOX_RETRY_5XX_COOLDOWN", "99.0")
+    def test_hcl_setting_overrides_runtime_setting(self, monkeypatch, tmp_path):
+        db_path = str(tmp_path / "thundering_herd_override.sqlite3")
+        monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+        monkeypatch.setattr(db_module, "_lock", threading.Lock())
+        init_db()
+        set_setting("NETBOX_RETRY_5XX_COOLDOWN", "99.0")
         hcl = """
             source "vmware" {
               api_type = "vmware"

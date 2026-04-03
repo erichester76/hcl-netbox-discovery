@@ -539,6 +539,7 @@ def test_dispatch_job_creates_queued_record(tmp_path, tmp_db, monkeypatch):
     from collector.db import get_jobs  # noqa: PLC0415
     from web.app import create_app  # noqa: PLC0415
 
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "false")
     flask_app = create_app()
     flask_app.config["TESTING"] = True
 

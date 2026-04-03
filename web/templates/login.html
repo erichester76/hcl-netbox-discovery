@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Login – HCL NetBox Discovery{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-5 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-header card-header-cu fw-semibold">Web UI Login</div>
+      <div class="card-body">
+        {% if invalid_credentials %}
+        <div class="alert alert-danger" role="alert">
+          Invalid username or password.
+        </div>
+        {% endif %}
+        <form method="POST" action="/login">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="next" value="{{ next_target }}" />
+          <div class="mb-3">
+            <label for="username" class="form-label">Username</label>
+            <input type="text" class="form-control" id="username" name="username" autocomplete="username" required />
+          </div>
+          <div class="mb-3">
+            <label for="password" class="form-label">Password</label>
+            <input type="password" class="form-control" id="password" name="password" autocomplete="current-password" required />
+          </div>
+          <button type="submit" class="btn btn-primary w-100"
+                  style="background-color:#522D80;border-color:#522D80;">
+            Sign In
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

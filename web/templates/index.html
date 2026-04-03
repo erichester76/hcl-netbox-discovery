@@ -12,6 +12,7 @@
       <div class="card-header card-header-cu fw-semibold">Run a Sync Job</div>
       <div class="card-body">
         <form method="POST" action="/jobs/run">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
           <div class="mb-3">
             <label for="hcl_file" class="form-label">HCL Mapping File</label>
             {% if mapping_files %}
