@@ -2212,11 +2212,17 @@ class NetBoxExtendedClient:
             else:
                 lookup_fields = ()
 
+        missing_lookup_fields: list[str] = []
+
         filters: dict[str, Any] = {}
         for field in lookup_fields:
             if field not in payload:
+                missing_lookup_fields.append(field)
                 continue
             value = payload[field]
+            if value is None or (isinstance(value, str) and not value.strip()):
+                missing_lookup_fields.append(field)
+                continue
 
             normalized_field = field
             if not field.endswith("id") and isinstance(value, int) and field in FK_FIELDS[resource]:
@@ -2224,6 +2230,11 @@ class NetBoxExtendedClient:
             if hasattr(value, "id"):
                 value = getattr(value, "id")
             filters[self._lookup_filter_key(resource, normalized_field, value)] = value
+
+        if lookup_fields and missing_lookup_fields:
+            raise ValueError(
+                f"Invalid lookup_fields for {resource}: missing/blank values for {missing_lookup_fields}"
+            )
 
         logger.debug(
             "NetBox upsert start resource=%s lookup_fields=%s filters=%s payload_keys=%s",

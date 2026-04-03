@@ -14,8 +14,8 @@ another API round-trip.
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,7 +24,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 
 from pynetbox2 import CacheBackend, NetBoxExtendedClient  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Minimal in-memory cache backend for tests
@@ -484,5 +483,47 @@ class TestUpsertOutcomeApi:
 
         assert result.object == existing
         assert result.outcome == "noop"
+        assert client.adapter.create.call_count == 0
+        assert client.adapter.update.call_count == 0
+
+    def test_upsert_with_outcome_raises_when_explicit_lookup_field_missing(self):
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="missing/blank values"):
+            client.upsert_with_outcome(
+                "dcim.sites",
+                {"slug": "site-a"},
+                lookup_fields=["name"],
+            )
+
+        assert client.adapter.get.call_count == 0
+        assert client.adapter.create.call_count == 0
+        assert client.adapter.update.call_count == 0
+
+    def test_upsert_with_outcome_raises_when_explicit_lookup_field_blank(self):
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="missing/blank values"):
+            client.upsert_with_outcome(
+                "dcim.sites",
+                {"name": "   ", "slug": "site-a"},
+                lookup_fields=["name"],
+            )
+
+        assert client.adapter.get.call_count == 0
+        assert client.adapter.create.call_count == 0
+        assert client.adapter.update.call_count == 0
+
+    def test_upsert_with_outcome_raises_when_lookup_is_partial(self):
+        client = _make_client()
+
+        with pytest.raises(ValueError, match="missing/blank values"):
+            client.upsert_with_outcome(
+                "dcim.module_bays",
+                {"device": 99},
+                lookup_fields=["device", "name"],
+            )
+
+        assert client.adapter.get.call_count == 0
         assert client.adapter.create.call_count == 0
         assert client.adapter.update.call_count == 0
