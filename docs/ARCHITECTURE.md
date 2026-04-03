@@ -10,7 +10,7 @@ The modular collector is a declarative, source-agnostic framework for syncing ex
 
 The engine reads the HCL file, connects to both systems, and orchestrates the full sync — including prerequisite creation, field evaluation, parallel threading, tag management, and error isolation — without any source-specific code.
 
-A web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs, a cron-based scheduler for unattended operation, and a cache management panel. All job history, logs, and schedules are stored in a local SQLite database.
+The web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs, managing schedules, editing configuration settings, and controlling the NetBox cache. The unattended scheduler itself runs in `main.py --run-scheduler`. All job history, logs, schedules, and DB-backed config overrides are stored in a local SQLite database.
 
 ---
 
@@ -25,11 +25,10 @@ hcl-netbox-discovery/
 │   ├── engine.py                  # Top-level orchestrator
 │   ├── config.py                  # HCL parser + config model
 │   ├── context.py                 # Per-run state: NB client, source client, prereq cache
-│   ├── db.py                      # SQLite job/schedule store (shared by CLI and web UI)
+│   ├── db.py                      # SQLite jobs/logs/schedules/settings store (shared by CLI and web UI)
 │   ├── field_resolvers.py         # Expression evaluator (source(), coalesce(), etc.)
 │   ├── job_log_handler.py         # logging.Handler that writes to the jobs DB
 │   ├── prerequisites.py           # Drives ensure_* chains from HCL prerequisite blocks
-│   ├── parallel.py                # Shared ThreadPoolExecutor wrapper
 │   └── sources/
 │       ├── base.py                # Abstract DataSource interface
 │       ├── rest.py                # Generic REST adapter — no Python needed per source
@@ -41,7 +40,8 @@ hcl-netbox-discovery/
 │       ├── f5.py                  # F5 BIG-IP iControl REST adapter
 │       ├── prometheus.py          # Prometheus node-exporter adapter
 │       ├── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
-│       └── tenable.py             # Tenable One / Nessus adapter
+│       ├── tenable.py             # Tenable One / Nessus adapter
+│       └── netbox.py              # NetBox-to-NetBox source adapter
 ├── web/
 │   ├── __init__.py
 │   ├── app.py                     # Flask application factory + all route handlers
@@ -52,6 +52,7 @@ hcl-netbox-discovery/
 │       ├── schedules.html         # Scheduler management: add/list/edit/delete schedules
 │       ├── schedule_edit.html     # Edit form for an existing schedule
 │       ├── cache.html             # Cache backend stats and flush controls
+│       ├── settings.html          # Editable configuration settings UI
 │       └── 404.html               # Error page
 ├── data/                          # Runtime data directory (created automatically)
 │   └── collector_jobs.sqlite3     # SQLite database (jobs, logs, schedules)
@@ -111,6 +112,8 @@ python web_server.py [--port PORT] [--host HOST] [--debug]
 
 Serves the Flask dashboard on port 5000 (default). The web server and the scheduler process share the same SQLite database, so jobs started from either surface appear together in the dashboard.
 
+The web UI does not execute collector code directly. It queues jobs in the database; `main.py --run-scheduler` picks up queued jobs and scheduled runs.
+
 ---
 
 ## SQLite Database
@@ -129,7 +132,9 @@ Tracks every sync execution, whether started from the CLI or the web UI.
 CREATE TABLE jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     hcl_file    TEXT    NOT NULL,
-    status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | failed
+    status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | partial | failed
+    dry_run     INTEGER NOT NULL DEFAULT 0,
+    debug_mode  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL,   -- ISO-8601 UTC timestamp
     started_at  TEXT,               -- set by start_job()
     finished_at TEXT,               -- set by finish_job()
@@ -141,6 +146,7 @@ Status lifecycle:
 
 ```
 queued  →  running  →  success
+                    →  partial
                     →  failed
 ```
 
@@ -181,17 +187,35 @@ CREATE TABLE schedules (
 
 `next_run_at` is computed by `croniter` when a schedule is created or edited, and advanced immediately when it fires so that a second poll in the same minute cannot double-fire the same schedule.
 
+#### `config_settings`
+
+Stores editable runtime configuration exposed through the web UI. `env()` lookups in HCL and config parsing consult this table first, then fall back to OS environment variables.
+
+```sql
+CREATE TABLE config_settings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    key           TEXT    NOT NULL UNIQUE,
+    value         TEXT,
+    default_value TEXT,
+    description   TEXT,
+    group_name    TEXT    NOT NULL DEFAULT 'General',
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT    NOT NULL
+);
+```
+
 ### Public API (`collector/db.py`)
 
 | Function | Description |
 |---|---|
 | `init_db()` | Create tables (idempotent — safe to call on every startup) |
-| `create_job(hcl_file)` → `int` | Insert a new queued job; return its id |
+| `create_job(hcl_file, dry_run=False, debug_mode=False)` → `int` | Insert a new queued job; return its id |
 | `start_job(job_id)` | Mark job as running; set `started_at` |
-| `finish_job(job_id, success, summary)` | Mark job as success/failed; store JSON summary |
+| `finish_job(job_id, success, summary, has_errors=False)` | Mark job as success/partial/failed; store JSON summary |
 | `get_job(job_id)` → `dict\|None` | Fetch a single job record |
 | `get_jobs(limit)` → `list` | Most-recent jobs, newest first |
 | `get_running_jobs()` → `list` | All queued/running jobs (no limit) |
+| `get_queued_jobs()` → `list` | Queued jobs waiting for the scheduler worker |
 | `add_log(job_id, level, logger, message)` | Append one log line |
 | `get_job_logs(job_id)` → `list` | All log lines for a job, chronological |
 | `create_schedule(name, hcl_file, cron_expr, ...)` → `int` | Insert a new schedule |
@@ -201,12 +225,14 @@ CREATE TABLE schedules (
 | `delete_schedule(id)` | Remove a schedule |
 | `get_due_schedules()` → `list` | Enabled schedules whose `next_run_at ≤ now()` |
 | `update_schedule_run(id, last_run_at, next_run_at)` | Advance timestamps after a fire |
+| `get_config(key, default)` | Effective config lookup: DB override → env var → default |
+| `set_setting(key, value)` / `reset_setting(key)` | Update or clear a DB-backed config override |
 
 ---
 
 ## Web UI
 
-`web/app.py` is a Flask application factory (`create_app()`). It imports `collector.db` directly for all data access and spawns background `threading.Thread` instances for on-demand job runs triggered from the UI.
+`web/app.py` is a Flask application factory (`create_app()`). It imports `collector.db` directly for all data access. On-demand runs triggered from the UI are queued in the DB, and the scheduler worker in `main.py` executes them asynchronously.
 
 ### Routes
 
@@ -225,6 +251,9 @@ CREATE TABLE schedules (
 | `POST` | `/schedules/<id>/run-now` | Fire a schedule's mapping file immediately as a one-off job |
 | `GET` | `/cache` | Cache backend stats (entry counts by resource) |
 | `POST` | `/cache/flush` | Flush all cache entries or entries for a specific resource |
+| `POST` | `/cache/prewarm` | Pre-warm all or one cache resource |
+| `GET` | `/settings` | View grouped configuration settings |
+| `POST` | `/settings/update` | Save or reset a configuration setting |
 
 ### Scheduler UI features
 
@@ -233,6 +262,13 @@ CREATE TABLE schedules (
 - Cron expression reference table (field ranges + special characters)
 - Enable/disable toggle without deleting the schedule
 - "Run Now" button to trigger an immediate one-off execution of any schedule
+
+### Settings UI features
+
+- Seeded from `.env.example` into the `config_settings` table
+- Grouped display of web, NetBox, source, and collector options
+- Sensitive values rendered as password-style inputs
+- Reset action that clears a DB override and falls back to env/default
 
 ---
 
@@ -245,9 +281,11 @@ CREATE TABLE schedules (
 3. For each due schedule not already running (tracked in `_active_schedule_ids`):
    - Immediately advance `next_run_at` via `croniter` and write it to the DB (prevents double-fire)
    - Spawn a `daemon=True` background thread calling `_run_scheduled_job(sched)`
-4. `_run_scheduled_job` creates a job row, attaches a `JobLogHandler`, runs the engine, then marks the job success/failed
+4. Call `db.get_queued_jobs()` to pick up one-off jobs created by the web UI
+5. Spawn background threads for queued jobs not already in `_active_queued_job_ids`
+6. Worker threads attach a `JobLogHandler`, run the engine, then mark the job success / partial / failed
 
-The `_active_schedule_ids` set (guarded by a `threading.Lock`) prevents a slow-running job from being re-fired on the next poll while it is still in progress.
+The `_active_schedule_ids` set (guarded by a `threading.Lock`) prevents a slow-running scheduled job from being re-fired on the next poll while it is still in progress. A separate `_active_queued_job_ids` guard prevents duplicate pickup of queued web jobs.
 
 ---
 

@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir poetry
 ENV POETRY_VIRTUALENVS_IN_PROJECT=1 \
     POETRY_NO_INTERACTION=1
 
+# Dependency source of truth: pyproject.toml (and poetry.lock when present)
 COPY pyproject.toml poetry.lock* ./
 
 RUN poetry install --only main --no-root

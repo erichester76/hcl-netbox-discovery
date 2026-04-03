@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support and usage questions
+    url: https://github.com/erichester76/hcl-netbox-discovery/blob/main/SUPPORT.md
+    about: Use SUPPORT.md for setup help, troubleshooting guidance, and where to ask general questions.
+  - name: Security policy
+    url: https://github.com/erichester76/hcl-netbox-discovery/blob/main/SECURITY.md
+    about: Please do not open public issues for suspected security vulnerabilities.
