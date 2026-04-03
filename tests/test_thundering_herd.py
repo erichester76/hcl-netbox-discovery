@@ -12,7 +12,6 @@ Last Changed: GitHub Copilot 2026-04-01 Issue: #thundering-herd
 
 from __future__ import annotations
 
-import sys
 import os
 import tempfile
 import threading
@@ -21,13 +20,10 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pynetbox2 import BackendAdapter, PynetboxAdapter, RateLimiter  # noqa: E402
+
 import collector.db as db_module
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-
 from collector.db import init_db, set_setting
-from pynetbox2 import RateLimiter, BackendAdapter, PynetboxAdapter  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers

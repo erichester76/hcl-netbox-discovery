@@ -46,9 +46,8 @@ lifecycle events are easy to miss.
 ## Tests
 
 - `tests/test_engine*.py`
-- Any `lib/pynetbox2.py` tests needed for richer upsert outcome reporting
+- Any `pynetbox2` wrapper tests needed for richer upsert outcome reporting
 
 ## Suggested Branch
 
 - `codex/truthful-reporting`
-

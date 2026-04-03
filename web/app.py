@@ -20,13 +20,10 @@ from typing import Any
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
-# Ensure the project root is on sys.path so that collector and lib are importable
+# Ensure the project root is on sys.path so that local packages are importable.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
-_LIB = os.path.join(_ROOT, "lib")
-if _LIB not in sys.path:
-    sys.path.insert(0, _LIB)
 
 from collector.db import (  # noqa: E402
     create_job,
@@ -448,7 +445,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _cache_client_kwargs() -> dict[str, Any]:
-    """Build kwargs for a pynetbox2 client using cache-related config settings."""
+    """Build kwargs for the pynetbox2 wrapper client using cache-related config settings."""
     backend = get_config("NETBOX_CACHE_BACKEND", "none")
     cache_url = get_config("NETBOX_CACHE_URL", "")
     kwargs: dict[str, Any] = dict(

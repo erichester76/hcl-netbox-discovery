@@ -55,7 +55,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
 COPY collector/ collector/
-COPY lib/       lib/
 COPY mappings/  mappings/
 COPY regex/     regex/
 COPY web/       web/

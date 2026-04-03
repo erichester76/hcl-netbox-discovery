@@ -97,7 +97,7 @@ Key components:
 | `collector/sources/azure.py` | Azure SDK adapter |
 | `collector/sources/ldap.py` | LDAP3 adapter |
 | `collector/sources/catc.py` | Cisco Catalyst Center adapter |
-| `lib/pynetbox2.py` | Production-ready NetBox client: caching, rate-limiting, upsert, retry |
+| `pynetbox-wrapper` dependency | Production-ready NetBox client wrapper: caching, rate-limiting, upsert, retry |
 | `web/app.py` | Flask application factory; dashboard, job detail, schedules, cache, and settings routes |
 | `web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
 
@@ -448,9 +448,6 @@ hcl-netbox-discovery/
 │       ├── cache.html             # Cache status and flush UI
 │       ├── settings.html          # DB-backed settings UI
 │       └── 404.html               # Not-found page
-│
-├── lib/
-│   └── pynetbox2.py               # NetBox client (caching, upsert, retry)
 │
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example

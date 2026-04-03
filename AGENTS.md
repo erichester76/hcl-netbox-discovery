@@ -14,7 +14,7 @@ Those three files describe the current execution model, HCL surface area, and th
 
 ## Project Reality
 
-- This repository does **not** use a `/src` layout. Main code lives in `collector/`, `web/`, `lib/`, `main.py`, and `web_server.py`.
+- This repository does **not** use a `/src` layout. Main code lives in `collector/`, `web/`, `main.py`, and `web_server.py`, with the NetBox wrapper provided by the external `pynetbox-wrapper` dependency.
 - The primary Python metadata file is `pyproject.toml`.
 - Poetry is the primary dependency and environment workflow.
 - `requirements.txt` and `requirements-dev.txt` are legacy/fallback install paths and should not become the primary source of truth.
@@ -183,7 +183,7 @@ fixes that solved one symptom while leaving the underlying model inconsistent.
 - `collector/prerequisites.py`: ensure/lookup helpers for NetBox prerequisites
 - `collector/db.py`: shared SQLite jobs/logs/schedules/settings store
 - `collector/sources/`: source adapters
-- `lib/pynetbox2.py`: NetBox client wrapper with cache, retry, and upsert behavior
+- `pynetbox-wrapper`: external NetBox client wrapper dependency with cache, retry, and upsert behavior
 - `web/app.py`: Flask routes and web-side job queueing
 - `tests/`: primary regression safety net
 
