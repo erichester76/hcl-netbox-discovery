@@ -85,7 +85,7 @@ Use a dedicated adapter when the source needs SDK behavior, complicated auth, or
 
 ### NetBox integration
 
-- `lib/pynetbox2.py`: the custom NetBox client wrapper
+- `pynetbox-wrapper`: the external custom NetBox client wrapper dependency
 
 This file is important. Many behaviors that look like “engine logic” are actually implemented here:
 

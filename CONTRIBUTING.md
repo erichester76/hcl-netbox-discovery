@@ -4,7 +4,7 @@ This document is for developers new to `hcl-netbox-discovery` who want to get pr
 
 ## What This Project Is
 
-`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `collector/`, the Flask UI is in `web/`, and the custom NetBox client wrapper is in `lib/pynetbox2.py`.
+`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `collector/`, the Flask UI is in `web/`, and the custom NetBox client wrapper is provided by the external `pynetbox-wrapper` dependency.
 
 The web UI and the scheduler share one SQLite database:
 
@@ -88,7 +88,7 @@ poetry run python web_server.py
 
 - `collector/`: parser, engine, DB, field resolvers, prerequisites, source adapters
 - `web/`: Flask app and templates
-- `lib/pynetbox2.py`: NetBox client wrapper with retries, caching, and upsert helpers
+- `pynetbox-wrapper`: external NetBox client wrapper dependency with retries, caching, and upsert helpers
 - `mappings/`: example HCL mapping files
 - `regex/`: plain-text mapping files used by `regex_file()`
 - `tests/`: test suite

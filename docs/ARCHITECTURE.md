@@ -18,8 +18,6 @@ The web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs,
 
 ```
 hcl-netbox-discovery/
-├── lib/
-│   └── pynetbox2.py               # NetBox client library
 ├── collector/
 │   ├── __init__.py
 │   ├── engine.py                  # Top-level orchestrator
@@ -323,7 +321,7 @@ changes are needed to add new deployments of these source types.
 
 ## Component Roles
 
-### `lib/pynetbox2.py`
+### `pynetbox-wrapper`
 
 Production-ready NetBox client with:
 

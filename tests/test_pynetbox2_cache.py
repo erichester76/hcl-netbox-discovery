@@ -14,17 +14,10 @@ another API round-trip.
 
 from __future__ import annotations
 
-import sys
-import os
 from unittest.mock import MagicMock
 
 import pytest
-
-# Make sure the lib directory is importable.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-
 from pynetbox2 import CacheBackend, NetBoxExtendedClient  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Minimal in-memory cache backend for tests

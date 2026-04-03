@@ -89,12 +89,6 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.log_level)
 
-    # Ensure lib/ is on sys.path so collector can import pynetbox2
-    here = os.path.dirname(os.path.abspath(__file__))
-    lib_path = os.path.join(here, "lib")
-    if lib_path not in sys.path:
-        sys.path.insert(0, lib_path)
-
     # Initialise the shared job-tracking database so the web UI can observe
     # jobs started from the CLI (same SQLite file used by web_server.py).
     from collector.db import create_job, init_db  # noqa: PLC0415

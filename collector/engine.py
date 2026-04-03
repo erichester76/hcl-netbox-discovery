@@ -12,8 +12,6 @@ from __future__ import annotations
 import contextvars
 import ipaddress
 import logging
-import os
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -45,10 +43,6 @@ _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 
 def _build_nb_client(cfg_nb: Any) -> Any:
     """Construct a pynetbox2 NetBoxAPI client from *cfg_nb* (NetBoxConfig)."""
-    lib_dir = os.path.join(os.path.dirname(__file__), "..", "lib")
-    lib_dir = os.path.normpath(lib_dir)
-    if lib_dir not in sys.path:
-        sys.path.insert(0, lib_dir)
     import pynetbox2 as pynetbox  # type: ignore[import]
 
     kwargs: dict[str, Any] = dict(
