@@ -809,7 +809,16 @@ class Engine:
                 nested_ctx = ctx.for_nested(iface_item, parent_nb_obj)
                 resolver = Resolver(nested_ctx)
 
-                payload = self._build_payload(iface_cfg.fields, resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        iface_cfg.fields,
+                        resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping interface item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
@@ -851,7 +860,16 @@ class Engine:
                         ip_ctx = nested_ctx.for_nested(ip_item, nb_iface)
                         ip_resolver = Resolver(ip_ctx)
 
-                        ip_payload = self._build_payload(ip_cfg.fields, ip_resolver, ip_ctx)
+                        try:
+                            ip_payload = self._build_payload(
+                                ip_cfg.fields,
+                                ip_resolver,
+                                ip_ctx,
+                                required_field_names={"address"},
+                            )
+                        except ValueError as exc:
+                            logger.warning("Skipping IP item due to required field error: %s", exc)
+                            continue
                         if not ip_payload:
                             continue
 
@@ -980,7 +998,16 @@ class Engine:
                 vlan_ctx = ctx.for_nested(vlan_item, nb_iface)
                 vlan_resolver = Resolver(vlan_ctx)
 
-                vlan_payload = self._build_payload(vlan_cfg.fields, vlan_resolver, vlan_ctx)
+                try:
+                    vlan_payload = self._build_payload(
+                        vlan_cfg.fields,
+                        vlan_resolver,
+                        vlan_ctx,
+                        required_field_names=set(vlan_cfg.lookup_by),
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping tagged VLAN item due to required field error: %s", exc)
+                    continue
                 if not vlan_payload:
                     continue
 
@@ -1175,7 +1202,16 @@ class Engine:
                             continue
                         seen_dedup_keys.add(dedup_key)
 
-                payload = self._build_payload(inv_cfg.fields, inv_resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        inv_cfg.fields,
+                        inv_resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping inventory item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
@@ -1217,7 +1253,16 @@ class Engine:
                 nested_ctx = ctx.for_nested(disk_item, parent_nb_obj)
                 disk_resolver = Resolver(nested_ctx)
 
-                payload = self._build_payload(disk_cfg.fields, disk_resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        disk_cfg.fields,
+                        disk_resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping disk item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
