@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
 from collector.config import CollectorOptions
 from collector.context import RunContext
 from collector.field_resolvers import Resolver, walk_path
-
 
 # ---------------------------------------------------------------------------
 # walk_path()
@@ -428,6 +424,15 @@ class TestResolverErrorHandling:
         r = _make_resolver({})
         # Bare strings with spaces are not valid Python — eval fails and returns None
         assert r.evaluate("VMware vSphere") is None
+
+    def test_evaluate_strict_raises_on_eval_failure(self):
+        r = _make_resolver({})
+        with pytest.raises(ValueError, match="lookup_name evaluation failed"):
+            r.evaluate_strict("undefined_func()", label="lookup_name")
+
+    def test_evaluate_strict_allows_valid_literals(self):
+        r = _make_resolver({})
+        assert r.evaluate_strict("'vmware-host'", label="lookup_name") == "vmware-host"
         assert r.evaluate("Hypervisor Host") is None
 
 
