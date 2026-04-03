@@ -186,11 +186,26 @@ source "snmp_devices" {
 
 The SNMP adapter is vendor-agnostic. It exposes `sys_object_id` (raw sysObjectID OID) and `if_type` (raw integer) on every device/interface. Vendor-specific detection and field extraction should be expressed in HCL field expressions using `when()`, `regex_extract()`, and `map_value()`.
 
+### NetBox source (`api_type = "netbox"`)
+
+```hcl
+source "source_nb" {
+  api_type   = "netbox"
+  url        = env("SOURCE_NETBOX_URL")
+  password   = env("SOURCE_NETBOX_TOKEN")       # source NetBox API token
+  verify_ssl = env("SOURCE_NETBOX_VERIFY_SSL", "true")
+  filters    = env("SOURCE_NETBOX_FILTERS", "") # optional JSON object string
+  page_size  = "1000"
+}
+```
+
+This adapter reads from a source NetBox instance and returns plain dicts that can be remapped into the destination NetBox.
+
 ### `source` scalar attributes
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Selects the source adapter: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, or `snmp` |
+| `api_type` | yes | Selects the source adapter: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, `tenable`, or `netbox` |
 | `url` | yes | Base URL / hostname of the source system |
 | `username` | no | Credential (required for `basic` auth) |
 | `password` | no | Credential / token value |
@@ -220,9 +235,10 @@ Configures the pynetbox2 client.
 netbox {
   url        = env("NETBOX_URL")
   token      = env("NETBOX_TOKEN")
-  cache      = env("NETBOX_CACHE_BACKEND", "memory")   # none | memory | redis | sqlite
+  cache      = env("NETBOX_CACHE_BACKEND", "none")     # none | redis | sqlite
   cache_url  = env("NETBOX_CACHE_URL", "")
-  rate_limit = 100                                       # calls/second (0 = unlimited)
+  cache_ttl  = env("NETBOX_CACHE_TTL", "300")
+  rate_limit = env("NETBOX_RATE_LIMIT", "0")           # calls/second (0 = unlimited)
 }
 ```
 
@@ -230,9 +246,21 @@ netbox {
 |---|---|---|
 | `url` | yes | NetBox base URL |
 | `token` | yes | API token |
-| `cache` | no | Cache backend: `none`, `memory`, `redis`, `sqlite` (default: `"none"`) |
+| `cache` | no | Cache backend: `none`, `redis`, `sqlite` (default: `"none"`) |
 | `cache_url` | no | Redis URL or SQLite path when applicable |
+| `cache_ttl` | no | Cache entry TTL in seconds (default: `300`) |
+| `prewarm_sentinel_ttl` | no | Optional TTL used by cache pre-warm sentinels |
 | `rate_limit` | no | Max API calls per second (default: `0` = unlimited) |
+| `rate_limit_burst` | no | Token-bucket burst size (default: `1`) |
+| `retry_attempts` | no | Retry attempts for transient NetBox failures (default: `3`) |
+| `retry_initial_delay` | no | Initial retry delay in seconds (default: `0.3`) |
+| `retry_backoff_factor` | no | Exponential retry backoff multiplier (default: `2.0`) |
+| `retry_max_delay` | no | Maximum retry delay in seconds (default: `15.0`) |
+| `retry_jitter` | no | Max jitter added to retry delays (default: `0.0`) |
+| `retry_on_4xx` | no | Comma-separated retryable 4xx codes (default: `"408,409,425,429"`) |
+| `retry_5xx_cooldown` | no | Shared cooldown in seconds after retry-triggering 5xx errors (default: `60.0`) |
+| `cache_key_prefix` | no | Prefix used to namespace cache keys (default: `"nbx:"`) |
+| `branch` | no | Optional NetBox branch name |
 
 ---
 
@@ -250,6 +278,13 @@ collector {
   sync_inventory  = env("COLLECTOR_SYNC_INVENTORY", "true")
   sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
+
+  iterator {
+    max_workers = 2
+    VCENTER_URL = ["vc1.example.com", "vc2.example.com"]
+    VCENTER_USER = ["admin", "admin"]
+    VCENTER_PASS = ["secret1", "secret2"]
+  }
 }
 ```
 
@@ -259,12 +294,22 @@ collector {
 | `dry_run` | no | Log payloads without writing to NetBox (default: `"false"`) |
 | `sync_tag` | no | Tag applied to every object created/updated by this run |
 | `regex_dir` | no | Directory containing regex pattern files (default: `"./regex"`) |
-| `sync_interfaces` | no | Enable interface syncing (referenced by `enabled_if`) |
-| `sync_inventory` | no | Enable inventory item syncing (referenced by `enabled_if`) |
-| `sync_modules` | no | Enable module syncing (referenced by `enabled_if`) |
-| `use_modules` | no | Use NetBox modules instead of inventory items |
+| `iterator` | no | Repeatable unlabeled block that runs multiple source passes with per-row `env()` overrides |
 
-Custom boolean flags added here are available in `enabled_if` expressions as `collector.flag_name`.
+The collector block reserves only `max_workers`, `dry_run`, `sync_tag`, `regex_dir`, and `iterator`. Any other key is treated as a custom flag and is available in expressions as `collector.flag_name`.
+
+Common examples include `sync_interfaces`, `sync_inventory`, `sync_modules`, and `use_modules`.
+
+### `iterator` block
+
+Each `iterator {}` block defines one group of source-connection overrides. The engine re-evaluates `env()` calls in the `source {}` block for each row, then runs a full collector pass per row.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `max_workers` | no | How many iterator rows from this block may run in parallel (default: `1`) |
+| any other key | yes | A scalar or list of values used as `env()` overrides when rebuilding the source config |
+
+When multiple override keys are lists, iteration is zip-style: the shortest list length determines the number of passes.
 
 ---
 
@@ -284,6 +329,7 @@ object "host" {
   interface        { … }   # repeatable — nested interface loop
   inventory_item   { … }   # repeatable — nested inventory item loop
   disk             { … }   # repeatable — nested disk loop
+  module           { … }   # repeatable — nested module loop
 }
 ```
 
@@ -421,12 +467,24 @@ interface {
 
 ### `ip_address` block
 
-Nested inside `interface`. Same structure as `interface` but targets `ipam.ip-addresses`.
+Nested inside `interface`. Same structure as `interface` but targets `ipam.ip_addresses`.
 
 | Attribute | Required | Description |
 |---|---|---|
 | `source_items` | yes | Dotted path to the list of IPs on the interface object |
 | `primary_if` | no | `"first"` sets the first IP as `primary_ip4` on the parent object |
+| `oob_if` | no | `"first"` sets the first IP as the out-of-band primary IP on the parent object |
+| `enabled_if` | no | Boolean expression |
+
+### `tagged_vlan` block
+
+Nested inside `interface`. Each source item is resolved to a VLAN and attached as a tagged VLAN on the parent interface.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `source_items` | yes | Dotted path or expression resolving to VLAN-like items on the interface object |
+| `netbox_resource` | no | NetBox resource to upsert/lookup (default: `ipam.vlans`) |
+| `lookup_by` | no | Fields used to dedupe/upsert VLANs (default: `["vid"]`) |
 | `enabled_if` | no | Boolean expression |
 
 ### `inventory_item` block
@@ -489,7 +547,6 @@ The engine performs a four-step chain for every source item:
 | `source_items` | yes | Dotted path to the list of components on the parent object |
 | `profile` | no | Human-readable category label stored in `ModuleConfig` (e.g. `"CPU"`, `"Memory"`) |
 | `dedupe_by` | no | Expression used as a deduplication key |
-| `filter_if` | no | Per-item boolean expression; falsy items are skipped (evaluated per source item) |
 | `enabled_if` | no | Boolean expression; entire block is skipped when `false` |
 
 **Special field names** interpreted by the module processor:
@@ -501,6 +558,15 @@ The engine performs a four-step chain for every source item:
 | `position` | no | Numeric or string position passed to the bay template |
 | `serial` | no | Serial number of the installed module |
 | `manufacturer` | no | Manufacturer name (looked up / created automatically) |
+
+### `power_input` block
+
+Nested inside `module`. When present, the engine creates a `dcim.power_ports` record on the installed module after each successful module upsert.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `name` | no | Expression for the power port name |
+| `type` | no | Expression for the NetBox power-port type slug (defaults to `iec-60320-c14`) |
 
 ---
 

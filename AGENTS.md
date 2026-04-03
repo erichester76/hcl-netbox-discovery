@@ -1,181 +1,219 @@
 # AGENTS.md
 
-**Agent Instructions – Baseline for This Repository**
-This file provides specific guidance for AI coding agents working in this project.  
+Repository-specific guidance for AI coding agents working in `hcl-netbox-discovery`.
 
-**Core Rule**: Stay strictly focused on the exact task requested. Do not expand scope, add extra features, or over-deliver unless explicitly asked.
+## First Read
 
-Always read all .md files in /docs before beginning a task (ARCHITECTURE.md especially).
+Before changing code, read:
 
-## How to Approach Any Task
-- Read the user's request carefully and implement **only** what is asked.
-- Do not add "nice-to-have" improvements, refactoring, new tests, or extra documentation unless the request specifically mentions them.
-- If the request is ambiguous, ask for clarification instead of making assumptions.
-- Keep changes minimal, surgical, and targeted.
-- After completing the requested change, stop. Do not suggest or implement additional work.
+1. `README.md`
+2. `docs/ARCHITECTURE.md`
+3. `docs/HCL_REFERENCE.md`
 
-## Repository Guidelines (Summary for Agents)
+Those three files describe the current execution model, HCL surface area, and the split between the web UI and the scheduler worker.
 
-### Project Structure & Module Organization
-- All source code belongs in the `/src` directory.
-- All variables and credentials are defined in `.env.example`. Copy `.env.example` to `.env` for local development and testing. Never commit secrets.
+## Project Reality
 
-### Build, Test, and Development Commands
-- Use the project's configured build and package manager for dependency installation and running commands.
-- Run tests using the project's test runner.
-- Format code using the project's configured formatter.
-- Build container: `docker build .`
+- This repository does **not** use a `/src` layout. Main code lives in `collector/`, `web/`, `lib/`, `main.py`, and `web_server.py`.
+- The primary Python metadata file is `pyproject.toml`.
+- Poetry is the primary dependency and environment workflow.
+- `requirements.txt` and `requirements-dev.txt` are legacy/fallback install paths and should not become the primary source of truth.
+- The project targets Python 3.12 in packaging and CI.
+- Formatting and linting use `ruff`, not `black`.
+- Tests use `pytest`.
+- The long-running worker is `poetry run python main.py --run-scheduler`.
+- The Flask UI entry point is `poetry run python web_server.py`.
 
-**Docker Maintenance**:
-- Maintain the `Dockerfile` and `docker-compose.yml` files so they remain up to date and functional.
-- Ensure the build section in `Dockerfile` accurately reflects current dependencies, runtime version, and entrypoint.
-- Update `docker-compose.yml` whenever environment variables, ports, volumes, or services change.
-- Any code or dependency changes that affect the container must include corresponding updates to `Dockerfile` and/or `docker-compose.yml`.
+## Development Commands
 
-**Dependency Management**:
-- Maintain the primary dependency file (`pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`, `composer.json`, etc.) as the single source of truth.
-- Keep any generated lockfiles or exported files synchronized when dependencies change.
-- When adding dependencies, use the project's official package manager commands.
-- Never edit generated dependency files manually.
+Use the lightest command that fits the task.
 
-### Documentation Guidelines
-- Keep `README.md` up to date at all times.
-- Maintain a high-level `ARCHITECTURE.md` file in /docs that describes the overall system design, major components, data flows, and key decisions.
-- When making changes that affect how the project works, update the relevant documentation in the same commit/PR.
+### Local environment
 
-### UI Guidelines
-- Adhere to WCAG and Section 508 Standards for ADA Compliance
-- The official Clemson University color palette is anchored by Clemson Orange (RGB: 245, 102, 0) and Regalia (purple, RGB: 82, 45, 128).
-These primary colors are supported by neutrals including Goal Line (white, RGB: 255, 255, 255) and College Avenue (dark gray, RGB: 51, 51, 51)
-- More standards available at https://www.clemson.edu/brand/web/
-- 
-### Commenting Guidelines
-- Keep comments concise and minimal.
-- Add only a standard stock header at the top of every new or significantly modified file.
-- Comment **only** when the logic is not obvious from reading the code.
-- Comment important decisions, trade-offs, or compromises that need to be addressed later.
-- Every comment must include the date (YYYY-MM-DD) and reference any relevant issue number (e.g., `#123`).
-- Avoid redundant comments that simply restate what the code does.
-
-### Stock Header Template
-Use the following standard stock header at the top of **every new or significantly modified file**. Replace placeholders as needed.
-
-**Python example:**
-```python
-"""
-File: src/example_module.py
-Purpose: Brief one-line description of the file's responsibility.
-Created: YYYY-MM-DD
-Author: [Your Name / Team]
-Last Changed: [Your Name] Issue: #123
-"""
-```
-**Go example:**
-```go
-// File: src/example.go
-// Purpose: Brief one-line description of the file's responsibility.
-// Created: YYYY-MM-DD
-// Last Changed: [Your Name] Issue: #123
-```
-**Rust example:**
-```rust
-//! File: src/example.rs
-//! Purpose: Brief one-line description of the file's responsibility.
-//! Created: YYYY-MM-DD
-//! Last Changed: [Your Name] Issue: #123
-```
-**TypeScript / JavaScript example:**
-```javascript
-/**
- * File: src/example.ts
- * Purpose: Brief one-line description of the file's responsibility.
- * Created: YYYY-MM-DD
- * Last Changed: [Your Name] Issue: #123
- */
-```
-**PHP example:**
-```php
-<?php
-/**
- * File: src/example.php
- * Purpose: Brief one-line description of the file's responsibility.
- * Created: YYYY-MM-DD
- * Last Changed: [Your Name] Issue: #123
- */
+```bash
+pip install --user poetry
+poetry install --with dev
 ```
 
-### Logging Guidelines
-- Use the project language's standard logging approach.
-- **INFO level**: Use sparingly — only for high-level important events.
-- **WARNING level**: Use for recoverable issues and situations that require attention.
-- **ERROR level**: Use for errors and failed operations.
-- **DEBUG level**: Use heavily for detailed tracing, decision paths, and internal state — especially in complex logic.
-- Configure log levels appropriately per environment (more verbose in development).
-- Do not log sensitive information such as PHI or PII. (mask or omit)
+Run commands via Poetry:
 
-### Commit & Pull Request Guidelines
-- Use short, imperative commit messages.
-- Keep commits narrowly scoped.
-- In PRs: explain the change, note any runtime or configuration impact, link issues, and include test evidence.
+```bash
+poetry run pytest
+poetry run ruff check .
+poetry run python main.py --mapping mappings/vmware.hcl --dry-run
+```
 
-### Security & Configuration Tips
-- Store all credentials in `.env` or doppler only.
-- Never commit secrets or generated state files.
-- Follow least-privilege principles for any external integrations.
+Legacy fallback:
 
-## Language-Specific Guidelines
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+```
 
-### Python
-- Use **Poetry** as the primary dependency manager.
-- Install dependencies: `poetry install --with dev`
-- Activate environment: `eval $(poetry env activate)` or prefix commands with `poetry run`
-- Run tests: `poetry run pytest`
-- Format code: `poetry run black src tests main.py` (90-character line length)
-- Target Python 3.12+
-- Always include type hints and use explicit imports.
-- Naming: `snake_case` for modules/functions/variables, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants.
+### Tests
 
-### Go
-- Use `go mod` for dependency management (`go get`, `go mod tidy`).
-- Run tests with `go test ./...`
-- Format code with `gofmt` or `go fmt`
-- Target idiomatic Go style: short, clear variable names, explicit error handling.
-- Use structured logging (e.g., `log/slog` or `zerolog`) with appropriate levels.
-- Write godoc-style comments above exported items when needed.
+```bash
+poetry run pytest
+poetry run pytest tests/test_config.py
+poetry run pytest tests/test_web.py -q
+```
 
-### Rust
-- Use `Cargo` for dependency management (`cargo add`, `cargo build`).
-- Run tests with `cargo test`
-- Format code with `cargo fmt` and lint with `cargo clippy`
-- Follow Rust idioms: ownership, borrowing, and explicit error handling (`Result`/`Option`).
-- Use the `log` crate or `tracing` for logging with heavy debug output.
-- Prefer self-documenting code; add comments sparingly for complex logic.
+### Lint and format
 
-### Node.js / TypeScript
-- Use `npm` or `yarn` / `pnpm` for dependency management (`npm install`, `npm ci`).
-- Run tests with the project's test command (e.g., `npm test`).
-- Format and lint with the configured tools (e.g., Prettier + ESLint).
-- Prefer TypeScript with strict settings when applicable.
-- Use a mature logger (e.g., Pino or Winston) instead of `console.log`.
-- Follow async/await patterns and proper error handling.
+```bash
+poetry run ruff check .
+poetry run ruff check . --fix
+poetry run ruff format .
+poetry run pre-commit run --all-files
+```
 
-### PHP
-- Use Composer for dependency management (`composer install`, `composer require`).
-- Run tests with the project's test runner (e.g., PHPUnit).
-- Follow PSR-12 coding style where possible.
-- Use a logging library such as Monolog with appropriate levels.
-- Use type hints and strict types when supported by the PHP version.
+### Run the app
 
-## Strict Agent Rules – No Scope Creep
-- **Focus only** on the exact request. If the task is "add a function to validate X", do only that.
-- Do not refactor existing code unless explicitly asked.
-- Do not add new dependencies without explicit approval.
-- Do not improve or optimize code outside the requested change.
-- When in doubt, do less rather than more.
-- After finishing the requested task, clearly indicate completion and wait for further instructions.
+```bash
+poetry run python main.py --mapping mappings/vmware.hcl --dry-run
+poetry run python main.py --run-scheduler
+poetry run python web_server.py
+```
 
-**Remember**: The goal is reliable, incremental progress. Over-delivering creates unnecessary review burden.
+## How To Work In This Repo
 
-Refer to the full project README and other documentation for additional context when needed, but always prioritize the exact task given.
+- Stay tightly scoped to the user’s request.
+- Prefer surgical edits over broad refactors.
+- Keep changes consistent with the current architecture and naming.
+- Update docs when behavior, commands, or architecture change.
+- Add or update tests when you change behavior.
+- Do not invent new frameworks, layers, or abstractions unless the task truly requires them.
 
-Last updated: March 2026
+## Root-Cause Guardrails
+
+These rules are here because this codebase has accumulated several path-specific
+fixes that solved one symptom while leaving the underlying model inconsistent.
+
+### Job lifecycle and scheduler changes
+
+- Treat job claiming and schedule firing as **database-state problems first**, not
+  in-process coordination problems.
+- Do not rely on Python sets, thread-local state, or request-local checks as the
+  sole correctness mechanism for queue claiming or schedule de-duplication.
+- If you touch CLI runs, queued web jobs, or scheduled jobs, compare all three
+  paths and keep their persisted metadata and terminal status semantics aligned.
+- Prefer one shared execution/finish path over separate near-duplicate flows.
+- If a run can complete with item-level errors, ensure the persisted status
+  distinguishes that from full success.
+
+### Failure semantics and data quality
+
+- Do not silently convert fetch failures into empty collections unless the user
+  explicitly asked for best-effort behavior and the docs/tests are updated to
+  say so.
+- Do not swallow expression/config evaluation errors and then continue with
+  placeholder writes unless the placeholder behavior is explicitly intended.
+- Be especially careful with `"Unknown"`-style fallback objects. Missing required
+  source data should usually fail, skip, or mark partial rather than create
+  shared junk records.
+- If a behavior is intentionally best-effort, log it at a level operators will
+  actually see and document the consequence.
+
+### Nested write integrity
+
+- Child objects must not be promoted or linked as if their parent write
+  succeeded when the parent write actually failed.
+- For parent/child flows such as interface → IP → primary IP assignment, guard
+  the whole downstream chain on the parent object existing in NetBox.
+- Keep object integrity more important than “partial progress” when the partial
+  progress would produce misleading or unattached records.
+
+### Retry, transport, and adapter behavior
+
+- Do not add another retry loop on top of an existing retry loop without first
+  proving why the current layer cannot own the behavior.
+- Prefer one shared transport/retry policy per subsystem instead of duplicating
+  session setup, timeout defaults, SSL handling, and backoff behavior across
+  adapters.
+- If an option is documented and parsed, wire it through completely or remove
+  it. Avoid dead configuration surface area.
+- When adapter behavior diverges from other adapters, document why the
+  difference is intentional.
+
+### Reporting and observability
+
+- Counters, summaries, and job statuses must describe what actually happened.
+- Do not record `created`, `updated`, `skipped`, or `success` unless the code
+  can truly distinguish that outcome.
+- Logging capture should include the important lifecycle and failure events for a
+  job, not just the happy-path collector internals.
+
+### Web and security changes
+
+- Any new state-changing Flask route must be reviewed for authentication,
+  authorization, and CSRF implications.
+- Do not assume the web UI is private unless the task explicitly states that as
+  a deployment constraint.
+
+### Testing expectations
+
+- Prefer tests that drive the real production path over tests that reimplement
+  the same logic with mocks.
+- For scheduler and queue changes, add tests that exercise cross-path
+  invariants, not just one entry point.
+- For bug fixes, add at least one regression test that would have failed before
+  the fix and passes after it.
+- For retries, pagination, and adapter fetch logic, test the full call chain so
+  stacked retries or silent fallbacks are visible.
+
+## Review-To-Delivery Workflow
+
+- When working from review findings, group the work by root cause instead of
+  applying one-off local patches in unrelated branches.
+- Prefer one GitHub issue per root cause area or tightly related bug family.
+- In issue and PR descriptions, call out:
+  - the invariant being restored
+  - the execution paths affected
+  - the regression tests added
+- Keep branches focused. Avoid mixing scheduler lifecycle work, engine integrity
+  fixes, and adapter transport refactors in one PR unless the user explicitly
+  wants a larger coordinated change.
+
+## Codebase Landmarks
+
+- `collector/config.py`: HCL parsing and config dataclasses
+- `collector/engine.py`: main orchestration and threaded object processing
+- `collector/field_resolvers.py`: expression evaluation helpers used by HCL
+- `collector/prerequisites.py`: ensure/lookup helpers for NetBox prerequisites
+- `collector/db.py`: shared SQLite jobs/logs/schedules/settings store
+- `collector/sources/`: source adapters
+- `lib/pynetbox2.py`: NetBox client wrapper with cache, retry, and upsert behavior
+- `web/app.py`: Flask routes and web-side job queueing
+- `tests/`: primary regression safety net
+
+## Documentation Expectations
+
+If you change:
+
+- CLI or web behavior: update `README.md`
+- system design or runtime flow: update `docs/ARCHITECTURE.md`
+- HCL syntax or supported options: update `docs/HCL_REFERENCE.md`
+- contributor/developer workflow: update `CONTRIBUTING.md` or `docs/DEVELOPER_ONBOARDING.md`
+
+## Safety Notes
+
+- Never commit secrets.
+- Treat `.env.example` as the reference list of supported environment variables.
+- Be careful with SQLite schema changes in `collector/db.py`; the web UI and scheduler both depend on that file.
+- Preserve the web/scheduler split: the web UI queues jobs, and the scheduler worker executes them.
+
+## Testing Heuristics
+
+- For parser/config changes: run `poetry run pytest tests/test_config.py`
+- For engine changes: run the relevant `poetry run pytest tests/test_engine*.py` modules
+- For DB or scheduler changes: run `poetry run pytest tests/test_db.py tests/test_main.py tests/test_web.py`
+- For source adapter changes: run the matching adapter test module with `poetry run pytest`
+
+## Scope Discipline
+
+- Do exactly what was asked.
+- Do not silently rewrite unrelated docs or code.
+- If you notice stale guidance that directly affects the requested task, fix it in the same change and mention it clearly.
+
+Last updated: 2026-04-01

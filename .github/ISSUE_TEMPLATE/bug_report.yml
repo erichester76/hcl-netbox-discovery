@@ -1,0 +1,86 @@
+name: Bug report
+description: Report a defect, regression, or unexpected behavior in the collector, web UI, scheduler, or docs.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please give us enough detail to reproduce the problem and understand the impact.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+      placeholder: A short description of the bug and the expected behavior.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of the project appears to be involved?
+      options:
+        - collector engine
+        - HCL parser / config
+        - source adapter
+        - NetBox integration
+        - web UI
+        - scheduler / job queue
+        - database / settings
+        - Docker / deployment
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps, commands, inputs, or mappings needed to reproduce the issue.
+      placeholder: |
+        1. Run `python main.py ...`
+        2. Use mapping `mappings/...`
+        3. Open `/jobs/...`
+        4. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, traceback, or screenshots
+      description: Paste any relevant output, traceback, or screenshots. Redact secrets before submitting.
+      render: shell
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Python version, OS, how you installed dependencies, and whether you ran via CLI, scheduler, Docker, or web UI.
+      placeholder: |
+        - OS:
+        - Python:
+        - Install method:
+        - Run path:
+        - NetBox version:
+
+  - type: textarea
+    id: mapping
+    attributes:
+      label: Relevant mapping or configuration details
+      description: Share the relevant HCL block, env vars used, or source adapter settings. Remove secrets before posting.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues before opening this one.
+          required: true
+        - label: I removed or redacted secrets, tokens, passwords, and sensitive hostnames.
+          required: true
