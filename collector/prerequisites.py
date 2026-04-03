@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +46,23 @@ def slugify(value: str) -> str:
     return slug[:100]
 
 
-def extract_id(obj: Any) -> Optional[int]:
+def extract_id(obj: Any) -> int | None:
     """Return the integer ``id`` from a pynetbox record, dict, or None."""
     if obj is None:
         return None
     if isinstance(obj, dict):
         return obj.get("id")
     return getattr(obj, "id", None)
+
+
+def require_text_arg(args: dict[str, Any], key: str, method_name: str) -> str:
+    """Return a non-empty text argument or raise a clear validation error."""
+    value = args.get(key)
+    if isinstance(value, str):
+        value = value.strip()
+    if not value:
+        raise ValueError(f"{method_name} requires a non-empty {key!r}")
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +102,8 @@ class PrerequisiteRunner:
     # Individual methods
     # ------------------------------------------------------------------
 
-    def _ensure_manufacturer(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_manufacturer(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_manufacturer")
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_manufacturer name=%s", name)
@@ -105,8 +115,8 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_device_type(self, args: dict, dry_run: bool) -> Optional[int]:
-        model = args.get("model") or "Unknown"
+    def _ensure_device_type(self, args: dict, dry_run: bool) -> int | None:
+        model = require_text_arg(args, "model", "ensure_device_type")
         manufacturer_id = args.get("manufacturer")
         slug = slugify(model)
         payload: dict[str, Any] = {"model": model, "slug": slug}
@@ -121,8 +131,8 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("dcim.device_types", payload, lookup_fields=lookup)
         return extract_id(obj)
 
-    def _ensure_device_role(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_device_role(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_device_role")
         slug = slugify(name)
         color = args.get("color", "9e9e9e")
         if dry_run:
@@ -135,8 +145,8 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_site(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_site(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_site")
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_site name=%s", name)
@@ -148,7 +158,7 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_location(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_location(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -164,7 +174,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("dcim.locations", payload, lookup_fields=lookup)
         return extract_id(obj)
 
-    def _ensure_rack(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_rack(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -182,7 +192,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("dcim.racks", payload, lookup_fields=lookup)
         return extract_id(obj)
 
-    def _ensure_platform(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_platform(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -218,8 +228,8 @@ class PrerequisiteRunner:
                 raise
         return extract_id(obj)
 
-    def _ensure_cluster_type(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_cluster_type(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_cluster_type")
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_type name=%s", name)
@@ -231,8 +241,8 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_cluster_group(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_cluster_group(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_cluster_group")
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_group name=%s", name)
@@ -244,8 +254,8 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_cluster(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_cluster(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_cluster")
         payload: dict[str, Any] = {"name": name}
         for key in ("type", "group", "site"):
             if args.get(key) is not None:
@@ -256,8 +266,8 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("virtualization.clusters", payload, lookup_fields=["name"])
         return extract_id(obj)
 
-    def _ensure_inventory_item_role(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_inventory_item_role(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_inventory_item_role")
         slug = slugify(name)
         color = args.get("color", "9e9e9e")
         if dry_run:
@@ -318,7 +328,7 @@ class PrerequisiteRunner:
 
         return result
 
-    def _ensure_tenant_group(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_tenant_group(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -332,7 +342,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("tenancy.tenant_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
-    def _ensure_contact_group(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_contact_group(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -346,7 +356,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("tenancy.contact_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
-    def _ensure_region(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_region(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -360,7 +370,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("dcim.regions", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
-    def _ensure_vlan_group(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_vlan_group(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -379,7 +389,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("ipam.vlan_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
-    def _ensure_vrf(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_vrf(self, args: dict, dry_run: bool) -> int | None:
         name = args.get("name")
         if not name:
             return None
@@ -394,8 +404,8 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("ipam.vrfs", payload, lookup_fields=["name"])
         return extract_id(obj)
 
-    def _ensure_tenant(self, args: dict, dry_run: bool) -> Optional[int]:
-        name = args.get("name") or "Unknown"
+    def _ensure_tenant(self, args: dict, dry_run: bool) -> int | None:
+        name = require_text_arg(args, "name", "ensure_tenant")
         slug = slugify(name)
         payload: dict[str, Any] = {"name": name, "slug": slug}
         if args.get("description"):
@@ -408,7 +418,7 @@ class PrerequisiteRunner:
         obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
-    def _lookup_tenant(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _lookup_tenant(self, args: dict, dry_run: bool) -> int | None:
         """Read-only tenant lookup by name.  Never creates the tenant."""
         name = args.get("name")
         if not name:
@@ -424,10 +434,10 @@ class PrerequisiteRunner:
     # Module bay / module type helpers (used by engine._process_modules)
     # ------------------------------------------------------------------
 
-    def _ensure_module_bay_template(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_module_bay_template(self, args: dict, dry_run: bool) -> int | None:
         """Ensure a ModuleBayTemplate exists on a DeviceType."""
         device_type_id = args.get("device_type")
-        name = args.get("name") or "Unknown"
+        name = require_text_arg(args, "name", "ensure_module_bay_template")
         position = args.get("position", "")
         if device_type_id is None:
             return None
@@ -447,10 +457,10 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_module_bay(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_module_bay(self, args: dict, dry_run: bool) -> int | None:
         """Ensure a ModuleBay exists on a Device."""
         device_id = args.get("device")
-        name = args.get("name") or "Unknown"
+        name = require_text_arg(args, "name", "ensure_module_bay")
         position = args.get("position", "")
         if device_id is None:
             return None
@@ -470,7 +480,7 @@ class PrerequisiteRunner:
         )
         return extract_id(obj)
 
-    def _ensure_module_type_profile(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_module_type_profile(self, args: dict, dry_run: bool) -> int | None:
         """Ensure a ModuleTypeProfile exists and return its numeric ID.
 
         *args* may contain:
@@ -487,7 +497,7 @@ class PrerequisiteRunner:
         the upsert so it is always written even when the profile already exists
         and the upsert would otherwise skip unchanged fields.
         """
-        name = args.get("name") or "Unknown"
+        name = require_text_arg(args, "name", "ensure_module_type_profile")
         slug = slugify(name)
         schema: Any = args.get("schema")
         # Auto-generate a minimal schema from attribute names so that NetBox
@@ -520,7 +530,7 @@ class PrerequisiteRunner:
                 )
         return profile_id
 
-    def _ensure_module_type(self, args: dict, dry_run: bool) -> Optional[int]:
+    def _ensure_module_type(self, args: dict, dry_run: bool) -> int | None:
         """Ensure a ModuleType exists (model + optional manufacturer + optional profile).
 
         When *args* includes an ``attributes`` dict the values are applied to
@@ -530,7 +540,7 @@ class PrerequisiteRunner:
         request causes attributes to be silently ignored on some NetBox
         versions, so the two-step approach is mandatory.
         """
-        model = args.get("model") or "Unknown"
+        model = require_text_arg(args, "model", "ensure_module_type")
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
         profile_name = args.get("profile")
