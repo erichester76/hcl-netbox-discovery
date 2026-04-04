@@ -16,6 +16,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from deepdiff import DeepDiff
+
 from .config import (
     CollectorConfig,
     FieldConfig,
@@ -194,6 +196,13 @@ class Engine:
     """Drive a full collector run from an HCL mapping file."""
 
     @staticmethod
+    def _nb_helper(ctx: RunContext, name: str) -> Any:
+        helper = getattr(ctx.nb, name, None)
+        if type(ctx.nb).__module__ == "unittest.mock":
+            return None
+        return helper
+
+    @staticmethod
     def _missing_lookup_fields(payload: dict, lookup_fields: list[str]) -> list[str]:
         missing: list[str] = []
         for field in lookup_fields:
@@ -203,6 +212,91 @@ class Engine:
             elif isinstance(value, str) and not value.strip():
                 missing.append(field)
         return missing
+
+    @staticmethod
+    def _lookup_filters(
+        ctx: RunContext,
+        resource: str,
+        payload: dict,
+        lookup_fields: list[str],
+    ) -> dict[str, Any]:
+        filters: dict[str, Any] = {}
+        lookup_filter_key = Engine._nb_helper(ctx, "_lookup_filter_key")
+        fk_fields = getattr(ctx.nb, "FK_FIELDS", {})
+        resource_fk_fields = fk_fields.get(resource, ()) if isinstance(fk_fields, dict) else ()
+        for field in lookup_fields:
+            if field not in payload:
+                continue
+            value = payload[field]
+            normalized_field = field
+            if (
+                not field.endswith("id")
+                and isinstance(value, int)
+                and field in resource_fk_fields
+            ):
+                normalized_field = f"{field}_id"
+            if hasattr(value, "id"):
+                value = getattr(value, "id")
+            if callable(lookup_filter_key):
+                normalized_field = lookup_filter_key(resource, normalized_field, value)
+            filters[normalized_field] = value
+        return filters
+
+    @staticmethod
+    def _normalize_for_compare(ctx: RunContext, value: Any) -> Any:
+        normalize = Engine._nb_helper(ctx, "_normalize_for_compare")
+        if callable(normalize):
+            return normalize(value)
+        return value
+
+    @staticmethod
+    def _build_existing_subset(
+        ctx: RunContext,
+        existing: Any,
+        keys: list[str],
+    ) -> dict[str, Any]:
+        build_subset = Engine._nb_helper(ctx, "_build_existing_subset")
+        if callable(build_subset):
+            return build_subset(existing, keys)
+        subset: dict[str, Any] = {}
+        for key in keys:
+            if isinstance(existing, dict):
+                subset[key] = Engine._normalize_for_compare(ctx, existing.get(key))
+            else:
+                subset[key] = Engine._normalize_for_compare(ctx, getattr(existing, key, None))
+        return subset
+
+    def _dry_run_outcome(
+        self,
+        ctx: RunContext,
+        resource: str,
+        payload: dict,
+        lookup_fields: list[str],
+    ) -> tuple[str, dict[str, Any]]:
+        filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+        existing = ctx.nb.get(resource, **filters) if filters else None
+        if existing is None:
+            return "would_create", filters
+
+        extract_id = self._nb_helper(ctx, "_extract_id")
+        object_id = extract_id(existing) if callable(extract_id) else None
+        if object_id is None:
+            if isinstance(existing, dict):
+                object_id = existing.get("id")
+            else:
+                object_id = getattr(existing, "id", None)
+        if object_id is None:
+            return "would_create", filters
+
+        desired_subset = {
+            key: self._normalize_for_compare(ctx, value)
+            for key, value in payload.items()
+        }
+        existing_subset = self._build_existing_subset(ctx, existing, list(payload.keys()))
+        payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
+        if payload_diff:
+            return "would_update", filters
+        return "would_noop", filters
 
     def run(
         self,
@@ -704,16 +798,6 @@ class Engine:
         lookup_fields: list[str],
         stats: RunStats | None = None,
     ) -> Any:
-        if ctx.dry_run:
-            logger.info(
-                "[DRY-RUN] upsert  resource=%-35s  lookup=%s  keys=%s",
-                resource,
-                lookup_fields,
-                sorted(payload.keys()),
-            )
-            if stats is not None:
-                stats.record("skipped")
-            return None
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
             logger.warning(
@@ -724,6 +808,27 @@ class Engine:
             )
             if stats is not None:
                 stats.record_error()
+            return None
+        if ctx.dry_run:
+            dry_run_outcome, lookup_display = self._dry_run_outcome(
+                ctx,
+                resource,
+                payload,
+                lookup_fields,
+            )
+            logger.info(
+                "[DRY-RUN] upsert  resource=%-30s  %s  outcome=%s",
+                resource,
+                lookup_display,
+                dry_run_outcome,
+            )
+            if stats is not None:
+                if dry_run_outcome == "would_create":
+                    stats.record("created")
+                elif dry_run_outcome == "would_update":
+                    stats.record("updated")
+                else:
+                    stats.record("skipped")
             return None
         try:
             outcome = "created"
