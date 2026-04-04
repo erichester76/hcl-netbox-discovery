@@ -295,6 +295,12 @@ class Engine:
         existing_subset = self._build_existing_subset(ctx, existing, list(payload.keys()))
         payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
         if payload_diff:
+            logger.debug(
+                "[DRY-RUN] upsert diff  resource=%s  filters=%s  diff=%s",
+                resource,
+                filters,
+                payload_diff.to_dict() if hasattr(payload_diff, "to_dict") else payload_diff,
+            )
             return "would_update", filters
         return "would_noop", filters
 
