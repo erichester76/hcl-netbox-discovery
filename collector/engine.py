@@ -304,14 +304,14 @@ class Engine:
         key: str,
         value: Any,
     ) -> Any:
-        if key == "status":
+        if key in {"status", "type"}:
             choice_value = cls._record_attr_value(value, "value")
             if choice_value is not None:
                 return str(choice_value).lower()
-            normalized_status = cls._normalize_for_compare(ctx, value)
-            if isinstance(normalized_status, str):
-                return normalized_status.lower()
-            return normalized_status
+            normalized_choice = cls._normalize_for_compare(ctx, value)
+            if isinstance(normalized_choice, str):
+                return normalized_choice.lower()
+            return normalized_choice
 
         if key in {"tags", "tagged_vlans"}:
             items = value if isinstance(value, (list, tuple, set)) else [value]

@@ -284,6 +284,25 @@ class TestEngineUpsertReporting:
         assert stats.updated == 0
         assert stats.skipped == 1
 
+    def test_dry_run_interface_type_choice_object_matches_slug(self):
+        engine = Engine()
+        stats = RunStats("interfaces")
+        nb = MagicMock()
+        existing_type = SimpleNamespace(value="40gbase-x-qsfpp", label="QSFP+ (40GE)")
+        nb.get.return_value = {"id": 77, "name": "vmnic0", "type": existing_type}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.interfaces",
+            {"name": "vmnic0", "type": "40gbase-x-qsfpp"},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result["id"] == 77
+        assert stats.updated == 0
+        assert stats.skipped == 1
+
     def test_missing_nested_lookup_records_nested_skip_without_item_error(self):
         engine = Engine()
         stats = RunStats("vms")
