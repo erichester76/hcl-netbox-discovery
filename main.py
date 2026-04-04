@@ -232,14 +232,17 @@ def _execute_job(
         finish_job(job_id, success=False)
         return False
 
-    min_level = logging.DEBUG if debug_mode else logging.INFO
-    handler = JobLogHandler(job_id, min_level=min_level)
+    root_logger = logging.getLogger()
+    original_root_level = root_logger.level
+    capture_debug_logs = debug_mode or root_logger.isEnabledFor(logging.DEBUG)
+    handler = JobLogHandler(
+        job_id,
+        min_level=logging.DEBUG if capture_debug_logs else logging.INFO,
+    )
     handler.setFormatter(
         logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
     )
-    root_logger = logging.getLogger()
-    original_root_level = root_logger.level
-    if debug_mode:
+    if capture_debug_logs:
         root_logger.setLevel(logging.DEBUG)
     root_logger.addHandler(handler)
 
