@@ -589,6 +589,13 @@ class Engine:
     # Item-level processing
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_optional_prereq_silent_failure(exc: Exception) -> bool:
+        if not isinstance(exc, ValueError):
+            return False
+        return "requires a non-empty" in str(exc)
+
+
     def _process_item(
         self,
         item: Any,
@@ -608,12 +615,13 @@ class Engine:
                 resolver = Resolver(ctx)
             except Exception as exc:
                 if prereq_cfg.optional:
-                    logger.debug(
-                        "Optional prereq %r failed (continuing): %s",
-                        prereq_cfg.name, exc,
-                    )
                     ctx.prereqs[prereq_cfg.name] = None
                     resolver = Resolver(ctx)
+                    if not self._is_optional_prereq_silent_failure(exc):
+                        logger.debug(
+                            "Optional prereq %r failed (continuing): %s",
+                            prereq_cfg.name, exc,
+                        )
                 else:
                     logger.warning(
                         "Required prereq %r failed — skipping item: %s",
