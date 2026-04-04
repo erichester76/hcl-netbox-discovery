@@ -420,7 +420,10 @@ object "node" {
     }
 
     field "model" {
-      value = "coalesce('partNumber', 'model', 'productName')"
+      # Some XClarity PSU payloads omit part/model/product fields even when
+      # bay/serial are present; fall back to a stable generic model to avoid
+      # repeated module skips for otherwise usable PSU records.
+      value = "coalesce('partNumber', 'model', 'productName', 'fruPartNumber', 'description') or 'Unknown Power Supply'"
     }
 
     field "serial" {
