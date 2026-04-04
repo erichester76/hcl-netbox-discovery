@@ -202,6 +202,25 @@ class RunStats:
         )
 
 
+class AmbiguousDryRunLookupError(ValueError):
+    """Raised when a dry-run lookup cannot resolve a single object."""
+
+    def __init__(
+        self,
+        resource: str,
+        filters: dict[str, Any],
+        match_count: int | None = None,
+        matched_ids: list[Any] | None = None,
+    ) -> None:
+        super().__init__(
+            f"Ambiguous dry-run lookup for resource={resource!r} filters={filters!r}"
+        )
+        self.resource = resource
+        self.filters = filters
+        self.match_count = match_count
+        self.matched_ids = matched_ids or []
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -457,6 +476,35 @@ class Engine:
         preview["_dry_run_resource"] = resource
         return preview
 
+    @classmethod
+    def _ambiguous_lookup_details(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        filters: dict[str, Any],
+    ) -> tuple[int | None, list[Any]]:
+        list_helper = getattr(ctx.nb, "list", None)
+        if not callable(list_helper):
+            return None, []
+        try:
+            candidates = list_helper(resource, **filters)
+        except Exception as exc:
+            logger.debug(
+                "Dry-run ambiguous lookup candidate listing failed  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            return None, []
+        if not isinstance(candidates, (list, tuple)):
+            return None, []
+        matched_ids: list[Any] = []
+        for candidate in candidates[:10]:
+            candidate_id = cls._record_attr_value(candidate, "id")
+            if candidate_id is not None:
+                matched_ids.append(candidate_id)
+        return len(candidates), matched_ids
+
     def _dry_run_outcome(
         self,
         ctx: RunContext,
@@ -467,7 +515,22 @@ class Engine:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None
-        existing = ctx.nb.get(resource, **filters) if filters else None
+        try:
+            existing = ctx.nb.get(resource, **filters) if filters else None
+        except ValueError as exc:
+            if "more than one result" not in str(exc):
+                raise
+            match_count, matched_ids = self._ambiguous_lookup_details(
+                ctx,
+                resource,
+                filters,
+            )
+            raise AmbiguousDryRunLookupError(
+                resource,
+                filters,
+                match_count=match_count,
+                matched_ids=matched_ids,
+            ) from exc
         if existing is None:
             return "would_create", filters, None
 
@@ -866,7 +929,7 @@ class Engine:
         nb_obj = self._upsert(
             ctx, obj_cfg.netbox_resource, payload, obj_cfg.lookup_by, stats
         )
-        if nb_obj is None and not ctx.dry_run:
+        if nb_obj is None:
             return
 
         # 5. Process nested collections
@@ -1035,12 +1098,26 @@ class Engine:
                 )
             return None
         if ctx.dry_run:
-            dry_run_outcome, lookup_display, existing = self._dry_run_outcome(
-                ctx,
-                resource,
-                payload,
-                lookup_fields,
-            )
+            try:
+                dry_run_outcome, lookup_display, existing = self._dry_run_outcome(
+                    ctx,
+                    resource,
+                    payload,
+                    lookup_fields,
+                )
+            except AmbiguousDryRunLookupError as exc:
+                logger.warning(
+                    "Dry-run lookup ambiguous  resource=%s  filters=%s  match_count=%s  matched_ids=%s",
+                    exc.resource,
+                    exc.filters,
+                    exc.match_count if exc.match_count is not None else "unknown",
+                    exc.matched_ids,
+                )
+                if stats is not None:
+                    stats.record_error()
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
+                return None
             logger.info(
                 "[DRY-RUN] upsert  resource=%-30s  %s  outcome=%s",
                 resource,
