@@ -307,7 +307,7 @@ object "vm" {
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "source('network')"
+      value = "coalesce(source('network'), source('macAddress'))"
     }
 
     field "mac_address" {
