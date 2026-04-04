@@ -31,7 +31,12 @@ from .config import (
 )
 from .context import RunContext
 from .field_resolvers import Resolver, walk_path
-from .prerequisites import PrerequisiteRunner, extract_id, slugify
+from .prerequisites import (
+    PrerequisiteArgumentError,
+    PrerequisiteRunner,
+    extract_id,
+    slugify,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +188,7 @@ class RunStats:
             self.nested_skipped[reason] = self.nested_skipped.get(reason, 0) + 1
 
     def log_summary(self) -> None:
+        nested_skipped = dict(sorted(self.nested_skipped.items()))
         logger.info(
             "Object %-24s processed=%-4d  created=%-4d  updated=%-4d  "
             "skipped=%-4d  errored=%d  nested_skipped=%s",
@@ -192,7 +198,7 @@ class RunStats:
             self.updated,
             self.skipped,
             self.errored,
-            self.nested_skipped or "{}",
+            nested_skipped or "{}",
         )
 
 
@@ -336,7 +342,7 @@ class Engine:
         existing: Any,
     ) -> Any:
         extract_id_helper = self._nb_helper(ctx, "_extract_id")
-        if callable(extract_id_helper):
+        if callable(extract_id_helper) and existing is not None:
             existing_id = extract_id_helper(existing)
         else:
             existing_id = None
@@ -680,9 +686,7 @@ class Engine:
 
     @staticmethod
     def _is_optional_prereq_silent_failure(exc: Exception) -> bool:
-        if not isinstance(exc, ValueError):
-            return False
-        return "requires a non-empty" in str(exc)
+        return isinstance(exc, PrerequisiteArgumentError)
 
 
     def _process_item(

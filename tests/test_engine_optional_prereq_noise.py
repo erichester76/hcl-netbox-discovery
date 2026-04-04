@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 from collector.config import CollectorOptions, FieldConfig, ObjectConfig, PrerequisiteConfig
 from collector.context import RunContext
 from collector.engine import Engine, RunStats
+from collector.prerequisites import PrerequisiteArgumentError
 
 
 def _make_obj_cfg() -> ObjectConfig:
@@ -45,7 +46,9 @@ def test_optional_prereq_empty_text_silenced(caplog):
     ctx = _make_ctx()
     item = {"name": "cluster"}
     prereq_runner = MagicMock()
-    prereq_runner.run.side_effect = ValueError("ensure_cluster_group requires a non-empty 'name'")
+    prereq_runner.run.side_effect = PrerequisiteArgumentError(
+        "ensure_cluster_group requires a non-empty 'name'"
+    )
     stats = RunStats(obj_cfg.name)
 
     with patch.object(engine, "_upsert", return_value={"id": 1}):
@@ -53,3 +56,21 @@ def test_optional_prereq_empty_text_silenced(caplog):
             engine._process_item(item, obj_cfg, ctx.for_item(item), prereq_runner, stats)
 
     assert "Optional prereq" not in caplog.text
+
+
+def test_optional_prereq_arbitrary_value_error_still_logs(caplog):
+    engine = Engine()
+    obj_cfg = _make_obj_cfg()
+    ctx = _make_ctx()
+    item = {"name": "cluster"}
+    prereq_runner = MagicMock()
+    prereq_runner.run.side_effect = ValueError(
+        "ensure_cluster_group requires a non-empty 'name'"
+    )
+    stats = RunStats(obj_cfg.name)
+
+    with patch.object(engine, "_upsert", return_value={"id": 1}):
+        with caplog.at_level(logging.DEBUG):
+            engine._process_item(item, obj_cfg, ctx.for_item(item), prereq_runner, stats)
+
+    assert "Optional prereq 'cluster_group' failed (continuing)" in caplog.text

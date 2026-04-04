@@ -303,3 +303,39 @@ class TestEngineUpsertReporting:
         assert stats.nested_skipped == {
             "virtualization.interfaces:virtual_machine": 1
         }
+
+    def test_dry_run_create_preview_does_not_call_extract_id_helper_with_none(self):
+        engine = Engine()
+
+        class NBClient:
+            def get(self, *args, **kwargs):
+                return None
+
+            @staticmethod
+            def _extract_id(value):
+                if value is None:
+                    raise AssertionError("_extract_id helper must not be called with None")
+                return getattr(value, "id", None)
+
+        stats = RunStats("devices")
+
+        result = engine._upsert(
+            _ctx(nb=NBClient(), dry_run=True),
+            "dcim.devices",
+            {"name": "r1"},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result["id"] < 0
+        assert result["name"] == "r1"
+
+    def test_log_summary_sorts_nested_skip_keys(self, caplog):
+        stats = RunStats("vms")
+        stats.nested_skipped["zeta"] = 1
+        stats.nested_skipped["alpha"] = 2
+
+        with caplog.at_level(logging.INFO):
+            stats.log_summary()
+
+        assert "nested_skipped={'alpha': 2, 'zeta': 1}" in caplog.text
