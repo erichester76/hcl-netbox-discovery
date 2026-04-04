@@ -334,6 +334,87 @@ class Engine:
                 return normalize(value)
         return value
 
+    @classmethod
+    def _normalize_tag_dicts(cls, value: Any) -> list[dict[str, str]]:
+        raw_items = value if isinstance(value, (list, tuple, set)) else [value]
+        normalized: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            item_name = cls._record_attr_value(item, "name")
+            if item_name is None:
+                item_name = cls._record_attr_value(item, "slug")
+            if item_name is None and isinstance(item, str):
+                item_name = item
+            if item_name is None:
+                continue
+            tag_name = str(item_name).strip()
+            if not tag_name:
+                continue
+            lower_name = tag_name.lower()
+            if lower_name in seen:
+                continue
+            seen.add(lower_name)
+            normalized.append({"name": tag_name})
+        return normalized
+
+    @classmethod
+    def _merge_tag_dicts(cls, existing_tags: Any, desired_tags: Any) -> list[dict[str, str]]:
+        merged = cls._normalize_tag_dicts(existing_tags)
+        desired = cls._normalize_tag_dicts(desired_tags)
+        existing_names = {tag["name"].lower() for tag in merged}
+        for tag in desired:
+            lower_name = tag["name"].lower()
+            if lower_name in existing_names:
+                continue
+            merged.append(tag)
+            existing_names.add(lower_name)
+        return merged
+
+    def _merge_payload_tags_for_upsert(
+        self,
+        ctx: RunContext,
+        resource: str,
+        payload: dict[str, Any],
+        lookup_fields: list[str],
+    ) -> None:
+        if "tags" not in payload:
+            return
+
+        desired_tags = payload.get("tags")
+        filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+        if not filters or any(self._is_preview_reference(v) for v in filters.values()):
+            payload["tags"] = self._normalize_tag_dicts(desired_tags)
+            return
+
+        try:
+            existing = ctx.nb.get(resource, **filters)
+        except ValueError as exc:
+            logger.debug(
+                "Tag merge lookup ambiguous  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            payload["tags"] = self._normalize_tag_dicts(desired_tags)
+            return
+        except Exception as exc:
+            logger.debug(
+                "Tag merge lookup failed  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            payload["tags"] = self._normalize_tag_dicts(desired_tags)
+            return
+
+        existing_tags = None
+        if isinstance(existing, dict):
+            existing_tags = existing.get("tags")
+        elif existing is not None:
+            existing_tags = getattr(existing, "tags", None)
+
+        payload["tags"] = self._merge_tag_dicts(existing_tags, desired_tags)
+
     @staticmethod
     def _build_existing_subset(
         ctx: RunContext,
@@ -411,13 +492,27 @@ class Engine:
             existing,
             list(desired_subset.keys()),
         )
+
+        missing_desired_tags: list[str] = []
+        if "tags" in desired_subset:
+            desired_tag_values = desired_subset.pop("tags")
+            existing_tag_values = existing_subset.pop("tags", [])
+            desired_tag_set = set(desired_tag_values if isinstance(desired_tag_values, list) else [])
+            existing_tag_set = set(existing_tag_values if isinstance(existing_tag_values, list) else [])
+            missing_desired_tags = sorted(tag for tag in desired_tag_set if tag not in existing_tag_set)
+
         payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
-        if payload_diff:
+        if payload_diff or missing_desired_tags:
+            diff_payload = payload_diff.to_dict() if hasattr(payload_diff, "to_dict") else payload_diff
+            if missing_desired_tags:
+                if not diff_payload:
+                    diff_payload = {}
+                diff_payload["tags_missing_in_existing"] = missing_desired_tags
             logger.debug(
                 "[DRY-RUN] upsert diff  resource=%s  filters=%s  diff=%s",
                 resource,
                 filters,
-                payload_diff.to_dict() if hasattr(payload_diff, "to_dict") else payload_diff,
+                diff_payload,
             )
             return "would_update", filters, existing
         return "would_noop", filters, existing
@@ -908,13 +1003,8 @@ class Engine:
         tags = payload.get("tags", [])
         if not isinstance(tags, list):
             tags = []
-        tag_dict = {"name": sync_tag}
-        existing_names = {
-            t.get("name") if isinstance(t, dict) else t for t in tags
-        }
-        if sync_tag not in existing_names:
-            tags.append(tag_dict)
-        payload["tags"] = tags
+        tags.append({"name": sync_tag})
+        payload["tags"] = Engine._normalize_tag_dicts(tags)
 
     # ------------------------------------------------------------------
     # NetBox write helpers
@@ -966,6 +1056,7 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, payload, existing)
         try:
+            self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
             outcome = "created"
             obj = None
             upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)

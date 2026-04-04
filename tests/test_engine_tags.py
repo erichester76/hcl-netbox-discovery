@@ -56,6 +56,69 @@ class TestInjectSyncTag:
         Engine._inject_sync_tag(payload, "vmware-sync")
         assert payload["tags"] == [{"name": "vmware-sync"}]
 
+    def test_deduplicates_case_insensitive_tag_names(self):
+        payload = {"tags": [{"name": "VMWARE-SYNC"}]}
+        Engine._inject_sync_tag(payload, "vmware-sync")
+        assert len(payload["tags"]) == 1
+
+
+class TestAdditiveTagBehavior:
+    def test_dry_run_noop_when_desired_tag_already_present_with_other_tags(self):
+        engine = Engine()
+        ctx = MagicMock()
+        ctx.nb.get.return_value = {
+            "id": 101,
+            "serial": "ABC123",
+            "name": "server-1",
+            "tags": [{"name": "netbox-sync"}, {"name": "xclarity-sync"}],
+        }
+        payload = {
+            "serial": "ABC123",
+            "name": "server-1",
+            "tags": [{"name": "xclarity-sync"}],
+        }
+
+        outcome, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
+
+        assert outcome == "would_noop"
+
+    def test_dry_run_update_when_desired_tag_missing(self):
+        engine = Engine()
+        ctx = MagicMock()
+        ctx.nb.get.return_value = {
+            "id": 102,
+            "serial": "ABC124",
+            "name": "server-2",
+            "tags": [{"name": "netbox-sync"}],
+        }
+        payload = {
+            "serial": "ABC124",
+            "name": "server-2",
+            "tags": [{"name": "xclarity-sync"}],
+        }
+
+        outcome, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
+
+        assert outcome == "would_update"
+
+    def test_non_dry_run_merge_keeps_existing_tags_and_adds_sync_tag(self):
+        engine = Engine()
+        ctx = MagicMock()
+        ctx.nb.get.return_value = {
+            "id": 103,
+            "serial": "ABC125",
+            "tags": [{"name": "netbox-sync"}, {"name": "manual"}],
+        }
+        payload = {"serial": "ABC125", "tags": [{"name": "xclarity-sync"}]}
+
+        engine._merge_payload_tags_for_upsert(ctx, "dcim.devices", payload, ["serial"])
+
+        assert payload["tags"] == [
+            {"name": "netbox-sync"},
+            {"name": "manual"},
+            {"name": "xclarity-sync"},
+        ]
+
 
 # ---------------------------------------------------------------------------
 # _ensure_sync_tag
