@@ -14,6 +14,8 @@ import ipaddress
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
+from itertools import count
 from typing import Any
 
 from deepdiff import DeepDiff
@@ -158,6 +160,7 @@ class RunStats:
         self.updated = 0
         self.skipped = 0
         self.errored = 0
+        self.nested_skipped: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def record(self, result: str) -> None:
@@ -175,16 +178,21 @@ class RunStats:
             self.processed += 1
             self.errored += 1
 
+    def record_nested_skip(self, reason: str) -> None:
+        with self._lock:
+            self.nested_skipped[reason] = self.nested_skipped.get(reason, 0) + 1
+
     def log_summary(self) -> None:
         logger.info(
             "Object %-24s processed=%-4d  created=%-4d  updated=%-4d  "
-            "skipped=%-4d  errored=%d",
+            "skipped=%-4d  errored=%d  nested_skipped=%s",
             self.object_name,
             self.processed,
             self.created,
             self.updated,
             self.skipped,
             self.errored,
+            self.nested_skipped or "{}",
         )
 
 
@@ -194,6 +202,10 @@ class RunStats:
 
 class Engine:
     """Drive a full collector run from an HCL mapping file."""
+
+    def __init__(self) -> None:
+        self._dry_run_id_counter = count(start=-1, step=-1)
+        self._dry_run_id_lock = threading.Lock()
 
     @staticmethod
     def _nb_helper(ctx: RunContext, name: str) -> Any:
@@ -250,21 +262,93 @@ class Engine:
         return value
 
     @staticmethod
+    def _record_attr_value(value: Any, name: str) -> Any:
+        if isinstance(value, dict):
+            return value.get(name)
+        record_dict = getattr(value, "__dict__", None)
+        if isinstance(record_dict, dict) and name in record_dict:
+            return record_dict.get(name)
+        return getattr(value, name, None)
+
+    @classmethod
+    def _normalize_compare_field(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        key: str,
+        value: Any,
+    ) -> Any:
+        if key == "status":
+            choice_value = cls._record_attr_value(value, "value")
+            if choice_value is not None:
+                return str(choice_value).lower()
+            normalized_status = cls._normalize_for_compare(ctx, value)
+            if isinstance(normalized_status, str):
+                return normalized_status.lower()
+            return normalized_status
+
+        if key in {"tags", "tagged_vlans"}:
+            items = value if isinstance(value, (list, tuple, set)) else [value]
+            normalized_items: list[Any] = []
+            for item in items:
+                item_name = cls._record_attr_value(item, "name")
+                if item_name is None:
+                    item_name = cls._record_attr_value(item, "slug")
+                if item_name is not None:
+                    normalized_items.append(str(item_name).lower())
+                    continue
+                normalized_items.append(cls._normalize_for_compare(ctx, item))
+            return sorted(normalized_items, key=repr)
+
+        normalize = cls._nb_helper(ctx, "_normalize_for_compare")
+        if callable(normalize):
+            try:
+                return normalize(value, resource=resource, key=key)
+            except TypeError:
+                return normalize(value)
+        return value
+
+    @staticmethod
     def _build_existing_subset(
         ctx: RunContext,
+        resource: str,
         existing: Any,
         keys: list[str],
     ) -> dict[str, Any]:
-        build_subset = Engine._nb_helper(ctx, "_build_existing_subset")
-        if callable(build_subset):
-            return build_subset(existing, keys)
         subset: dict[str, Any] = {}
         for key in keys:
             if isinstance(existing, dict):
-                subset[key] = Engine._normalize_for_compare(ctx, existing.get(key))
+                value = existing.get(key)
             else:
-                subset[key] = Engine._normalize_for_compare(ctx, getattr(existing, key, None))
+                value = getattr(existing, key, None)
+            subset[key] = Engine._normalize_compare_field(ctx, resource, key, value)
         return subset
+
+    def _next_dry_run_id(self) -> int:
+        with self._dry_run_id_lock:
+            return next(self._dry_run_id_counter)
+
+    def _dry_run_preview_object(
+        self,
+        ctx: RunContext,
+        resource: str,
+        payload: dict[str, Any],
+        existing: Any,
+    ) -> Any:
+        extract_id_helper = self._nb_helper(ctx, "_extract_id")
+        if callable(extract_id_helper):
+            existing_id = extract_id_helper(existing)
+        else:
+            existing_id = None
+        if existing_id is None:
+            existing_id = extract_id(existing)
+        if existing_id is not None and existing is not None:
+            return existing
+
+        preview = deepcopy(payload)
+        preview["id"] = self._next_dry_run_id()
+        preview["_dry_run_resource"] = resource
+        return preview
 
     def _dry_run_outcome(
         self,
@@ -272,11 +356,11 @@ class Engine:
         resource: str,
         payload: dict,
         lookup_fields: list[str],
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any], Any]:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         existing = ctx.nb.get(resource, **filters) if filters else None
         if existing is None:
-            return "would_create", filters
+            return "would_create", filters, None
 
         extract_id = self._nb_helper(ctx, "_extract_id")
         object_id = extract_id(existing) if callable(extract_id) else None
@@ -286,13 +370,18 @@ class Engine:
             else:
                 object_id = getattr(existing, "id", None)
         if object_id is None:
-            return "would_create", filters
+            return "would_create", filters, None
 
         desired_subset = {
-            key: self._normalize_for_compare(ctx, value)
+            key: self._normalize_compare_field(ctx, resource, key, value)
             for key, value in payload.items()
         }
-        existing_subset = self._build_existing_subset(ctx, existing, list(payload.keys()))
+        existing_subset = self._build_existing_subset(
+            ctx,
+            resource,
+            existing,
+            list(payload.keys()),
+        )
         payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
         if payload_diff:
             logger.debug(
@@ -301,8 +390,8 @@ class Engine:
                 filters,
                 payload_diff.to_dict() if hasattr(payload_diff, "to_dict") else payload_diff,
             )
-            return "would_update", filters
-        return "would_noop", filters
+            return "would_update", filters, existing
+        return "would_noop", filters, existing
 
     def run(
         self,
@@ -660,9 +749,9 @@ class Engine:
 
         # 5. Process nested collections
         try:
-            self._process_interfaces(obj_cfg, nb_obj, ctx)
-            self._process_inventory_items(obj_cfg, nb_obj, ctx)
-            self._process_disks(obj_cfg, nb_obj, ctx)
+            self._process_interfaces(obj_cfg, nb_obj, ctx, stats)
+            self._process_inventory_items(obj_cfg, nb_obj, ctx, stats)
+            self._process_disks(obj_cfg, nb_obj, ctx, stats)
             self._process_modules(obj_cfg, nb_obj, ctx)
         except Exception as exc:
             logger.error(
@@ -811,6 +900,7 @@ class Engine:
         payload: dict,
         lookup_fields: list[str],
         stats: RunStats | None = None,
+        nested_stats: RunStats | None = None,
     ) -> Any:
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
@@ -822,9 +912,13 @@ class Engine:
             )
             if stats is not None:
                 stats.record_error()
+            if nested_stats is not None:
+                nested_stats.record_nested_skip(
+                    f"{resource}:{'.'.join(missing_lookup_fields)}"
+                )
             return None
         if ctx.dry_run:
-            dry_run_outcome, lookup_display = self._dry_run_outcome(
+            dry_run_outcome, lookup_display, existing = self._dry_run_outcome(
                 ctx,
                 resource,
                 payload,
@@ -843,7 +937,7 @@ class Engine:
                     stats.record("updated")
                 else:
                     stats.record("skipped")
-            return None
+            return self._dry_run_preview_object(ctx, resource, payload, existing)
         try:
             outcome = "created"
             obj = None
@@ -901,6 +995,7 @@ class Engine:
         obj_cfg: ObjectConfig,
         parent_nb_obj: Any,
         ctx: RunContext,
+        stats: RunStats | None = None,
     ) -> None:
         parent_resolver = Resolver(ctx)
 
@@ -955,6 +1050,7 @@ class Engine:
                     iface_resource,
                     payload,
                     ["name", parent_field],
+                    nested_stats=stats,
                 )
                 iface_id = extract_id(nb_iface)
 
@@ -1007,7 +1103,13 @@ class Engine:
                             ip_payload["assigned_object_id"] = iface_id
 
                         self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
-                        nb_ip = self._upsert(ip_ctx, "ipam.ip_addresses", ip_payload, ["address"])
+                        nb_ip = self._upsert(
+                            ip_ctx,
+                            "ipam.ip_addresses",
+                            ip_payload,
+                            ["address"],
+                            nested_stats=stats,
+                        )
 
                         # Set primary IPv4 or IPv6 on parent object based on address version
                         if (
@@ -1284,6 +1386,7 @@ class Engine:
         obj_cfg: ObjectConfig,
         parent_nb_obj: Any,
         ctx: RunContext,
+        stats: RunStats | None = None,
     ) -> None:
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
@@ -1350,6 +1453,7 @@ class Engine:
                     "dcim.inventory_items",
                     payload,
                     ["device", "name"],
+                    nested_stats=stats,
                 )
 
     def _process_disks(
@@ -1357,6 +1461,7 @@ class Engine:
         obj_cfg: ObjectConfig,
         parent_nb_obj: Any,
         ctx: RunContext,
+        stats: RunStats | None = None,
     ) -> None:
         for disk_cfg in obj_cfg.disks:
             resolver = Resolver(ctx)
@@ -1399,6 +1504,7 @@ class Engine:
                     "virtualization.virtual_disks",
                     payload,
                     ["virtual_machine", "name"],
+                    nested_stats=stats,
                 )
 
     def _process_modules(
