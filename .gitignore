@@ -46,3 +46,6 @@ env/
 
 # Runtime data (SQLite job DB)
 data/
+
+# Sync capture artifacts
+run-artifacts/

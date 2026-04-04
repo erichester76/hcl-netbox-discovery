@@ -236,6 +236,37 @@ VCENTER_USER=administrator@vsphere.local
 VCENTER_PASS=secret
 ```
 
+### Capture Run Artifacts
+
+For a pull-based feedback loop, run the capture helper on the remote Docker
+host where real syncs execute:
+
+```bash
+python src/capture_sync_job.py mappings/vmware.hcl --artifact-root /var/tmp/hcl-sync-artifacts
+```
+
+Each run writes a timestamped directory containing:
+
+- `manifest.json`
+- `stdout.log`
+- `stderr.log`
+- `env-context.json`
+- `collector-db-slice.json`
+- `job-summary.json`
+- `job_logs.log`
+- `DONE`
+
+The `DONE` file is written last so the local dev machine can safely pull only
+completed bundles.
+
+On the local dev machine, pull completed bundles over SSH:
+
+```bash
+python src/pull_sync_artifacts.py prod-docker-host /var/tmp/hcl-sync-artifacts
+```
+
+By default, pulled bundles land in `run-artifacts/inbox/` for review.
+
 ---
 
 ## Configuration
