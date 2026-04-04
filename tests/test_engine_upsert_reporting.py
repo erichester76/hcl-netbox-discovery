@@ -304,6 +304,51 @@ class TestEngineUpsertReporting:
             "virtualization.interfaces:virtual_machine": 1
         }
 
+    def test_dry_run_preview_parent_lookup_skips_remote_get(self):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+        nb.get.side_effect = AssertionError("preview-parent child lookup should not call NetBox")
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "virtualization.interfaces",
+            {"name": "eth0", "virtual_machine": -7},
+            lookup_fields=["name", "virtual_machine"],
+            stats=stats,
+        )
+
+        assert result["id"] < 0
+        assert stats.created == 1
+        nb.get.assert_not_called()
+
+    def test_dry_run_ignores_preview_relation_fields_in_diff(self):
+        engine = Engine()
+        stats = RunStats("ip-addresses")
+        nb = MagicMock()
+        nb.get.return_value = {
+            "id": 55,
+            "address": "10.0.0.1/24",
+            "assigned_object_id": 58,
+            "assigned_object_type": "dcim.interface",
+        }
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "ipam.ip_addresses",
+            {
+                "address": "10.0.0.1/24",
+                "assigned_object_id": -1,
+                "assigned_object_type": "dcim.interface",
+            },
+            lookup_fields=["address"],
+            stats=stats,
+        )
+
+        assert result["id"] == 55
+        assert stats.updated == 0
+        assert stats.skipped == 1
+
     def test_dry_run_create_preview_does_not_call_extract_id_helper_with_none(self):
         engine = Engine()
 

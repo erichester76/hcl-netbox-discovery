@@ -261,6 +261,26 @@ class Engine:
         return filters
 
     @staticmethod
+    def _is_preview_reference(value: Any) -> bool:
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return value < 0
+        if isinstance(value, dict):
+            preview_id = value.get("id")
+            return (
+                isinstance(preview_id, int)
+                and preview_id < 0
+                and "_dry_run_resource" in value
+            )
+        preview_id = getattr(value, "id", None)
+        return (
+            isinstance(preview_id, int)
+            and preview_id < 0
+            and getattr(value, "_dry_run_resource", None) is not None
+        )
+
+    @staticmethod
     def _normalize_for_compare(ctx: RunContext, value: Any) -> Any:
         normalize = Engine._nb_helper(ctx, "_normalize_for_compare")
         if callable(normalize):
@@ -364,6 +384,8 @@ class Engine:
         lookup_fields: list[str],
     ) -> tuple[str, dict[str, Any], Any]:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+        if any(self._is_preview_reference(value) for value in filters.values()):
+            return "would_create", filters, None
         existing = ctx.nb.get(resource, **filters) if filters else None
         if existing is None:
             return "would_create", filters, None
@@ -381,12 +403,13 @@ class Engine:
         desired_subset = {
             key: self._normalize_compare_field(ctx, resource, key, value)
             for key, value in payload.items()
+            if not self._is_preview_reference(value)
         }
         existing_subset = self._build_existing_subset(
             ctx,
             resource,
             existing,
-            list(payload.keys()),
+            list(desired_subset.keys()),
         )
         payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
         if payload_diff:

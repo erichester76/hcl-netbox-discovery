@@ -167,7 +167,7 @@ class TestInterfaceWriteIntegrity:
         assert ctx.nb.get.call_args_list[1].args[0] == "dcim.interfaces"
         assert ctx.nb.get.call_args_list[1].kwargs == {"name": "mgmt0", "device": 101}
 
-    def test_dry_run_created_vm_uses_preview_id_for_nested_children(self):
+    def test_dry_run_created_vm_skips_child_gets_against_preview_parent(self):
         engine = Engine()
         ctx = _make_ctx(
             {
@@ -197,11 +197,7 @@ class TestInterfaceWriteIntegrity:
                 )
             ],
         )
-        ctx.nb.get.side_effect = [
-            None,
-            None,
-            None,
-        ]
+        ctx.nb.get.return_value = None
 
         engine._process_item(
             ctx.source_obj,
@@ -211,12 +207,6 @@ class TestInterfaceWriteIntegrity:
             stats,
         )
 
-        assert ctx.nb.get.call_args_list[1].args[0] == "virtualization.interfaces"
-        preview_vm_id = ctx.nb.get.call_args_list[1].kwargs["virtual_machine"]
-        assert isinstance(preview_vm_id, int)
-        assert preview_vm_id < 0
-        assert ctx.nb.get.call_args_list[2].args[0] == "virtualization.virtual_disks"
-        assert ctx.nb.get.call_args_list[2].kwargs == {
-            "name": "Hard disk 1",
-            "virtual_machine": preview_vm_id,
-        }
+        assert len(ctx.nb.get.call_args_list) == 1
+        assert ctx.nb.get.call_args_list[0].args[0] == "virtualization.virtual_machines"
+        assert ctx.nb.get.call_args_list[0].kwargs == {"name": "vm-01"}
