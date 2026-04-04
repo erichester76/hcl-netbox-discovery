@@ -152,3 +152,75 @@ class TestEngineUpsertReporting:
         assert stats.errored == 1
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
+
+    def test_dry_run_created_outcome_counts_created(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = None
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.devices",
+            {"name": "r1"},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.created == 1
+        assert stats.updated == 0
+        assert stats.skipped == 0
+        assert stats.errored == 0
+        nb.get.assert_called_once_with("dcim.devices", name="r1")
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
+
+    def test_dry_run_updated_outcome_counts_updated(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 22, "name": "r1", "role": 1}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.devices",
+            {"name": "r1", "role": 2},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.created == 0
+        assert stats.updated == 1
+        assert stats.skipped == 0
+        assert stats.errored == 0
+        nb.get.assert_called_once_with("dcim.devices", name="r1")
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
+
+    def test_dry_run_noop_outcome_counts_skipped(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 33, "name": "r1"}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.devices",
+            {"name": "r1"},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.created == 0
+        assert stats.updated == 0
+        assert stats.skipped == 1
+        assert stats.errored == 0
+        nb.get.assert_called_once_with("dcim.devices", name="r1")
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
