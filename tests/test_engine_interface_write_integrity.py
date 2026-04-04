@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from collector.config import (
     CollectorOptions,
+    DiskConfig,
     FieldConfig,
     InterfaceConfig,
     IpAddressConfig,
@@ -14,7 +15,8 @@ from collector.config import (
     TaggedVlanConfig,
 )
 from collector.context import RunContext
-from collector.engine import Engine
+from collector.engine import Engine, RunStats
+from collector.prerequisites import PrerequisiteRunner
 
 
 def _make_ctx(source_obj: dict, dry_run: bool = False) -> RunContext:
@@ -123,3 +125,98 @@ class TestInterfaceWriteIntegrity:
         assert mock_upsert.call_count == 2
         assert mock_upsert.call_args_list[0].args[1] == "dcim.interfaces"
         assert mock_upsert.call_args_list[1].args[1] == "ipam.ip_addresses"
+
+    def test_dry_run_existing_parent_preserves_device_identity_for_child_lookup(self):
+        engine = Engine()
+        source_adapter = MagicMock()
+        source_adapter.get_objects.return_value = [
+            {
+                "name": "leaf-01",
+                "_interfaces": [{"name": "mgmt0", "_ips": [], "_vlans": []}],
+            }
+        ]
+        ctx = _make_ctx({}, dry_run=True)
+        ctx.source_adapter = source_adapter
+        stats = RunStats("device")
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="devices",
+            netbox_resource="dcim.devices",
+            lookup_by=["name"],
+            fields=[FieldConfig(name="name", value="source('name')")],
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                )
+            ],
+        )
+        ctx.nb.get.side_effect = [
+            {"id": 101, "name": "leaf-01"},
+            None,
+        ]
+
+        engine._process_item(
+            source_adapter.get_objects.return_value[0],
+            obj_cfg,
+            ctx.for_item(source_adapter.get_objects.return_value[0]),
+            PrerequisiteRunner(ctx.nb),
+            stats,
+        )
+
+        assert ctx.nb.get.call_args_list[1].args[0] == "dcim.interfaces"
+        assert ctx.nb.get.call_args_list[1].kwargs == {"name": "mgmt0", "device": 101}
+
+    def test_dry_run_created_vm_uses_preview_id_for_nested_children(self):
+        engine = Engine()
+        ctx = _make_ctx(
+            {
+                "name": "vm-01",
+                "_interfaces": [{"name": "eth0", "_ips": [], "_vlans": []}],
+                "_disks": [{"name": "Hard disk 1"}],
+            },
+            dry_run=True,
+        )
+        stats = RunStats("vm")
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            lookup_by=["name"],
+            fields=[FieldConfig(name="name", value="source('name')")],
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                )
+            ],
+            disks=[
+                DiskConfig(
+                    source_items="_disks",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                )
+            ],
+        )
+        ctx.nb.get.side_effect = [
+            None,
+            None,
+            None,
+        ]
+
+        engine._process_item(
+            ctx.source_obj,
+            obj_cfg,
+            ctx.for_item(ctx.source_obj),
+            PrerequisiteRunner(ctx.nb),
+            stats,
+        )
+
+        assert ctx.nb.get.call_args_list[1].args[0] == "virtualization.interfaces"
+        preview_vm_id = ctx.nb.get.call_args_list[1].kwargs["virtual_machine"]
+        assert isinstance(preview_vm_id, int)
+        assert preview_vm_id < 0
+        assert ctx.nb.get.call_args_list[2].args[0] == "virtualization.virtual_disks"
+        assert ctx.nb.get.call_args_list[2].kwargs == {
+            "name": "Hard disk 1",
+            "virtual_machine": preview_vm_id,
+        }

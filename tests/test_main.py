@@ -109,6 +109,7 @@ def _fake_stat():
     s.updated = 3
     s.skipped = 1
     s.errored = 0
+    s.nested_skipped = {}
     return s
 
 
@@ -149,6 +150,24 @@ def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
     assert rc == 0
     jobs = get_jobs()
     assert jobs[0]["run_token"] == "capture-123"
+
+
+def test_summary_from_stats_includes_nested_skips():
+    from main import _summary_from_stats  # noqa: PLC0415
+
+    stat = _fake_stat()
+    stat.nested_skipped = {
+        "virtualization.interfaces:virtual_machine": 12,
+        "virtualization.virtual_disks:virtual_machine": 7,
+    }
+
+    summary, has_errors = _summary_from_stats([stat])
+
+    assert has_errors is False
+    assert summary["devices"]["nested_skipped"] == {
+        "virtualization.interfaces:virtual_machine": 12,
+        "virtualization.virtual_disks:virtual_machine": 7,
+    }
 
 
 def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):

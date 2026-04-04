@@ -168,7 +168,8 @@ class TestEngineUpsertReporting:
             stats=stats,
         )
 
-        assert result is None
+        assert result["name"] == "r1"
+        assert result["id"] < 0
         assert stats.processed == 1
         assert stats.created == 1
         assert stats.updated == 0
@@ -192,7 +193,7 @@ class TestEngineUpsertReporting:
             stats=stats,
         )
 
-        assert result is None
+        assert result == {"id": 22, "name": "r1", "role": 1}
         assert stats.processed == 1
         assert stats.created == 0
         assert stats.updated == 1
@@ -235,7 +236,7 @@ class TestEngineUpsertReporting:
             stats=stats,
         )
 
-        assert result is None
+        assert result == {"id": 33, "name": "r1"}
         assert stats.processed == 1
         assert stats.created == 0
         assert stats.updated == 0
@@ -244,3 +245,61 @@ class TestEngineUpsertReporting:
         nb.get.assert_called_once_with("dcim.devices", name="r1")
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
+
+    def test_dry_run_tags_with_same_name_do_not_report_update(self):
+        engine = Engine()
+        stats = RunStats("clusters")
+        nb = MagicMock()
+        existing_tag = SimpleNamespace(id=1, name="vmware-sync")
+        nb.get.return_value = {"id": 88, "name": "cluster-a", "tags": [existing_tag]}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "virtualization.clusters",
+            {"name": "cluster-a", "tags": [{"name": "vmware-sync"}]},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result["id"] == 88
+        assert stats.updated == 0
+        assert stats.skipped == 1
+
+    def test_dry_run_status_choice_object_matches_string(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        existing_status = SimpleNamespace(value="active", label="Active")
+        nb.get.return_value = {"id": 99, "name": "leaf-01", "status": existing_status}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.devices",
+            {"name": "leaf-01", "status": "active"},
+            lookup_fields=["name"],
+            stats=stats,
+        )
+
+        assert result["id"] == 99
+        assert stats.updated == 0
+        assert stats.skipped == 1
+
+    def test_missing_nested_lookup_records_nested_skip_without_item_error(self):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "virtualization.interfaces",
+            {"name": "nic0"},
+            lookup_fields=["name", "virtual_machine"],
+            nested_stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 0
+        assert stats.errored == 0
+        assert stats.nested_skipped == {
+            "virtualization.interfaces:virtual_machine": 1
+        }

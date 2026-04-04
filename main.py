@@ -200,6 +200,7 @@ def _summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
             "updated": s.updated,
             "skipped": s.skipped,
             "errored": s.errored,
+            "nested_skipped": dict(sorted(s.nested_skipped.items())),
         }
         for s in all_stats
     }
