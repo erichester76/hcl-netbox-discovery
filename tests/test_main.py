@@ -480,8 +480,48 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     finally:
         patcher.stop()
 
-    assert root_logger.level == level_before, (
-        "Root logger level was not restored after debug_mode job completed"
+
+def test_cli_debug_level_captures_debug_logs(tmp_path, tmp_db):
+    """Manual CLI runs with --log-level DEBUG should persist DEBUG records."""
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "cli-debug.hcl"
+    hcl.write_text("")
+
+    collector_logger = logging.getLogger("collector.engine")
+
+    def fake_run(*args, **kwargs):
+        collector_logger.debug("cli-debug-marker")
+        return [_fake_stat()]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=False)
+
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+    root_logger.setLevel(logging.DEBUG)
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        from main import _execute_job  # noqa: PLC0415
+
+        _execute_job(job_id, str(hcl), dry_run=False, debug_mode=False)
+    finally:
+        patcher.stop()
+        root_logger.setLevel(original_level)
+
+    logs = get_job_logs(job_id)
+    assert any(
+        log["level"] == "DEBUG" and "cli-debug-marker" in log["message"]
+        for log in logs
+    ), "CLI debug-level runs must persist DEBUG records even without debug_mode"
+
+    assert root_logger.level == original_level, (
+        "Root logger level was not restored after CLI debug run"
     )
 
 
