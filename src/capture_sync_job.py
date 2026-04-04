@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, TextIO
@@ -105,8 +106,7 @@ def main(argv=None):
     start_utc = datetime.now(timezone.utc)
     artifact_dir = _artifact_dir(artifact_root, mapping_path, start_utc)
     artifact_dir.mkdir(parents=True, exist_ok=False)
-
-    baseline_job_id = _query_max_job_id(compose_base, args.service)
+    run_token = str(uuid.uuid4())
     env_context = _query_env_context(compose_base, args.service)
 
     stdout_path = artifact_dir / "stdout.log"
@@ -123,7 +123,13 @@ def main(argv=None):
     if args.dry_run:
         collector_command.append("--dry-run")
 
-    exec_command = compose_base + ["exec", "-T", args.service] + collector_command
+    exec_command = compose_base + [
+        "exec",
+        "-T",
+        "-e",
+        f"COLLECTOR_RUN_TOKEN={run_token}",
+        args.service,
+    ] + collector_command
 
     exit_code = _run_and_tee(
         exec_command,
@@ -137,8 +143,7 @@ def main(argv=None):
     job = _query_job_after(
         compose_base=compose_base,
         service=args.service,
-        baseline_job_id=baseline_job_id,
-        container_mapping_path=str(container_mapping_path),
+        run_token=run_token,
     )
     db_slice = None  # type: Optional[Dict[str, Any]]
     if job is not None:
@@ -156,7 +161,7 @@ def main(argv=None):
         "collector_command": collector_command,
         "docker_exec_command": exec_command,
         "exit_code": exit_code,
-        "baseline_job_id": baseline_job_id,
+        "run_token": run_token,
         "job_id": None if job is None else job["id"],
         "job_status": None if job is None else job["status"],
         "job_created_at": None if job is None else job["created_at"],
@@ -228,24 +233,6 @@ def _ensure_service_running(compose_base, service):
         )
 
 
-def _query_max_job_id(compose_base, service):
-    payload = _exec_python_json(
-        compose_base,
-        service,
-        """
-import json
-import os
-import sqlite3
-
-db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3")
-con = sqlite3.connect(db_path)
-row = con.execute("SELECT COALESCE(MAX(id), 0) FROM jobs").fetchone()
-print(json.dumps({"max_job_id": int(row[0])}))
-""",
-    )
-    return int(payload["max_job_id"])
-
-
 def _query_env_context(compose_base, service):
     return _exec_python_json(
         compose_base,
@@ -273,8 +260,7 @@ print(json.dumps(payload))
 def _query_job_after(
     compose_base,
     service,
-    baseline_job_id,
-    container_mapping_path,
+    run_token,
 ):
     payload = _exec_python_json(
         compose_base,
@@ -285,15 +271,14 @@ import os
 import sqlite3
 import sys
 
-baseline_job_id = int(sys.argv[1])
-mapping_path = sys.argv[2]
+run_token = sys.argv[1]
 db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3")
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 row = con.execute(
-    "SELECT id, hcl_file, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
-    "FROM jobs WHERE id > ? AND hcl_file = ? ORDER BY id DESC LIMIT 1",
-    (baseline_job_id, mapping_path),
+    "SELECT id, hcl_file, run_token, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
+    "FROM jobs WHERE run_token = ? ORDER BY id DESC LIMIT 1",
+    (run_token,),
 ).fetchone()
 if row is None:
     print("null")
@@ -306,8 +291,7 @@ else:
             pass
     print(json.dumps(job))
 """,
-        str(baseline_job_id),
-        container_mapping_path,
+        run_token,
     )
     if payload is None:
         return None
@@ -329,7 +313,7 @@ db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3"
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 job_row = con.execute(
-    "SELECT id, hcl_file, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
+    "SELECT id, hcl_file, run_token, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
     "FROM jobs WHERE id = ?",
     (job_id,),
 ).fetchone()
@@ -375,7 +359,7 @@ def _exec_python_json(
 
 def _artifact_dir(artifact_root: Path, mapping_path: Path, start_utc: datetime) -> Path:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", mapping_path.stem).strip("-") or "mapping"
-    timestamp = start_utc.strftime("%Y%m%dT%H%M%SZ")
+    timestamp = start_utc.strftime("%Y%m%dT%H%M%S%fZ")
     return artifact_root / f"{timestamp}_{slug}"
 
 

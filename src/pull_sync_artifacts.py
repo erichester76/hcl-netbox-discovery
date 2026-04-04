@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import tarfile
+import threading
 from pathlib import Path
 
 
@@ -150,16 +151,24 @@ def _pull_bundle(
         stderr=subprocess.PIPE,
     )
     assert ssh_proc.stdout is not None
+    stderr_chunks = []
+    stderr_thread = None
+    if ssh_proc.stderr is not None:
+        stderr_thread = threading.Thread(
+            target=_drain_stream,
+            args=(ssh_proc.stderr, stderr_chunks),
+            daemon=True,
+        )
+        stderr_thread.start()
     try:
         with tarfile.open(fileobj=ssh_proc.stdout, mode="r|") as archive:
             archive.extractall(path=str(local_root))
     finally:
         ssh_proc.stdout.close()
 
-    stderr = b""
-    if ssh_proc.stderr is not None:
-        stderr = ssh_proc.stderr.read()
-        ssh_proc.stderr.close()
+    if stderr_thread is not None:
+        stderr_thread.join()
+    stderr = b"".join(stderr_chunks)
     return_code = ssh_proc.wait()
     if return_code != 0:
         shutil.rmtree(local_root / bundle_name, ignore_errors=True)
@@ -167,6 +176,17 @@ def _pull_bundle(
             f"Failed to pull remote bundle '{bundle_name}' from {remote_host}: "
             f"{stderr.decode('utf-8', errors='replace').strip()}"
         )
+
+
+def _drain_stream(stream, chunks):
+    try:
+        while True:
+            chunk = stream.read(8192)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        stream.close()
 
 
 if __name__ == "__main__":
