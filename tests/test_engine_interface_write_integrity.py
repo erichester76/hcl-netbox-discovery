@@ -210,3 +210,43 @@ class TestInterfaceWriteIntegrity:
         assert len(ctx.nb.get.call_args_list) == 1
         assert ctx.nb.get.call_args_list[0].args[0] == "virtualization.virtual_machines"
         assert ctx.nb.get.call_args_list[0].kwargs == {"name": "vm-01"}
+
+    def test_dry_run_top_level_none_stops_nested_processing(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="devices",
+            netbox_resource="dcim.devices",
+            lookup_by=["name"],
+            fields=[FieldConfig(name="name", value="source('name')")],
+            interfaces=_make_obj_cfg().interfaces,
+        )
+        item = {
+            "name": "leaf-01",
+            "_interfaces": [{"name": "mgmt0", "_ips": [], "_vlans": []}],
+        }
+        ctx = _make_ctx(item, dry_run=True)
+        stats = RunStats("device")
+
+        with patch.object(engine, "_upsert", return_value=None) as mock_upsert, patch.object(
+            engine, "_process_interfaces"
+        ) as mock_process_interfaces, patch.object(
+            engine, "_process_inventory_items"
+        ) as mock_process_inventory_items, patch.object(
+            engine, "_process_disks"
+        ) as mock_process_disks, patch.object(
+            engine, "_process_modules"
+        ) as mock_process_modules:
+            engine._process_item(
+                item,
+                obj_cfg,
+                ctx.for_item(item),
+                PrerequisiteRunner(ctx.nb),
+                stats,
+            )
+
+        assert mock_upsert.call_count == 1
+        mock_process_interfaces.assert_not_called()
+        mock_process_inventory_items.assert_not_called()
+        mock_process_disks.assert_not_called()
+        mock_process_modules.assert_not_called()
