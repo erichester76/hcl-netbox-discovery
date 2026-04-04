@@ -64,7 +64,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -79,7 +79,7 @@ class RestSource(DataSource):
     """Generic HTTP/REST source adapter driven entirely by HCL ``collection {}`` blocks."""
 
     def __init__(self) -> None:
-        self._session: Optional[requests.Session] = None
+        self._session: requests.Session | None = None
         self._base_url: str = ""
         self._collections: dict[str, Any] = {}  # name → CollectionConfig
 
@@ -218,12 +218,7 @@ class RestSource(DataSource):
             if item_id is None:
                 enriched.append(item)
                 continue
-            # Build the detail path by substituting {placeholders}
-            path = re.sub(
-                r"\{[^}]+\}",
-                lambda _: str(item_id),
-                col.detail_endpoint,
-            )
+            path = self._render_detail_path(col.detail_endpoint, item, id_field)
             try:
                 detail = self._get(path)
                 merged = {**item, **detail} if isinstance(detail, dict) else item
@@ -239,3 +234,39 @@ class RestSource(DataSource):
             "RestSource: enriched %d items via %s", len(enriched), col.detail_endpoint
         )
         return enriched
+
+    @staticmethod
+    def _render_detail_path(detail_endpoint: str, item: Any, id_field: str) -> str:
+        """Render *detail_endpoint* placeholders from *item*.
+
+        Named placeholders like ``{uuid}`` or ``{tenant.id}`` are resolved
+        against fields on the list item. For backward compatibility, missing
+        placeholders fall back to the configured *id_field* value when present.
+        """
+
+        if not isinstance(item, dict):
+            return detail_endpoint
+
+        item_id = item.get(id_field)
+
+        def replace_placeholder(match: re.Match[str]) -> str:
+            placeholder = match.group(1).strip()
+            if not placeholder:
+                return match.group(0)
+
+            value = item
+            for part in placeholder.split("."):
+                if isinstance(value, dict):
+                    value = value.get(part)
+                else:
+                    value = getattr(value, part, None)
+                if value is None:
+                    break
+
+            if value is None:
+                value = item_id
+            if value is None:
+                return match.group(0)
+            return str(value)
+
+        return re.sub(r"\{([^}]+)\}", replace_placeholder, detail_endpoint)

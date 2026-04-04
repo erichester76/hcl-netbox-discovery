@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
 from collector.config import CollectorOptions
 from collector.context import RunContext
 from collector.field_resolvers import Resolver, walk_path
-
 
 # ---------------------------------------------------------------------------
 # walk_path()
@@ -123,10 +119,18 @@ class TestResolverSource:
 
 
 class TestResolverEnv:
-    def test_reads_env_variable(self, monkeypatch):
-        monkeypatch.setenv("TEST_VAR", "hello")
+    def test_reads_runtime_config_value(self):
+        from unittest.mock import patch
+
+        with patch("collector.field_resolvers._get_config", return_value="hello") as mock_gc:
+            r = _make_resolver({})
+            result = r.evaluate("env('TEST_VAR')")
+        mock_gc.assert_called_once_with("TEST_VAR", "")
+        assert result == "hello"
+
+    def test_reads_default_when_runtime_config_missing(self):
         r = _make_resolver({})
-        assert r.evaluate("env('TEST_VAR')") == "hello"
+        assert r.evaluate("env('DEFINITELY_NOT_SET_ZZZ', 'fallback')") == "fallback"
 
     def test_returns_default_when_missing(self):
         r = _make_resolver({})
@@ -137,25 +141,22 @@ class TestResolverEnv:
         r = _make_resolver({})
         assert r.evaluate("env('EMPTY_ENV_VAR')") == ""
 
-    def test_db_value_overrides_env_variable(self, monkeypatch):
-        """DB config_settings value must take priority over os.environ."""
+    def test_db_value_is_authoritative(self):
+        """DB-backed runtime config should be the only non-startup source."""
         from unittest.mock import patch
 
-        monkeypatch.setenv("TEST_DB_OVERRIDE", "from_env")
         with patch("collector.field_resolvers._get_config", return_value="from_db") as mock_gc:
             r = _make_resolver({})
             result = r.evaluate("env('TEST_DB_OVERRIDE')")
         mock_gc.assert_called_once_with("TEST_DB_OVERRIDE", "")
         assert result == "from_db"
 
-    def test_env_fallback_when_db_unavailable(self, monkeypatch):
-        """get_config itself falls back to os.environ when DB is unavailable."""
-        monkeypatch.setenv("TEST_FALLBACK_VAR", "env_value")
+    def test_default_used_when_runtime_config_unavailable(self, monkeypatch):
+        """When runtime config cannot resolve a key, env() should return the explicit default."""
         monkeypatch.delenv("COLLECTOR_DB_PATH", raising=False)
-        # Without a real DB, get_config silently falls back to os.environ.
         r = _make_resolver({})
-        result = r.evaluate("env('TEST_FALLBACK_VAR')")
-        assert result == "env_value"
+        result = r.evaluate("env('TEST_FALLBACK_VAR', 'fallback')")
+        assert result == "fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +424,15 @@ class TestResolverErrorHandling:
         r = _make_resolver({})
         # Bare strings with spaces are not valid Python — eval fails and returns None
         assert r.evaluate("VMware vSphere") is None
+
+    def test_evaluate_strict_raises_on_eval_failure(self):
+        r = _make_resolver({})
+        with pytest.raises(ValueError, match="lookup_name evaluation failed"):
+            r.evaluate_strict("undefined_func()", label="lookup_name")
+
+    def test_evaluate_strict_allows_valid_literals(self):
+        r = _make_resolver({})
+        assert r.evaluate_strict("'vmware-host'", label="lookup_name") == "vmware-host"
         assert r.evaluate("Hypervisor Host") is None
 
 

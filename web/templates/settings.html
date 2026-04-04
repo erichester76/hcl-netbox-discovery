@@ -50,6 +50,7 @@
             </td>
             <td class="align-middle">
               <form method="POST" action="/settings/update" class="d-flex gap-1 align-items-center">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <input type="hidden" name="key" value="{{ s.key }}" />
                 <input type="hidden" name="action" value="save" />
                 {% if s.is_sensitive %}
@@ -73,6 +74,7 @@
             <td class="align-middle text-center">
               {% if s.is_overridden %}
               <form method="POST" action="/settings/update">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
                 <input type="hidden" name="key" value="{{ s.key }}" />
                 <input type="hidden" name="action" value="reset" />
                 <button type="submit" class="btn btn-sm btn-outline-secondary"

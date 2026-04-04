@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
 
 from collector import setup_logging
 
@@ -60,12 +59,6 @@ def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
 
     setup_logging(args.log_level)
-
-    # Ensure lib/ is importable
-    here = os.path.dirname(os.path.abspath(__file__))
-    lib_path = os.path.join(here, "lib")
-    if lib_path not in sys.path:
-        sys.path.insert(0, lib_path)
 
     from web.app import create_app  # noqa: PLC0415
 

@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS config_settings (
 # overwritten.  Add new rows here when new environment variables are introduced.
 # ---------------------------------------------------------------------------
 _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
-    # --- Web UI ---
+    # --- Web UI startup settings are env-only and intentionally not seeded here ---
     ('WEB_PORT', '5000', 'TCP port the web UI listens on (default: 5000)', 'Web UI'),
     ('WEB_HOST', '0.0.0.0', 'Bind address for the web UI (default: 0.0.0.0)', 'Web UI'),
     ('WEB_SECRET_KEY', 'change-me-in-production', 'Secret key for Flask sessions \u2013 change this in production!', 'Web UI'),
@@ -112,6 +112,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('NETBOX_RETRY_MAX_DELAY', '15.0', 'Maximum delay in seconds between retries (default: 15.0)', 'NetBox'),
     ('NETBOX_RETRY_JITTER', '0.0', 'Maximum random jitter in seconds added to each retry delay (default: 0.0)', 'NetBox'),
     ('NETBOX_RETRY_ON_4XX', '408,409,425,429', 'Comma-separated 4xx HTTP status codes that trigger a retry (default: 408,409,425,429)', 'NetBox'),
+    ('NETBOX_RETRY_5XX_COOLDOWN', '60.0', 'Global cooldown in seconds after retryable NetBox 5xx responses (default: 60.0)', 'NetBox'),
     ('NETBOX_BRANCH', '', 'NetBox branch name for branch-aware deployments; leave empty for default branch', 'NetBox'),
     # --- NetBox Source ---
     ('SOURCE_NETBOX_URL', '', 'URL of the source NetBox instance to read objects from', 'NetBox Source'),
@@ -120,7 +121,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('SOURCE_NETBOX_FILTERS', '', 'Optional JSON filter dict passed to the source collection, e.g. {"site": "lon01"}', 'NetBox Source'),
     # --- General collector flags ---
     ('DRY_RUN', 'false', 'Set to "true" to log payloads without writing anything to NetBox', 'General collector flags'),
-    ('LOG_LEVEL', 'INFO', 'Logging verbosity: DEBUG | INFO | WARNING | ERROR', 'General collector flags'),
+    # LOG_LEVEL is startup-only and therefore not DB-backed.
     # --- VMware vCenter ---
     ('VCENTER_URL', 'vcenter.example.com', '', 'VMware vCenter'),
     ('VCENTER_USER', 'administrator@vsphere.local', '', 'VMware vCenter'),
@@ -201,6 +202,15 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('TENABLE_INCLUDE_ASSET_DETAILS', 'false', 'Set to "true" to enable the "findings" collection', 'Tenable One'),
 ]
 
+_STARTUP_CONFIG_KEYS = {
+    "COLLECTOR_DB_PATH",
+    "FLASK_DEBUG",
+    "LOG_LEVEL",
+    "WEB_HOST",
+    "WEB_PORT",
+    "WEB_SECRET_KEY",
+}
+
 _lock = threading.Lock()
 
 
@@ -248,27 +258,44 @@ def init_db() -> None:
         except Exception:
             pass  # column already exists
 
-        # Seed config_settings.  For each key, use the live env-var value when
-        # set; otherwise fall back to the declared default.  INSERT OR IGNORE
-        # preserves values that the user has already saved via the web UI.
-        # A follow-up UPDATE fills in any rows that were previously inserted
-        # with NULL (old behaviour) so users can see the active value.
+        # Bootstrap settings remain environment-only and should not appear in
+        # the DB-backed runtime settings table or Settings UI.
+        con.executemany(
+            "DELETE FROM config_settings WHERE key=?",
+            [(key,) for key in sorted(_STARTUP_CONFIG_KEYS)],
+        )
+
+        # Seed config_settings metadata without treating defaults as persisted
+        # overrides. ``value`` is reserved for an explicit DB override set via
+        # the Settings UI or ``set_setting()``; when it is NULL the effective
+        # value falls back to the declared default.
+        #
+        # Migration note:
+        # Older versions seeded ``value`` with either the current env var or
+        # the static default, which meant an auto-seeded row could later mask a
+        # changed environment variable. Rows that still have their original
+        # timestamps are treated as untouched seed rows and cleared back to
+        # NULL so they resume env/default fallback semantics.
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         for key, default_value, description, group_name in _SETTINGS_SEED:
-            seed_value = os.environ.get(key)
-            if seed_value is None:
-                seed_value = default_value
+            if key in _STARTUP_CONFIG_KEYS:
+                continue
             con.execute(
                 "INSERT OR IGNORE INTO config_settings"
                 " (key, value, default_value, description, group_name, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (key, seed_value, default_value, description, group_name, now, now),
+                (key, None, default_value, description, group_name, now, now),
             )
-            # Back-fill rows that were inserted with NULL by older code.
             con.execute(
                 "UPDATE config_settings"
-                " SET value=?, updated_at=? WHERE key=? AND value IS NULL",
-                (seed_value, now, key),
+                " SET value=NULL, updated_at=?"
+                " WHERE key=? AND value IS NOT NULL AND created_at = updated_at",
+                (now, key),
+            )
+            con.execute(
+                "UPDATE config_settings"
+                " SET default_value=?, description=?, group_name=? WHERE key=?",
+                (default_value, description, group_name, key),
             )
 
 
@@ -425,6 +452,44 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     return [_row_to_job(r) for r in rows]
 
 
+def claim_next_queued_job() -> dict[str, Any] | None:
+    """Atomically claim the oldest queued job and mark it running.
+
+    Returns the claimed job row (including updated ``status`` and ``started_at``),
+    or ``None`` when no queued jobs are available.
+
+    This uses a single SQLite transaction with ``BEGIN IMMEDIATE`` so competing
+    scheduler processes cannot claim the same queued row.
+    """
+    started_at = _now()
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+
+        row = con.execute(
+            "SELECT id FROM jobs WHERE status='queued' ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+
+        job_id = int(row[0])
+        cur = con.execute(
+            "UPDATE jobs SET status='running', started_at=? WHERE id=? AND status='queued'",
+            (started_at, job_id),
+        )
+        if cur.rowcount != 1:
+            # Another process claimed this row first.
+            return None
+
+        claimed = con.execute(
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+        if claimed is None:
+            return None
+        return _row_to_job(claimed)
+
+
 # ---------------------------------------------------------------------------
 # Schedule CRUD
 # ---------------------------------------------------------------------------
@@ -516,6 +581,78 @@ def update_schedule_run(schedule_id: int, last_run_at: str, next_run_at: str) ->
         )
 
 
+def dispatch_next_due_schedule() -> dict[str, Any] | None:
+    """Atomically dispatch one due schedule by queueing exactly one job.
+
+    The function performs all steps in one transaction:
+    1. Find one enabled due schedule.
+    2. Advance its ``last_run_at`` and ``next_run_at``.
+    3. Insert a queued job row with the schedule's ``hcl_file`` and ``dry_run``.
+
+    Returns the newly created queued job row, or ``None`` when no due schedule
+    exists.  ``debug_mode`` is always ``False`` for schedule-dispatched jobs.
+
+    Concurrency note:
+    ``BEGIN IMMEDIATE`` ensures only one competing scheduler process can dispatch
+    a given due schedule at a time.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+
+    from croniter import croniter  # noqa: PLC0415
+
+    now_dt = datetime.now(timezone.utc)
+    now_str = now_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+
+        sched_row = con.execute(
+            "SELECT id, hcl_file, cron_expr, dry_run, next_run_at "
+            "FROM schedules "
+            "WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= ? "
+            "ORDER BY next_run_at ASC, id ASC "
+            "LIMIT 1",
+            (now_str,),
+        ).fetchone()
+        if sched_row is None:
+            return None
+
+        schedule_id = int(sched_row[0])
+        hcl_file = str(sched_row[1])
+        cron_expr = str(sched_row[2])
+        dry_run = bool(sched_row[3])
+        observed_next_run_at = sched_row[4]
+
+        cron = croniter(cron_expr, now_dt)
+        next_dt = cron.get_next(datetime)
+        next_run_str = next_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        cur = con.execute(
+            "UPDATE schedules SET last_run_at=?, next_run_at=? "
+            "WHERE id=? AND enabled=1 AND next_run_at=?",
+            (now_str, next_run_str, schedule_id, observed_next_run_at),
+        )
+        if cur.rowcount != 1:
+            # Another process likely dispatched this schedule first.
+            return None
+
+        cur = con.execute(
+            "INSERT INTO jobs (hcl_file, status, dry_run, debug_mode, created_at) "
+            "VALUES (?, 'queued', ?, 0, ?)",
+            (hcl_file, int(dry_run), now_str),
+        )
+        job_id = int(cur.lastrowid)
+
+        job_row = con.execute(
+            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+        if job_row is None:
+            return None
+        return _row_to_job(job_row)
+
+
 def _row_to_schedule(row: tuple) -> dict[str, Any]:
     return {
         "id": row[0],
@@ -541,22 +678,28 @@ _SENSITIVE_PATTERNS = ("PASS", "TOKEN", "SECRET", "KEY", "CLIENT_SECRET")
 def get_config(key: str, default: str = "") -> str:
     """Return the effective config value for *key*.
 
-    Priority: DB config_settings.value → os.environ[key] → *default*.
+    Startup keys are env-only. All other keys are DB-backed runtime settings:
+    explicit DB config_settings.value → row.default_value → *default*.
 
-    Silently falls back to the environment when the DB is unavailable (e.g.
-    before ``init_db()`` has been called, or during unit tests that do not
-    set up the DB).
+    Silently falls back to *default* when the DB is unavailable (e.g. before
+    ``init_db()`` has been called, or during unit tests that do not set up the
+    DB).
     """
+    if key in _STARTUP_CONFIG_KEYS:
+        return os.environ.get(key, default)
     try:
         with _conn() as con:
             row = con.execute(
-                "SELECT value FROM config_settings WHERE key=?", (key,)
+                "SELECT value, default_value FROM config_settings WHERE key=?", (key,)
             ).fetchone()
-        if row is not None and row[0] is not None:
-            return row[0]
+        if row is not None:
+            if row[0] is not None:
+                return row[0]
+            if row[1] is not None:
+                return row[1]
     except Exception:
-        pass  # DB not ready – fall through to env var
-    return os.environ.get(key, default)
+        pass  # DB not ready – fall through to explicit default
+    return default
 
 
 def get_all_settings() -> list[dict[str, Any]]:
@@ -601,7 +744,7 @@ def _row_to_setting(row: tuple) -> dict[str, Any]:
     key = row[1]
     db_value = row[2]
     default_value = row[3] or ""
-    effective = db_value if db_value is not None else os.environ.get(key, default_value)
+    effective = db_value if db_value is not None else default_value
     is_sensitive = any(pat in key for pat in _SENSITIVE_PATTERNS)
     return {
         "id": row[0],

@@ -20,7 +20,6 @@ from collector.sources.netbox import (
     _record_to_dict,
 )
 
-
 # ---------------------------------------------------------------------------
 # _record_to_dict()
 # ---------------------------------------------------------------------------
@@ -267,6 +266,39 @@ class TestNetBoxGetObjects:
         result = src.get_objects("dcim.devices")
 
         src._nb.dcim.devices.all.assert_called_once()
+        assert result == []
+
+    def test_page_size_uses_filter_limit_when_set(self, netbox_config):
+        netbox_config.extra["page_size"] = "250"
+        src = self._connected_source(netbox_config)
+        src._nb.dcim.devices.filter.return_value = []
+
+        result = src.get_objects("dcim.devices")
+
+        src._nb.dcim.devices.filter.assert_called_once_with(limit=250)
+        src._nb.dcim.devices.all.assert_not_called()
+        assert result == []
+
+    def test_page_size_and_filters_both_apply(self, netbox_config):
+        netbox_config.extra["page_size"] = "250"
+        netbox_config.extra["filters"] = {"status": "active"}
+        src = self._connected_source(netbox_config)
+        src._nb.dcim.devices.filter.return_value = []
+
+        result = src.get_objects("dcim.devices")
+
+        src._nb.dcim.devices.filter.assert_called_once_with(status="active", limit=250)
+        assert result == []
+
+    def test_page_size_zero_keeps_unbounded_fetch(self, netbox_config):
+        netbox_config.extra["page_size"] = "0"
+        src = self._connected_source(netbox_config)
+        src._nb.dcim.devices.all.return_value = []
+
+        result = src.get_objects("dcim.devices")
+
+        src._nb.dcim.devices.all.assert_called_once()
+        src._nb.dcim.devices.filter.assert_not_called()
         assert result == []
 
 

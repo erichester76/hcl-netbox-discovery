@@ -37,7 +37,8 @@ Source HCL block example::
       password   = env("SOURCE_NETBOX_TOKEN")
       verify_ssl = env("SOURCE_NETBOX_VERIFY_SSL", "true")
 
-      # Optional: limit results per page (default: 1000 — set to 0 for no limit)
+      # Optional: set the per-request page size used when fetching records.
+      # Set to 0 for no explicit limit and omit the option to use pynetbox defaults.
       page_size  = "1000"
     }
 
@@ -54,17 +55,11 @@ Last Changed: GitHub Copilot Issue: #(netbox-source-type)
 from __future__ import annotations
 
 import logging
-import os
-import sys
-from typing import Any, Optional
+from typing import Any
 
 from .base import DataSource
 
 logger = logging.getLogger(__name__)
-
-# Default page size when fetching records from the source NetBox.
-_DEFAULT_PAGE_SIZE = 1000
-
 
 def _record_to_dict(record: Any) -> dict:
     """Recursively convert a pynetbox Record (or plain dict) to a plain dict.
@@ -140,8 +135,8 @@ class NetBoxSource(DataSource):
     """pynetbox-backed source adapter for reading records from a NetBox instance."""
 
     def __init__(self) -> None:
-        self._nb: Optional[Any] = None
-        self._config: Optional[Any] = None
+        self._nb: Any | None = None
+        self._config: Any | None = None
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -213,8 +208,12 @@ class NetBoxSource(DataSource):
         )
 
         try:
-            if filters:
-                records = list(endpoint.filter(**filters))
+            list_kwargs = dict(filters)
+            if page_size and page_size > 0:
+                list_kwargs["limit"] = page_size
+
+            if filters or (page_size and page_size > 0):
+                records = list(endpoint.filter(**list_kwargs))
             else:
                 records = list(endpoint.all())
         except Exception as exc:
@@ -280,13 +279,19 @@ class NetBoxSource(DataSource):
             logger.warning("NetBoxSource: could not parse extra.filters %r: %s", raw, exc)
             return {}
 
-    def _get_page_size(self) -> int:
-        """Return the configured page size (default: _DEFAULT_PAGE_SIZE)."""
+    def _get_page_size(self) -> int | None:
+        """Return the configured page size, or ``None`` when unset/invalid."""
         if self._config is None:
-            return _DEFAULT_PAGE_SIZE
+            return None
         extra = self._config.extra or {}
-        raw = extra.get("page_size", str(_DEFAULT_PAGE_SIZE))
+        raw = extra.get("page_size")
+        if raw in (None, ""):
+            return None
         try:
             return int(raw)
         except (ValueError, TypeError):
-            return _DEFAULT_PAGE_SIZE
+            logger.warning(
+                "NetBoxSource: invalid page_size %r; using pynetbox default paging",
+                raw,
+            )
+            return None

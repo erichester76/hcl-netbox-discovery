@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-
 import pytest
 
 import collector.db as db_module
@@ -14,6 +11,7 @@ from collector.db import (
     create_schedule,
     delete_schedule,
     finish_job,
+    get_config,
     get_due_schedules,
     get_job,
     get_job_logs,
@@ -22,6 +20,8 @@ from collector.db import (
     get_schedule,
     get_schedules,
     init_db,
+    reset_setting,
+    set_setting,
     start_job,
     update_schedule,
     update_schedule_run,
@@ -214,6 +214,28 @@ def test_init_db_idempotent():
     assert job["hcl_file"] == "mappings/stable.hcl"
 
 
+def test_runtime_config_defaults_do_not_require_env(monkeypatch):
+    monkeypatch.delenv("NETBOX_URL", raising=False)
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_runtime_config_ignores_env_fallback(monkeypatch):
+    monkeypatch.setenv("NETBOX_URL", "https://env.example.com")
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_runtime_config_db_override_wins():
+    set_setting("NETBOX_URL", "https://db.example.com")
+    assert get_config("NETBOX_URL", "") == "https://db.example.com"
+    reset_setting("NETBOX_URL")
+    assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_startup_config_stays_env_only(monkeypatch):
+    monkeypatch.setenv("WEB_PORT", "5999")
+    assert get_config("WEB_PORT", "5000") == "5999"
+
+
 # ---------------------------------------------------------------------------
 # Schedule CRUD
 # ---------------------------------------------------------------------------
@@ -305,3 +327,105 @@ def test_update_schedule_run():
     s = get_schedule(sid)
     assert s["last_run_at"] == "2026-01-01T02:00:00"
     assert s["next_run_at"] == "2026-01-02T02:00:00"
+
+
+# ---------------------------------------------------------------------------
+# Issue #224 lifecycle regression coverage
+# ---------------------------------------------------------------------------
+
+
+def _resolve_callable(module, candidates: list[str]):
+    """Return the first callable attr found in *module* from *candidates*."""
+    for name in candidates:
+        fn = getattr(module, name, None)
+        if callable(fn):
+            return fn
+    pytest.fail(
+        "Expected one of these DB APIs to exist for issue #224: "
+        + ", ".join(candidates)
+    )
+
+
+def _extract_job_id_from_dispatch_result(result) -> int | None:
+    """Best-effort extraction of a job id from a dispatch return value."""
+    if result is None:
+        return None
+    if isinstance(result, int):
+        return result
+    if isinstance(result, dict):
+        raw = result.get("job_id", result.get("id"))
+        return int(raw) if isinstance(raw, int) else None
+    if isinstance(result, tuple) and result:
+        first = result[0]
+        return first if isinstance(first, int) else None
+    return None
+
+
+def test_atomic_claim_next_queued_job_claims_fifo_and_marks_running():
+    """Issue #224: queued job claiming must be atomic and FIFO."""
+    claim_next = _resolve_callable(
+        db_module,
+        [
+            "claim_next_queued_job",
+            "claim_queued_job",
+            "claim_next_job",
+        ],
+    )
+
+    j1 = create_job("mappings/a.hcl")
+    j2 = create_job("mappings/b.hcl")
+
+    first = claim_next()
+    second = claim_next()
+    third = claim_next()
+
+    first_id = first["id"] if isinstance(first, dict) else first
+    second_id = second["id"] if isinstance(second, dict) else second
+
+    assert first_id == j1
+    assert second_id == j2
+    assert third is None
+
+    assert get_job(j1)["status"] == "running"
+    assert get_job(j2)["status"] == "running"
+
+
+def test_dispatch_due_schedule_transactionally_updates_schedule_and_queues_job():
+    """Issue #224: due schedule dispatch should advance schedule + queue job together."""
+    dispatch_due = _resolve_callable(
+        db_module,
+        [
+            "dispatch_next_due_schedule",
+            "dispatch_due_schedule",
+            "claim_due_schedule_and_queue_job",
+        ],
+    )
+
+    past = "2000-01-01T00:00:00"
+    sid = create_schedule(
+        "dispatch-me",
+        "mappings/dispatch.hcl",
+        "*/5 * * * *",
+        dry_run=True,
+        next_run_at=past,
+    )
+    jobs_before = len(get_jobs())
+
+    result = dispatch_due()
+    queued_job_id = _extract_job_id_from_dispatch_result(result)
+
+    schedule = get_schedule(sid)
+    assert schedule is not None
+    assert schedule["last_run_at"] is not None
+    assert schedule["next_run_at"] is not None
+    assert schedule["next_run_at"] != past
+
+    jobs_after = get_jobs()
+    assert len(jobs_after) == jobs_before + 1
+    newest = jobs_after[0]
+    assert newest["status"] == "queued"
+    assert newest["hcl_file"] == "mappings/dispatch.hcl"
+    assert newest["dry_run"] is True
+
+    if queued_job_id is not None:
+        assert newest["id"] == queued_job_id

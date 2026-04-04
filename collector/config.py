@@ -27,10 +27,10 @@ def _eval_config_str(value: Any) -> Any:
     """Evaluate env() references in a config-level attribute value.
 
     If *value* is a plain string that contains an ``env(`` call, it is eval'd
-    with only the ``env`` built-in in scope so that environment variables are
-    resolved at parse time.  The ``env()`` function checks the DB config_settings
-    table first, then falls back to the OS environment.  All other values are
-    returned unchanged.
+    with only the ``env`` built-in in scope so that runtime configuration
+    values are resolved at parse time. The ``env()`` function is retained for
+    HCL compatibility, but it reads from DB-backed config settings rather than
+    the process environment. All other values are returned unchanged.
     """
     if not isinstance(value, str):
         return value
@@ -57,7 +57,7 @@ def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
     """Evaluate env() references with iterator variable overrides.
 
     Identical to :func:`_eval_config_str` except that *overrides* is checked
-    first before the database / OS environment.  Used by
+    first before the DB-backed runtime configuration. Used by
     :func:`build_source_config` to inject per-iteration values.
     """
     if not isinstance(value, str):
@@ -70,7 +70,8 @@ def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
             from .db import get_config as _get_config  # noqa: PLC0415
             _base_lookup = _get_config
         except ImportError:
-            _base_lookup = lambda k, d="": os.environ.get(k, d)  # type: ignore[assignment]
+            def _base_lookup(k: str, d: str = "") -> str:
+                return d
 
         def _env_fn(k: str, d: str = "") -> str:
             if k in overrides:

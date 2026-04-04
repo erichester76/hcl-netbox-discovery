@@ -1,0 +1,74 @@
+name: Mapping or adapter request
+description: Request support for a new source system, mapping example, or source adapter capability.
+title: "[Source Request]: "
+labels:
+  - source-request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when you want support for a new source system, an example mapping, or a new adapter capability.
+
+  - type: input
+    id: source_system
+    attributes:
+      label: Source system
+      description: What system are you trying to sync from?
+      placeholder: Example: ServiceNow, Aruba Central, another NetBox instance, internal REST API
+    validations:
+      required: true
+
+  - type: dropdown
+    id: integration_type
+    attributes:
+      label: What do you think is needed?
+      options:
+        - an HCL mapping example only
+        - a generic REST mapping
+        - a new source adapter
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: objects
+    attributes:
+      label: Objects to sync
+      description: What source objects should end up in NetBox?
+      placeholder: devices, interfaces, IP addresses, racks, contacts, modules, clusters, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: api_shape
+    attributes:
+      label: API or data shape
+      description: Describe the API/SDK shape, auth model, and any example endpoints or payloads you can share.
+      placeholder: |
+        - auth:
+        - list endpoint(s):
+        - detail endpoint(s):
+        - pagination:
+        - example payload:
+    validations:
+      required: true
+
+  - type: textarea
+    id: netbox_target
+    attributes:
+      label: Target NetBox resources
+      description: Which NetBox resources do you expect this integration to populate?
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints or special handling
+      description: Note pagination, rate limiting, odd schemas, nested detail calls, or anything else likely to matter.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed or redacted any secrets or sensitive internal details.
+          required: true

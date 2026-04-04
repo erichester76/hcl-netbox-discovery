@@ -35,11 +35,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Poetry
+        run: pip install poetry
+
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: poetry install --with dev --no-root
 
       - name: Run test suite
-        run: pytest
+        run: poetry run pytest
 
   build-and-push:
     runs-on: ubuntu-latest

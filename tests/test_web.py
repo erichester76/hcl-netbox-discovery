@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from urllib.parse import urlparse
 
 import pytest
 
@@ -21,6 +22,8 @@ def app(tmp_path, monkeypatch):
     """Create a Flask test client backed by a temporary DB."""
     db_path = str(tmp_path / "test_web.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "false")
+    monkeypatch.setenv("WEB_SECRET_KEY", "test-secret-key")
     monkeypatch.setattr(db_module, "_lock", threading.Lock())
     init_db()
 
@@ -32,6 +35,50 @@ def app(tmp_path, monkeypatch):
         yield client
 
 
+@pytest.fixture()
+def secured_app(tmp_path, monkeypatch):
+    """Create a Flask test client with web auth and CSRF enabled."""
+    db_path = str(tmp_path / "test_web_secured.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("WEB_USERNAME", "admin")
+    monkeypatch.setenv("WEB_PASSWORD", "secret")
+    monkeypatch.setenv("WEB_SECRET_KEY", "secured-test-secret")
+    monkeypatch.setattr(db_module, "_lock", threading.Lock())
+    init_db()
+
+    from web.app import create_app  # noqa: PLC0415
+
+    flask_app = create_app()
+    flask_app.config["TESTING"] = True
+    with flask_app.test_client() as client:
+        yield client
+
+
+def _login(client, username: str = "admin", password: str = "secret"):
+    client.get("/login")
+    return client.post(
+        "/login",
+        data={
+            "username": username,
+            "password": password,
+            "next": "/",
+            "csrf_token": _csrf_token(client),
+        },
+    )
+
+
+def _csrf_token(client) -> str:
+    with client.session_transaction() as sess:
+        return sess["csrf_token"]
+
+
+def _post_with_csrf(client, path: str, data: dict[str, str] | None = None):
+    payload = dict(data or {})
+    payload.setdefault("csrf_token", _csrf_token(client))
+    return client.post(path, data=payload)
+
+
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -41,6 +88,101 @@ def test_index_empty(app):
     resp = app.get("/")
     assert resp.status_code == 200
     assert b"HCL NetBox Discovery" in resp.data
+
+
+def test_login_page_renders_when_auth_enabled(secured_app):
+    resp = secured_app.get("/login")
+    assert resp.status_code == 200
+    assert b"Web UI Login" in resp.data
+
+
+def test_dashboard_redirects_to_login_when_auth_enabled(secured_app):
+    resp = secured_app.get("/")
+    assert resp.status_code == 302
+    location = resp.headers["Location"]
+    parsed = urlparse(location)
+    assert parsed.path == "/login"
+
+
+def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "test_web_invalid_auth.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "true")
+    monkeypatch.setenv("WEB_USERNAME", "admin")
+    monkeypatch.setenv("WEB_PASSWORD", "change-me-in-production")
+    monkeypatch.delenv("WEB_PASSWORD_HASH", raising=False)
+    monkeypatch.setenv("WEB_SECRET_KEY", "invalid-auth-secret")
+    monkeypatch.setattr(db_module, "_lock", threading.Lock())
+    init_db()
+
+    from web.app import create_app  # noqa: PLC0415
+
+    with pytest.raises(RuntimeError, match="default placeholder"):
+        create_app()
+
+
+def test_protected_post_redirects_to_login_when_not_authenticated(secured_app):
+    from collector.db import get_jobs  # noqa: PLC0415
+
+    resp = secured_app.post("/jobs/run", data={"hcl_file": "mappings/test.hcl"})
+
+    assert resp.status_code == 302
+    assert urlparse(resp.headers["Location"]).path == "/login"
+    assert get_jobs() == []
+
+
+def test_login_rejects_invalid_credentials(secured_app):
+    resp = _login(secured_app, password="wrong-password")
+    assert resp.status_code == 401
+    assert b"Invalid username or password" in resp.data
+
+
+def test_login_post_requires_csrf(secured_app):
+    resp = secured_app.post(
+        "/login",
+        data={"username": "admin", "password": "secret", "next": "/"},
+    )
+
+    assert resp.status_code == 400
+
+
+def test_login_accepts_valid_credentials(secured_app):
+    resp = _login(secured_app)
+    assert resp.status_code == 302
+    assert urlparse(resp.headers["Location"]).path == "/"
+
+
+def test_authenticated_post_requires_csrf(secured_app):
+    from collector.db import get_jobs  # noqa: PLC0415
+
+    _login(secured_app)
+    resp = secured_app.post("/jobs/run", data={"hcl_file": "mappings/test.hcl"})
+
+    assert resp.status_code == 400
+    assert get_jobs() == []
+
+
+def test_authenticated_post_with_csrf_dispatches_job(secured_app):
+    from collector.db import get_jobs  # noqa: PLC0415
+
+    _login(secured_app)
+    resp = _post_with_csrf(secured_app, "/jobs/run", {"hcl_file": "mappings/test.hcl"})
+
+    assert resp.status_code == 302
+    jobs = get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "queued"
+
+
+def test_logout_clears_authenticated_session(secured_app):
+    _login(secured_app)
+
+    resp = _post_with_csrf(secured_app, "/logout")
+
+    assert resp.status_code == 302
+    assert urlparse(resp.headers["Location"]).path == "/login"
+    with secured_app.session_transaction() as sess:
+        assert sess.get("authenticated") in {None, False}
 
 
 def test_index_shows_jobs(app):

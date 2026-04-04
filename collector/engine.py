@@ -12,24 +12,16 @@ from __future__ import annotations
 import contextvars
 import ipaddress
 import logging
-import os
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Optional
+from typing import Any
 
 from .config import (
     CollectorConfig,
-    CollectorOptions,
-    DiskConfig,
     FieldConfig,
     InterfaceConfig,
-    InventoryItemConfig,
-    ModuleConfig,
     ObjectConfig,
-    PowerInputConfig,
     SourceConfig,
-    TaggedVlanConfig,
     build_source_config,
     load_config,
 )
@@ -51,10 +43,6 @@ _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 
 def _build_nb_client(cfg_nb: Any) -> Any:
     """Construct a pynetbox2 NetBoxAPI client from *cfg_nb* (NetBoxConfig)."""
-    lib_dir = os.path.join(os.path.dirname(__file__), "..", "lib")
-    lib_dir = os.path.normpath(lib_dir)
-    if lib_dir not in sys.path:
-        sys.path.insert(0, lib_dir)
     import pynetbox2 as pynetbox  # type: ignore[import]
 
     kwargs: dict[str, Any] = dict(
@@ -205,10 +193,21 @@ class RunStats:
 class Engine:
     """Drive a full collector run from an HCL mapping file."""
 
+    @staticmethod
+    def _missing_lookup_fields(payload: dict, lookup_fields: list[str]) -> list[str]:
+        missing: list[str] = []
+        for field in lookup_fields:
+            value = payload.get(field)
+            if value is None:
+                missing.append(field)
+            elif isinstance(value, str) and not value.strip():
+                missing.append(field)
+        return missing
+
     def run(
         self,
         mapping_path: str,
-        dry_run_override: Optional[bool] = None,
+        dry_run_override: bool | None = None,
     ) -> list[RunStats]:
         """Parse *mapping_path* and sync all objects to NetBox.
 
@@ -525,7 +524,12 @@ class Engine:
 
         # 2. Build payload from field blocks
         try:
-            payload = self._build_payload(obj_cfg.fields, resolver, ctx)
+            payload = self._build_payload(
+                obj_cfg.fields,
+                resolver,
+                ctx,
+                required_field_names=set(obj_cfg.lookup_by),
+            )
         except Exception as exc:
             logger.warning("Payload build failed for %r: %s", obj_cfg.name, exc)
             stats.record_error()
@@ -567,14 +571,25 @@ class Engine:
         fields: list[FieldConfig],
         resolver: Resolver,
         ctx: RunContext,
+        required_field_names: set[str] | None = None,
     ) -> dict:
+        required_field_names = required_field_names or set()
         payload: dict[str, Any] = {}
         for field_cfg in fields:
             try:
-                value = self._eval_field(field_cfg, resolver, ctx)
+                value = self._eval_field(
+                    field_cfg,
+                    resolver,
+                    ctx,
+                    strict=field_cfg.name in required_field_names,
+                )
                 if value is not None:
                     payload[field_cfg.name] = value
             except Exception as exc:
+                if field_cfg.name in required_field_names:
+                    raise ValueError(
+                        f"Required field {field_cfg.name!r} failed: {exc}"
+                    ) from exc
                 logger.debug(
                     "Field %r evaluation error: %s", field_cfg.name, exc
                 )
@@ -585,12 +600,20 @@ class Engine:
         field_cfg: FieldConfig,
         resolver: Resolver,
         ctx: RunContext,
+        strict: bool = False,
     ) -> Any:
         """Evaluate a single field and return the value for the payload."""
 
+        def _is_missing_lookup_value(value: Any) -> bool:
+            return value is None or (isinstance(value, str) and not value.strip())
+
         # --- tags field ---
         if field_cfg.type == "tags":
-            raw = resolver.evaluate(field_cfg.value)
+            raw = (
+                resolver.evaluate_strict(field_cfg.value, field_cfg.name)
+                if strict
+                else resolver.evaluate(field_cfg.value)
+            )
             if not isinstance(raw, list):
                 raw = [raw] if raw else []
             # Normalize plain strings to the dict form NetBox expects.
@@ -599,11 +622,27 @@ class Engine:
         # --- FK field ---
         if field_cfg.type == "fk":
             lookup: dict[str, Any] = {}
+            missing_lookup_keys: list[str] = []
             for k, v in (field_cfg.lookup or {}).items():
-                resolved = resolver.evaluate(v) if isinstance(v, str) else v
-                if resolved is not None:
-                    lookup[k] = resolved
+                resolved = (
+                    resolver.evaluate_strict(v, f"{field_cfg.name}.{k}")
+                    if strict and isinstance(v, str)
+                    else resolver.evaluate(v) if isinstance(v, str) else v
+                )
+                if _is_missing_lookup_value(resolved):
+                    if strict:
+                        missing_lookup_keys.append(k)
+                    continue
+                lookup[k] = resolved
+            if strict and missing_lookup_keys:
+                raise ValueError(
+                    f"Required FK field {field_cfg.name!r} missing lookup values for {missing_lookup_keys}"
+                )
             if not lookup:
+                if strict:
+                    raise ValueError(
+                        f"Required FK field {field_cfg.name!r} could not resolve lookup"
+                    )
                 return None
             if ctx.dry_run:
                 logger.debug("[DRY-RUN] FK lookup %s %s", field_cfg.resource, lookup)
@@ -619,6 +658,10 @@ class Engine:
                     obj = ctx.nb.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
+                if strict:
+                    raise ValueError(
+                        f"Required FK field {field_cfg.name!r} lookup failed: {exc}"
+                    ) from exc
                 logger.debug(
                     "FK lookup failed resource=%s lookup=%s: %s",
                     field_cfg.resource, lookup, exc,
@@ -626,6 +669,8 @@ class Engine:
                 return None
 
         # --- scalar field (default) ---
+        if strict:
+            return resolver.evaluate_strict(field_cfg.value, field_cfg.name)
         return resolver.evaluate(field_cfg.value)
 
     # ------------------------------------------------------------------
@@ -657,7 +702,7 @@ class Engine:
         resource: str,
         payload: dict,
         lookup_fields: list[str],
-        stats: Optional[RunStats] = None,
+        stats: RunStats | None = None,
     ) -> Any:
         if ctx.dry_run:
             logger.info(
@@ -669,12 +714,55 @@ class Engine:
             if stats is not None:
                 stats.record("skipped")
             return None
-        try:
-            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
-            lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
-            logger.info("Upserted  resource=%-30s  %s", resource, lookup_display)
+        missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
+        if missing_lookup_fields:
+            logger.warning(
+                "Skipping upsert  resource=%s  missing_lookup=%s  keys=%s",
+                resource,
+                missing_lookup_fields,
+                sorted(payload.keys()),
+            )
             if stats is not None:
-                stats.record("created")
+                stats.record_error()
+            return None
+        try:
+            outcome = "created"
+            obj = None
+            upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+            if callable(upsert_with_outcome):
+                result = ctx.nb.upsert_with_outcome(
+                    resource,
+                    payload,
+                    lookup_fields=lookup_fields,
+                )
+                candidate_outcome = getattr(result, "outcome", None)
+                if candidate_outcome in {"created", "updated", "noop"}:
+                    outcome = candidate_outcome
+                    obj = getattr(result, "object", None)
+                else:
+                    # Plain MagicMock instances fabricate arbitrary attributes,
+                    # so treat unknown outcomes as lack of structured support
+                    # and fall back to the legacy upsert() path.
+                    obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            else:
+                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
+            logger.info(
+                "Upserted  resource=%-30s  %s  outcome=%s",
+                resource,
+                lookup_display,
+                outcome,
+            )
+            if stats is not None:
+                if outcome == "created":
+                    stats.record("created")
+                elif outcome == "updated":
+                    stats.record("updated")
+                elif outcome == "noop":
+                    stats.record("skipped")
+                else:
+                    # Be defensive with unknown adapters/outcomes.
+                    stats.record("created")
             return obj
         except Exception as exc:
             logger.error(
@@ -726,7 +814,16 @@ class Engine:
                 nested_ctx = ctx.for_nested(iface_item, parent_nb_obj)
                 resolver = Resolver(nested_ctx)
 
-                payload = self._build_payload(iface_cfg.fields, resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        iface_cfg.fields,
+                        resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping interface item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
@@ -740,6 +837,18 @@ class Engine:
                     payload,
                     ["name", parent_field],
                 )
+                iface_id = extract_id(nb_iface)
+
+                # A failed interface write must not cascade into unattached
+                # child writes on the same interface item. Preserve dry-run
+                # traversal so nested payloads are still visible in previews.
+                if not nested_ctx.dry_run and iface_id is None:
+                    logger.warning(
+                        "Skipping nested interface data because %s upsert for %r did not return an id",
+                        iface_resource,
+                        payload.get("name"),
+                    )
+                    continue
 
                 # Nested IP addresses
                 for ip_cfg in iface_cfg.ip_addresses:
@@ -756,20 +865,27 @@ class Engine:
                         ip_ctx = nested_ctx.for_nested(ip_item, nb_iface)
                         ip_resolver = Resolver(ip_ctx)
 
-                        ip_payload = self._build_payload(ip_cfg.fields, ip_resolver, ip_ctx)
+                        try:
+                            ip_payload = self._build_payload(
+                                ip_cfg.fields,
+                                ip_resolver,
+                                ip_ctx,
+                                required_field_names={"address"},
+                            )
+                        except ValueError as exc:
+                            logger.warning("Skipping IP item due to required field error: %s", exc)
+                            continue
                         if not ip_payload:
                             continue
 
                         # Attach IP to interface
-                        if nb_iface is not None:
-                            iface_id = extract_id(nb_iface)
-                            if iface_id is not None:
-                                ip_payload["assigned_object_type"] = (
-                                    "dcim.interface"
-                                    if iface_resource == "dcim.interfaces"
-                                    else "virtualization.vminterface"
-                                )
-                                ip_payload["assigned_object_id"] = iface_id
+                        if iface_id is not None:
+                            ip_payload["assigned_object_type"] = (
+                                "dcim.interface"
+                                if iface_resource == "dcim.interfaces"
+                                else "virtualization.vminterface"
+                            )
+                            ip_payload["assigned_object_id"] = iface_id
 
                         self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
                         nb_ip = self._upsert(ip_ctx, "ipam.ip_addresses", ip_payload, ["address"])
@@ -887,7 +1003,16 @@ class Engine:
                 vlan_ctx = ctx.for_nested(vlan_item, nb_iface)
                 vlan_resolver = Resolver(vlan_ctx)
 
-                vlan_payload = self._build_payload(vlan_cfg.fields, vlan_resolver, vlan_ctx)
+                try:
+                    vlan_payload = self._build_payload(
+                        vlan_cfg.fields,
+                        vlan_resolver,
+                        vlan_ctx,
+                        required_field_names=set(vlan_cfg.lookup_by),
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping tagged VLAN item due to required field error: %s", exc)
+                    continue
                 if not vlan_payload:
                     continue
 
@@ -983,7 +1108,7 @@ class Engine:
 
         for existing_vlan in existing_vlans:
             existing_site = getattr(existing_vlan, "site", None)
-            existing_site_id: Optional[int] = None
+            existing_site_id: int | None = None
             if existing_site is not None:
                 if isinstance(existing_site, dict):
                     existing_site_id = existing_site.get("id")
@@ -1059,7 +1184,7 @@ class Engine:
             parent_id = extract_id(parent_nb_obj)
 
             # Ensure the inventory item role exists once per block
-            role_id: Optional[int] = None
+            role_id: int | None = None
             if inv_cfg.role and not ctx.dry_run:
                 try:
                     role_id = prereq_runner._ensure_inventory_item_role(
@@ -1082,7 +1207,16 @@ class Engine:
                             continue
                         seen_dedup_keys.add(dedup_key)
 
-                payload = self._build_payload(inv_cfg.fields, inv_resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        inv_cfg.fields,
+                        inv_resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping inventory item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
@@ -1124,7 +1258,16 @@ class Engine:
                 nested_ctx = ctx.for_nested(disk_item, parent_nb_obj)
                 disk_resolver = Resolver(nested_ctx)
 
-                payload = self._build_payload(disk_cfg.fields, disk_resolver, nested_ctx)
+                try:
+                    payload = self._build_payload(
+                        disk_cfg.fields,
+                        disk_resolver,
+                        nested_ctx,
+                        required_field_names={"name"},
+                    )
+                except ValueError as exc:
+                    logger.warning("Skipping disk item due to required field error: %s", exc)
+                    continue
                 if not payload:
                     continue
 
@@ -1167,7 +1310,7 @@ class Engine:
 
         # Derive device_type_id from the parent NetBox device so we can add
         # bay templates without an extra API call.
-        device_type_id: Optional[int] = None
+        device_type_id: int | None = None
         if parent_nb_obj is not None:
             dt = (
                 parent_nb_obj.get("device_type")
@@ -1207,7 +1350,25 @@ class Engine:
                         seen_dedup_keys.add(dedup_key)
 
                 # Evaluate all field expressions for this item
-                raw_payload = self._build_payload(mod_cfg.fields, mod_resolver, nested_ctx)
+                required_module_fields = {"model"}
+                field_names = {field.name for field in mod_cfg.fields}
+                if "bay_name" in field_names:
+                    required_module_fields.add("bay_name")
+                elif "name" in field_names:
+                    required_module_fields.add("name")
+                try:
+                    raw_payload = self._build_payload(
+                        mod_cfg.fields,
+                        mod_resolver,
+                        nested_ctx,
+                        required_field_names=required_module_fields,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Skipping module item due to required field error: %s",
+                        exc,
+                    )
+                    continue
                 if not raw_payload:
                     continue
 
@@ -1218,7 +1379,7 @@ class Engine:
                 manufacturer_name = raw_payload.get("manufacturer")
 
                 if not bay_name or not model:
-                    logger.debug(
+                    logger.warning(
                         "Module item missing bay_name or model — skipping (bay=%r model=%r)",
                         bay_name, model,
                     )
@@ -1232,14 +1393,14 @@ class Engine:
                     continue
 
                 # 1. Resolve manufacturer ID (optional)
-                manufacturer_id: Optional[int] = None
+                manufacturer_id: int | None = None
                 if manufacturer_name:
                     try:
                         manufacturer_id = prereq_runner._ensure_manufacturer(
                             {"name": manufacturer_name}, dry_run=False
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_manufacturer for module %r failed: %s", bay_name, exc
                         )
 
@@ -1255,12 +1416,12 @@ class Engine:
                             dry_run=False,
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_module_bay_template %r failed: %s", bay_name, exc
                         )
 
                 # 3. Ensure bay instance on device
-                bay_id: Optional[int] = None
+                bay_id: int | None = None
                 if parent_id is not None:
                     try:
                         bay_id = prereq_runner._ensure_module_bay(
@@ -1272,19 +1433,19 @@ class Engine:
                             dry_run=False,
                         )
                     except Exception as exc:
-                        logger.debug(
+                        logger.warning(
                             "ensure_module_bay %r failed: %s", bay_name, exc
                         )
 
                 if bay_id is None:
-                    logger.debug(
+                    logger.warning(
                         "Could not obtain module_bay for %r — skipping module install",
                         bay_name,
                     )
                     continue
 
                 # 4. Ensure module type
-                module_type_id: Optional[int] = None
+                module_type_id: int | None = None
                 try:
                     # Evaluate ``attribute {}`` field expressions for this item.
                     # These are applied to the ModuleType record (not the Module
@@ -1296,7 +1457,7 @@ class Engine:
                             if val is not None:
                                 attrs[attr_cfg.name] = val
                         except Exception as exc:
-                            logger.debug(
+                            logger.warning(
                                 "Module attribute %r evaluation error: %s",
                                 attr_cfg.name, exc,
                             )
@@ -1311,10 +1472,10 @@ class Engine:
                         dry_run=False,
                     )
                 except Exception as exc:
-                    logger.debug("ensure_module_type %r failed: %s", model, exc)
+                    logger.warning("ensure_module_type %r failed: %s", model, exc)
 
                 if module_type_id is None:
-                    logger.debug(
+                    logger.warning(
                         "Could not obtain module_type for %r — skipping module install",
                         model,
                     )

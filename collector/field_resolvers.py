@@ -19,8 +19,8 @@ source(path)
       "list[*]"         – flatten/iterate all items in list
 
 env(name, default="")
-    get_config(name, default) – DB config_settings value is authoritative;
-    falls back to os.environ[name], then *default*.
+    get_config(name, default) – DB-backed runtime configuration is authoritative
+    for non-startup settings and falls back to *default* when unset.
 
 regex_file(value, filename)
     Apply pattern/replacement pairs from ``regex/<filename>`` to *value*.
@@ -97,13 +97,13 @@ import logging
 import os
 import re as _re
 import types
-from typing import Any, Optional
+from typing import Any
 
 try:
     from .db import get_config as _get_config
 except ImportError:
     def _get_config(key: str, default: str = "") -> str:  # type: ignore[misc]
-        return os.environ.get(key, default)
+        return default
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ def _apply_regex_file(value: Any, regex_dir: str, filename: str) -> Any:
         value = str(value) if value is not None else ""
     filepath = os.path.join(regex_dir, filename)
     try:
-        with open(filepath, "r") as fh:
+        with open(filepath) as fh:
             patterns = [
                 tuple(line.strip().split(",", 1))
                 for line in fh
@@ -258,6 +258,20 @@ class Resolver:
             logger.debug("Expression eval failed %r: %s", expression, exc)
             return None
 
+    def evaluate_strict(self, expression: Any, label: str = "expression") -> Any:
+        """Evaluate *expression* and raise on evaluation errors.
+
+        Non-string values are returned as-is. Unlike :meth:`evaluate`, this
+        method preserves evaluation errors so callers can fail loud for
+        identity-critical fields.
+        """
+        if not isinstance(expression, str):
+            return expression
+        try:
+            return eval(expression, {"__builtins__": {}}, self._scope)  # noqa: S307
+        except Exception as exc:
+            raise ValueError(f"{label} evaluation failed: {exc}") from exc
+
     def _build_scope(self) -> dict:
         ctx = self._ctx
         opts = ctx.collector_opts
@@ -300,16 +314,16 @@ class Resolver:
                 return value
             return value.replace(old, new)
 
-        def upper(value: Any) -> Optional[str]:
+        def upper(value: Any) -> str | None:
             return str(value).upper() if value is not None else None
 
-        def lower(value: Any) -> Optional[str]:
+        def lower(value: Any) -> str | None:
             return str(value).lower() if value is not None else None
 
-        def truncate(value: Any, n: int) -> Optional[str]:
+        def truncate(value: Any, n: int) -> str | None:
             return str(value)[:n] if value is not None else None
 
-        def split(value: Any, sep: Optional[str] = None) -> list:
+        def split(value: Any, sep: str | None = None) -> list:
             if value is None:
                 return []
             return str(value).split(sep)
@@ -320,7 +334,7 @@ class Resolver:
             return sep.join(str(i) for i in items if i)
 
         # ---- numeric helpers ----
-        def to_gb(bytes_value: Any) -> Optional[int]:
+        def to_gb(bytes_value: Any) -> int | None:
             if bytes_value is None:
                 return None
             try:
@@ -328,7 +342,7 @@ class Resolver:
             except (TypeError, ValueError):
                 return None
 
-        def to_mb(kb_value: Any) -> Optional[int]:
+        def to_mb(kb_value: Any) -> int | None:
             if kb_value is None:
                 return None
             try:
@@ -365,7 +379,7 @@ class Resolver:
                 return ""
             return _re.sub(pattern, replacement, str(value))
 
-        def regex_extract(value: Any, pattern: str, group: int = 1) -> Optional[str]:
+        def regex_extract(value: Any, pattern: str, group: int = 1) -> str | None:
             """Return a captured group from the first regex match in *value*.
 
             *group* selects the capture group (default: 1).  Returns ``None``
@@ -390,7 +404,7 @@ class Resolver:
                 return None
 
         # ---- network helpers ----
-        def mask_to_prefix(mask: Any) -> Optional[int]:
+        def mask_to_prefix(mask: Any) -> int | None:
             """Convert a dotted-decimal IPv4 subnet mask to a CIDR prefix length.
 
             For example ``'255.255.255.0'`` → ``24``.  Returns ``None`` when

@@ -14,17 +14,10 @@ another API round-trip.
 
 from __future__ import annotations
 
-import sys
-import os
 from unittest.mock import MagicMock
 
 import pytest
-
-# Make sure the lib directory is importable.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-
 from pynetbox2 import CacheBackend, NetBoxExtendedClient  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Minimal in-memory cache backend for tests
@@ -332,6 +325,20 @@ class TestPrewarmSentinelKey:
         )
         assert sentinel_value["count"] == 1
 
+    def test_prewarm_does_not_retry_adapter_list(self):
+        """prewarm() should rely on adapter-level retries instead of looping itself."""
+        client = _make_client()
+        client.config.retry_attempts = 2
+        client.config.prewarm_sentinel_ttl_seconds = 3600
+        client.adapter._should_retry_exception.return_value = True
+        client.adapter._compute_backoff.return_value = 0.0
+        client.adapter.list.side_effect = Exception("HTTP 503")
+
+        with pytest.raises(Exception, match="HTTP 503"):
+            client.prewarm(["dcim.sites"])
+
+        assert client.adapter.list.call_count == 1
+
 
 class _FakeDeviceTypeRecord:
     """Minimal stub that mimics a pynetbox nested device_type Record.
@@ -418,3 +425,57 @@ class TestPrewarmNoLazyLoading:
             f"adapter.get was called {client.adapter.get.call_count} time(s); "
             "expected 0 — cache warm must not trigger per-record API calls"
         )
+
+
+class TestUpsertOutcomeApi:
+    """Regression coverage for upsert_with_outcome create/update/no-op."""
+
+    def test_upsert_with_outcome_created_when_lookup_misses(self):
+        client = _make_client()
+        client.adapter.get.return_value = None
+        created = {"id": 101, "name": "site-a"}
+        client.adapter.create.return_value = created
+
+        result = client.upsert_with_outcome(
+            "dcim.sites",
+            {"name": "site-a"},
+            lookup_fields=["name"],
+        )
+
+        assert result.object == created
+        assert result.outcome == "created"
+        assert client.adapter.update.call_count == 0
+
+    def test_upsert_with_outcome_updated_when_existing_differs(self):
+        client = _make_client()
+        existing = {"id": 102, "name": "site-a", "slug": "site-old"}
+        client.adapter.get.return_value = existing
+        updated = {"id": 102, "name": "site-a", "slug": "site-a"}
+        client.adapter.update.return_value = updated
+
+        result = client.upsert_with_outcome(
+            "dcim.sites",
+            {"name": "site-a", "slug": "site-a"},
+            lookup_fields=["name"],
+        )
+
+        assert result.object == updated
+        assert result.outcome == "updated"
+        assert client.adapter.create.call_count == 0
+        assert client.adapter.update.call_count == 1
+
+    def test_upsert_with_outcome_noop_when_existing_matches(self):
+        client = _make_client()
+        existing = {"id": 103, "name": "site-a", "slug": "site-a"}
+        client.adapter.get.return_value = existing
+
+        result = client.upsert_with_outcome(
+            "dcim.sites",
+            {"name": "site-a", "slug": "site-a"},
+            lookup_fields=["name"],
+        )
+
+        assert result.object == existing
+        assert result.outcome == "noop"
+        assert client.adapter.create.call_count == 0
+        assert client.adapter.update.call_count == 0

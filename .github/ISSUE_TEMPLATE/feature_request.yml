@@ -1,0 +1,72 @@
+name: Feature request
+description: Propose an enhancement to the collector engine, HCL language, source adapters, web UI, or developer experience.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Clear problem statements and concrete examples make it much easier to evaluate a feature request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What pain point, missing capability, or workflow gap are you running into?
+      placeholder: Describe the real-world problem first, not just the proposed implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like the project to do?
+      placeholder: Describe the desired behavior, command, UI flow, HCL block, or adapter capability.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Related area
+      options:
+        - HCL language
+        - collector engine
+        - source adapter
+        - NetBox integration
+        - web UI
+        - scheduler / job queue
+        - testing / developer tooling
+        - docs / onboarding
+        - Docker / deployment
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: example
+    attributes:
+      label: Example usage
+      description: If possible, show an example mapping snippet, CLI command, UI flow, or source system workflow that would benefit.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today, and why are they not sufficient?
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Expected impact
+      description: Who benefits, and how often would this be used?
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues before opening this request.
+          required: true

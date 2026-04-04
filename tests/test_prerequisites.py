@@ -8,7 +8,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -478,3 +478,48 @@ class TestEnsureVrf:
         runner._ensure_vrf({"name": "PROD", "description": "Production VRF"}, dry_run=False)
         payload = nb.upsert.call_args[0][1]
         assert payload["description"] == "Production VRF"
+
+
+class TestRequiredIdentityValidation:
+    """Prerequisites that create named objects must reject missing identities."""
+
+    @pytest.mark.parametrize(
+        ("method_name", "args", "error_text"),
+        [
+            ("_ensure_manufacturer", {}, "ensure_manufacturer"),
+            ("_ensure_device_type", {"manufacturer": 5}, "ensure_device_type"),
+            ("_ensure_device_role", {"name": "   "}, "ensure_device_role"),
+            ("_ensure_site", {}, "ensure_site"),
+            ("_ensure_cluster_type", {}, "ensure_cluster_type"),
+            ("_ensure_cluster_group", {"name": ""}, "ensure_cluster_group"),
+            ("_ensure_cluster", {}, "ensure_cluster"),
+            ("_ensure_inventory_item_role", {"name": ""}, "ensure_inventory_item_role"),
+            ("_ensure_tenant", {}, "ensure_tenant"),
+            ("_ensure_module_bay_template", {"device_type": 5}, "ensure_module_bay_template"),
+            ("_ensure_module_bay", {"device": 3, "name": "   "}, "ensure_module_bay"),
+            ("_ensure_module_type_profile", {}, "ensure_module_type_profile"),
+            ("_ensure_module_type", {"manufacturer": 7}, "ensure_module_type"),
+        ],
+    )
+    def test_missing_required_identity_raises_without_writing(
+        self,
+        method_name,
+        args,
+        error_text,
+    ):
+        nb = MagicMock()
+        runner = PrerequisiteRunner(nb)
+
+        with pytest.raises(ValueError, match=error_text):
+            getattr(runner, method_name)(args, dry_run=False)
+
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_still_validates_required_identity(self):
+        nb = MagicMock()
+        runner = PrerequisiteRunner(nb)
+
+        with pytest.raises(ValueError, match="ensure_site"):
+            runner._ensure_site({"name": "   "}, dry_run=True)
+
+        nb.upsert.assert_not_called()
