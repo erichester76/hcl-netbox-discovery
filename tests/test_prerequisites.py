@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from collector.prerequisites import PrerequisiteRunner
+from collector.prerequisites import PrerequisiteArgumentError, PrerequisiteRunner
 
 
 class TestEnsurePlatformRaceCondition:
@@ -87,6 +87,14 @@ class TestEnsurePlatformRaceCondition:
         assert result is None
         nb.upsert.assert_not_called()
         nb.get.assert_not_called()
+
+
+def test_require_text_arg_raises_specific_validation_type():
+    nb = MagicMock()
+    runner = PrerequisiteRunner(nb)
+
+    with pytest.raises(PrerequisiteArgumentError, match="ensure_site"):
+        runner._ensure_site({"name": "   "}, dry_run=True)
 
     def test_passes_manufacturer_id_to_upsert(self):
         nb = MagicMock()

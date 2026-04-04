@@ -55,13 +55,17 @@ def extract_id(obj: Any) -> int | None:
     return getattr(obj, "id", None)
 
 
+class PrerequisiteArgumentError(ValueError):
+    """Raised when a prerequisite method receives invalid required input."""
+
+
 def require_text_arg(args: dict[str, Any], key: str, method_name: str) -> str:
     """Return a non-empty text argument or raise a clear validation error."""
     value = args.get(key)
     if isinstance(value, str):
         value = value.strip()
     if not value:
-        raise ValueError(f"{method_name} requires a non-empty {key!r}")
+        raise PrerequisiteArgumentError(f"{method_name} requires a non-empty {key!r}")
     return str(value)
 
 

@@ -496,6 +496,9 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     try:
         _check_and_run_queued_jobs()
         _time.sleep(0.5)
+        assert root_logger.level == level_before, (
+            "Root logger level was not restored after debug_mode job completed"
+        )
     finally:
         patcher.stop()
 
@@ -529,6 +532,9 @@ def test_cli_debug_level_captures_debug_logs(tmp_path, tmp_db):
         from main import _execute_job  # noqa: PLC0415
 
         _execute_job(job_id, str(hcl), dry_run=False, debug_mode=False)
+        assert root_logger.level == logging.DEBUG, (
+            "Root logger level should be restored to the CLI-configured DEBUG level"
+        )
     finally:
         patcher.stop()
         root_logger.setLevel(original_level)
@@ -539,9 +545,6 @@ def test_cli_debug_level_captures_debug_logs(tmp_path, tmp_db):
         for log in logs
     ), "CLI debug-level runs must persist DEBUG records even without debug_mode"
 
-    assert root_logger.level == original_level, (
-        "Root logger level was not restored after CLI debug run"
-    )
 
 
 def test_run_queued_job_debug_captures_logs_from_executor_threads(tmp_path, tmp_db):
