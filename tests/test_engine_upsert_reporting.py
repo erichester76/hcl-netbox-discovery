@@ -6,6 +6,7 @@ to ensure create/update/no-op outcomes are reported distinctly.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -200,6 +201,25 @@ class TestEngineUpsertReporting:
         nb.get.assert_called_once_with("dcim.devices", name="r1")
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
+
+    def test_dry_run_updated_outcome_logs_diff_at_debug(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 22, "name": "r1", "role": 1}
+
+        with caplog.at_level(logging.DEBUG):
+            engine._upsert(
+                _ctx(nb=nb, dry_run=True),
+                "dcim.devices",
+                {"name": "r1", "role": 2},
+                lookup_fields=["name"],
+                stats=stats,
+            )
+
+        assert "resource=dcim.devices" in caplog.text
+        assert "diff=" in caplog.text
+        assert "role" in caplog.text
 
     def test_dry_run_noop_outcome_counts_skipped(self):
         engine = Engine()
