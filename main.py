@@ -88,6 +88,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     _setup_logging(args.log_level)
+    run_token = os.environ.get("COLLECTOR_RUN_TOKEN")
 
     # Initialise the shared job-tracking database so the web UI can observe
     # jobs started from the CLI (same SQLite file used by web_server.py).
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for path in mapping_paths:
         dry_run = bool(args.dry_run)
-        job_id = create_job(path, dry_run=dry_run)
+        job_id = create_job(path, dry_run=dry_run, run_token=run_token)
         if not _execute_job(job_id, path, dry_run=dry_run):
             exit_code = 1
 

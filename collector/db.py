@@ -39,6 +39,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     hcl_file    TEXT    NOT NULL,
+    run_token   TEXT,
     status      TEXT    NOT NULL DEFAULT 'queued',
     dry_run     INTEGER NOT NULL DEFAULT 0,
     debug_mode  INTEGER NOT NULL DEFAULT 0,
@@ -257,6 +258,11 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN debug_mode INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass  # column already exists
+        # Migration: add run_token column if it was not present in older DBs
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN run_token TEXT")
+        except Exception:
+            pass  # column already exists
 
         # Bootstrap settings remain environment-only and should not appear in
         # the DB-backed runtime settings table or Settings UI.
@@ -299,13 +305,19 @@ def init_db() -> None:
             )
 
 
-def create_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False) -> int:
+def create_job(
+    hcl_file: str,
+    dry_run: bool = False,
+    debug_mode: bool = False,
+    run_token: str | None = None,
+) -> int:
     """Insert a new job row and return its *id*."""
     now = _now()
     with _conn() as con:
         cur = con.execute(
-            "INSERT INTO jobs (hcl_file, status, dry_run, debug_mode, created_at) VALUES (?, 'queued', ?, ?, ?)",
-            (hcl_file, int(dry_run), int(debug_mode), now),
+            "INSERT INTO jobs (hcl_file, run_token, status, dry_run, debug_mode, created_at) "
+            "VALUES (?, ?, 'queued', ?, ?, ?)",
+            (hcl_file, run_token, int(dry_run), int(debug_mode), now),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
@@ -362,7 +374,7 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     """Return the *limit* most-recent jobs, newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -373,7 +385,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -383,7 +395,7 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
         row = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -426,19 +438,20 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
     job: dict[str, Any] = {
         "id": row[0],
         "hcl_file": row[1],
-        "status": row[2],
-        "created_at": row[3],
-        "started_at": row[4],
-        "finished_at": row[5],
+        "run_token": row[2],
+        "status": row[3],
+        "created_at": row[4],
+        "started_at": row[5],
+        "finished_at": row[6],
         "summary": None,
-        "dry_run": bool(row[7]) if len(row) > 7 else False,
-        "debug_mode": bool(row[8]) if len(row) > 8 else False,
+        "dry_run": bool(row[8]) if len(row) > 8 else False,
+        "debug_mode": bool(row[9]) if len(row) > 9 else False,
     }
-    if row[6]:
+    if row[7]:
         try:
-            job["summary"] = json.loads(row[6])
+            job["summary"] = json.loads(row[7])
         except (json.JSONDecodeError, TypeError):
-            job["summary"] = row[6]
+            job["summary"] = row[7]
     return job
 
 
@@ -446,7 +459,7 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     """Return all jobs with status='queued', oldest first (FIFO execution order)."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE status='queued' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -481,7 +494,7 @@ def claim_next_queued_job() -> dict[str, Any] | None:
             return None
 
         claimed = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -637,14 +650,14 @@ def dispatch_next_due_schedule() -> dict[str, Any] | None:
             return None
 
         cur = con.execute(
-            "INSERT INTO jobs (hcl_file, status, dry_run, debug_mode, created_at) "
-            "VALUES (?, 'queued', ?, 0, ?)",
+            "INSERT INTO jobs (hcl_file, run_token, status, dry_run, debug_mode, created_at) "
+            "VALUES (?, NULL, 'queued', ?, 0, ?)",
             (hcl_file, int(dry_run), now_str),
         )
         job_id = int(cur.lastrowid)
 
         job_row = con.execute(
-            "SELECT id, hcl_file, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()

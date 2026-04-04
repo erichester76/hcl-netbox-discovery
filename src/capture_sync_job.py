@@ -7,17 +7,16 @@ Author: Codex
 Last Changed: Codex Issue: #capture-feedback-loop
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import re
 import subprocess
 import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, TextIO
+from typing import Any, Dict, List, Optional, TextIO
 from urllib.parse import urlparse
 
 
@@ -28,7 +27,7 @@ CONTAINER_APP_ROOT = PurePosixPath("/app")
 CONTAINER_DB_PATH = "/app/data/collector_jobs.sqlite3"
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Run a real collector sync inside the live Docker Compose collector "
@@ -84,7 +83,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     args = _parse_args(argv)
     project_directory = Path(args.project_directory).expanduser().resolve()
     compose_file = Path(args.compose_file).expanduser().resolve()
@@ -107,8 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     start_utc = datetime.now(timezone.utc)
     artifact_dir = _artifact_dir(artifact_root, mapping_path, start_utc)
     artifact_dir.mkdir(parents=True, exist_ok=False)
-
-    baseline_job_id = _query_max_job_id(compose_base, args.service)
+    run_token = str(uuid.uuid4())
     env_context = _query_env_context(compose_base, args.service)
 
     stdout_path = artifact_dir / "stdout.log"
@@ -125,7 +123,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         collector_command.append("--dry-run")
 
-    exec_command = [*compose_base, "exec", "-T", args.service, *collector_command]
+    exec_command = compose_base + [
+        "exec",
+        "-T",
+        "-e",
+        f"COLLECTOR_RUN_TOKEN={run_token}",
+        args.service,
+    ] + collector_command
 
     exit_code = _run_and_tee(
         exec_command,
@@ -139,10 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     job = _query_job_after(
         compose_base=compose_base,
         service=args.service,
-        baseline_job_id=baseline_job_id,
-        container_mapping_path=str(container_mapping_path),
+        run_token=run_token,
     )
-    db_slice: dict[str, Any] | None = None
+    db_slice = None  # type: Optional[Dict[str, Any]]
     if job is not None:
         db_slice = _query_db_slice(compose_base, args.service, int(job["id"]))
 
@@ -158,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         "collector_command": collector_command,
         "docker_exec_command": exec_command,
         "exit_code": exit_code,
-        "baseline_job_id": baseline_job_id,
+        "run_token": run_token,
         "job_id": None if job is None else job["id"],
         "job_status": None if job is None else job["status"],
         "job_created_at": None if job is None else job["created_at"],
@@ -204,7 +207,7 @@ def _container_mapping_path(project_directory: Path, mapping_path: Path) -> Pure
     return CONTAINER_APP_ROOT / PurePosixPath(relative_mapping.as_posix())
 
 
-def _compose_base(project_directory: Path, compose_file: Path) -> list[str]:
+def _compose_base(project_directory, compose_file):
     return [
         "docker",
         "compose",
@@ -215,12 +218,13 @@ def _compose_base(project_directory: Path, compose_file: Path) -> list[str]:
     ]
 
 
-def _ensure_service_running(compose_base: list[str], service: str) -> None:
+def _ensure_service_running(compose_base, service):
     result = subprocess.run(
-        [*compose_base, "ps", "--services", "--status", "running"],
+        compose_base + ["ps", "--services", "--status", "running"],
         check=True,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     running_services = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     if service not in running_services:
@@ -229,25 +233,7 @@ def _ensure_service_running(compose_base: list[str], service: str) -> None:
         )
 
 
-def _query_max_job_id(compose_base: list[str], service: str) -> int:
-    payload = _exec_python_json(
-        compose_base,
-        service,
-        """
-import json
-import os
-import sqlite3
-
-db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3")
-con = sqlite3.connect(db_path)
-row = con.execute("SELECT COALESCE(MAX(id), 0) FROM jobs").fetchone()
-print(json.dumps({"max_job_id": int(row[0])}))
-""",
-    )
-    return int(payload["max_job_id"])
-
-
-def _query_env_context(compose_base: list[str], service: str) -> dict[str, Any]:
+def _query_env_context(compose_base, service):
     return _exec_python_json(
         compose_base,
         service,
@@ -272,11 +258,10 @@ print(json.dumps(payload))
 
 
 def _query_job_after(
-    compose_base: list[str],
-    service: str,
-    baseline_job_id: int,
-    container_mapping_path: str,
-) -> dict[str, Any] | None:
+    compose_base,
+    service,
+    run_token,
+):
     payload = _exec_python_json(
         compose_base,
         service,
@@ -286,15 +271,14 @@ import os
 import sqlite3
 import sys
 
-baseline_job_id = int(sys.argv[1])
-mapping_path = sys.argv[2]
+run_token = sys.argv[1]
 db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3")
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 row = con.execute(
-    "SELECT id, hcl_file, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
-    "FROM jobs WHERE id > ? AND hcl_file = ? ORDER BY id DESC LIMIT 1",
-    (baseline_job_id, mapping_path),
+    "SELECT id, hcl_file, run_token, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
+    "FROM jobs WHERE run_token = ? ORDER BY id DESC LIMIT 1",
+    (run_token,),
 ).fetchone()
 if row is None:
     print("null")
@@ -307,15 +291,14 @@ else:
             pass
     print(json.dumps(job))
 """,
-        str(baseline_job_id),
-        container_mapping_path,
+        run_token,
     )
     if payload is None:
         return None
     return dict(payload)
 
 
-def _query_db_slice(compose_base: list[str], service: str, job_id: int) -> dict[str, Any]:
+def _query_db_slice(compose_base, service, job_id):
     return _exec_python_json(
         compose_base,
         service,
@@ -330,7 +313,7 @@ db_path = os.environ.get("COLLECTOR_DB_PATH", "/app/data/collector_jobs.sqlite3"
 con = sqlite3.connect(db_path)
 con.row_factory = sqlite3.Row
 job_row = con.execute(
-    "SELECT id, hcl_file, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
+    "SELECT id, hcl_file, run_token, status, dry_run, debug_mode, created_at, started_at, finished_at, summary "
     "FROM jobs WHERE id = ?",
     (job_id,),
 ).fetchone()
@@ -355,13 +338,19 @@ print(json.dumps(payload))
 
 
 def _exec_python_json(
-    compose_base: list[str],
-    service: str,
-    script: str,
-    *script_args: str,
-) -> Any:
-    command = [*compose_base, "exec", "-T", service, "python", "-c", script, *script_args]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    compose_base,
+    service,
+    script,
+    *script_args
+):
+    command = compose_base + ["exec", "-T", service, "python", "-c", script] + list(script_args)
+    result = subprocess.run(
+        command,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
     stdout = result.stdout.strip()
     if not stdout:
         return None
@@ -370,17 +359,11 @@ def _exec_python_json(
 
 def _artifact_dir(artifact_root: Path, mapping_path: Path, start_utc: datetime) -> Path:
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", mapping_path.stem).strip("-") or "mapping"
-    timestamp = start_utc.strftime("%Y%m%dT%H%M%SZ")
+    timestamp = start_utc.strftime("%Y%m%dT%H%M%S%fZ")
     return artifact_root / f"{timestamp}_{slug}"
 
 
-def _run_and_tee(
-    command: list[str],
-    cwd: Path,
-    stdout_path: Path,
-    stderr_path: Path,
-    timeout_seconds: int,
-) -> int:
+def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds):
     with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
         "w", encoding="utf-8"
     ) as stderr_file:
@@ -389,7 +372,7 @@ def _run_and_tee(
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             bufsize=1,
         )
         stdout_thread = threading.Thread(
@@ -418,7 +401,7 @@ def _run_and_tee(
     return return_code
 
 
-def _tee_stream(stream: TextIO | None, output_file: TextIO, mirror: TextIO) -> None:
+def _tee_stream(stream, output_file, mirror):
     if stream is None:
         return
     for line in stream:
@@ -429,20 +412,21 @@ def _tee_stream(stream: TextIO | None, output_file: TextIO, mirror: TextIO) -> N
     stream.close()
 
 
-def _git_sha(project_directory: Path) -> str | None:
+def _git_sha(project_directory):
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=project_directory,
         check=False,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
 
 
-def _build_env_context(container_env: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+def _build_env_context(container_env, manifest):
     return {
         "collector_service": manifest["collector_service"],
         "project_directory": manifest["project_directory"],
@@ -464,7 +448,7 @@ def _build_env_context(container_env: dict[str, Any], manifest: dict[str, Any]) 
     }
 
 
-def _host_only(raw_value: str) -> str | None:
+def _host_only(raw_value):
     value = raw_value.strip()
     if not value:
         return None
@@ -474,14 +458,14 @@ def _host_only(raw_value: str) -> str | None:
     return parsed.hostname or raw_value
 
 
-def _write_json(path: Path, payload: Any) -> None:
+def _write_json(path, payload):
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
 
-def _write_db_log_text(path: Path, db_slice: dict[str, Any] | None) -> None:
-    lines: list[str] = []
+def _write_db_log_text(path, db_slice):
+    lines = []  # type: List[str]
     if db_slice is not None:
         for entry in db_slice.get("logs", []):
             lines.append(
@@ -494,7 +478,7 @@ def _write_db_log_text(path: Path, db_slice: dict[str, Any] | None) -> None:
             handle.write("\n")
 
 
-def _write_done_marker(path: Path, manifest: dict[str, Any]) -> None:
+def _write_done_marker(path, manifest):
     payload = {
         "job_id": manifest.get("job_id"),
         "job_status": manifest.get("job_status"),

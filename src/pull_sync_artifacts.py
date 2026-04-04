@@ -7,14 +7,13 @@ Author: Codex
 Last Changed: Codex Issue: #capture-feedback-loop
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import shlex
 import shutil
 import subprocess
 import tarfile
+import threading
 from pathlib import Path
 
 
@@ -22,7 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOCAL_ROOT = REPO_ROOT / "run-artifacts" / "inbox"
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
             "Pull completed sync artifact bundles from a remote host over SSH "
@@ -53,7 +52,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv=None):
     args = _parse_args(argv)
     local_root = Path(args.local_root).expanduser().resolve()
     local_root.mkdir(parents=True, exist_ok=True)
@@ -65,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         ssh_port=args.ssh_port,
     )
 
-    imported: list[str] = []
-    skipped: list[str] = []
+    imported = []
+    skipped = []
     for bundle_name in bundle_names:
         destination = local_root / bundle_name
         if destination.exists():
@@ -93,11 +92,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _list_remote_bundles(
-    remote_host: str,
-    remote_root: str,
-    done_marker_name: str,
-    ssh_port: int,
-) -> list[str]:
+    remote_host,
+    remote_root,
+    done_marker_name,
+    ssh_port,
+):
     script = (
         "import json, pathlib, sys\n"
         "root = pathlib.Path(sys.argv[1])\n"
@@ -122,8 +121,9 @@ def _list_remote_bundles(
             done_marker_name,
         ],
         check=True,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     payload = result.stdout.strip()
     if not payload:
@@ -132,12 +132,12 @@ def _list_remote_bundles(
 
 
 def _pull_bundle(
-    remote_host: str,
-    remote_root: str,
-    bundle_name: str,
-    local_root: Path,
-    ssh_port: int,
-) -> None:
+    remote_host,
+    remote_root,
+    bundle_name,
+    local_root,
+    ssh_port,
+):
     parent = local_root / Path(bundle_name).parent
     parent.mkdir(parents=True, exist_ok=True)
 
@@ -151,16 +151,24 @@ def _pull_bundle(
         stderr=subprocess.PIPE,
     )
     assert ssh_proc.stdout is not None
+    stderr_chunks = []
+    stderr_thread = None
+    if ssh_proc.stderr is not None:
+        stderr_thread = threading.Thread(
+            target=_drain_stream,
+            args=(ssh_proc.stderr, stderr_chunks),
+            daemon=True,
+        )
+        stderr_thread.start()
     try:
         with tarfile.open(fileobj=ssh_proc.stdout, mode="r|") as archive:
-            archive.extractall(path=local_root, filter="data")
+            archive.extractall(path=str(local_root))
     finally:
         ssh_proc.stdout.close()
 
-    stderr = b""
-    if ssh_proc.stderr is not None:
-        stderr = ssh_proc.stderr.read()
-        ssh_proc.stderr.close()
+    if stderr_thread is not None:
+        stderr_thread.join()
+    stderr = b"".join(stderr_chunks)
     return_code = ssh_proc.wait()
     if return_code != 0:
         shutil.rmtree(local_root / bundle_name, ignore_errors=True)
@@ -168,6 +176,17 @@ def _pull_bundle(
             f"Failed to pull remote bundle '{bundle_name}' from {remote_host}: "
             f"{stderr.decode('utf-8', errors='replace').strip()}"
         )
+
+
+def _drain_stream(stream, chunks):
+    try:
+        while True:
+            chunk = stream.read(8192)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        stream.close()
 
 
 if __name__ == "__main__":

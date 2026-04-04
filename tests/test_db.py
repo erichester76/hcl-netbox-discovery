@@ -56,9 +56,19 @@ def test_get_job_initial_status():
     assert job is not None
     assert job["status"] == "queued"
     assert job["hcl_file"] == "mappings/test.hcl"
+    assert job["run_token"] is None
     assert job["started_at"] is None
     assert job["finished_at"] is None
     assert job["summary"] is None
+
+
+def test_create_job_persists_run_token():
+    job_id = create_job("mappings/test.hcl", run_token="capture-123")
+
+    job = get_job(job_id)
+
+    assert job is not None
+    assert job["run_token"] == "capture-123"
 
 
 def test_start_job_sets_running():

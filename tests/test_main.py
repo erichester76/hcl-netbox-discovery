@@ -134,6 +134,23 @@ def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     assert job["summary"]["devices"]["created"] == 1
 
 
+def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")
+    monkeypatch.setenv("COLLECTOR_RUN_TOKEN", "capture-123")
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import main  # noqa: PLC0415
+        rc = main(["--mapping", str(hcl)])
+
+    assert rc == 0
+    jobs = get_jobs()
+    assert jobs[0]["run_token"] == "capture-123"
+
+
 def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):
     """main() must mark the DB job as failed when the engine raises."""
     hcl = tmp_path / "test.hcl"
