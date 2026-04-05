@@ -1308,8 +1308,8 @@ redis = ">=5.0.0"
 [package.source]
 type = "git"
 url = "https://github.com/erichester76/pynetbox-wrapper.git"
-reference = "6322ee11ae1fdd132a176a5c508fc4a708b9b89b"
-resolved_reference = "6322ee11ae1fdd132a176a5c508fc4a708b9b89b"
+reference = "f6b3674d31d6ec9cb46f731684d69adbc3a776bd"
+resolved_reference = "f6b3674d31d6ec9cb46f731684d69adbc3a776bd"
 
 [[package]]
 name = "pysnmp"
