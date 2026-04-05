@@ -78,7 +78,7 @@ class TestAdditiveTagBehavior:
             "tags": [{"name": "xclarity-sync"}],
         }
 
-        outcome, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
+        outcome, _, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
 
         assert outcome == "would_noop"
 
@@ -97,7 +97,7 @@ class TestAdditiveTagBehavior:
             "tags": [{"name": "xclarity-sync"}],
         }
 
-        outcome, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
+        outcome, _, _, _ = engine._dry_run_outcome(ctx, "dcim.devices", payload, ["serial"])
 
         assert outcome == "would_update"
 
