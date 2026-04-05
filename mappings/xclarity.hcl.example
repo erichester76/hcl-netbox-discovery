@@ -146,7 +146,8 @@ object "node" {
   }
 
   field "role" {
-    value = "prereq('role')"
+    value       = "prereq('role')"
+    update_mode = "if_missing"
   }
 
   field "serial" {
@@ -162,15 +163,18 @@ object "node" {
   }
 
   field "rack" {
-    value = "prereq('placement.rack_id')"
+    value       = "prereq('placement.rack_id')"
+    update_mode = "if_missing"
   }
 
   field "position" {
-    value = "prereq('placement.rack_position')"
+    value       = "prereq('placement.rack_position')"
+    update_mode = "if_missing"
   }
 
   field "face" {
-    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+    value       = "when(prereq('placement.rack_id') != None, 'front', None)"
+    update_mode = "if_missing"
   }
 
   field "status" {
@@ -391,7 +395,8 @@ object "chassis" {
   }
 
   field "role" {
-    value = "prereq('role')"
+    value       = "prereq('role')"
+    update_mode = "if_missing"
   }
 
   field "serial" {
@@ -407,15 +412,18 @@ object "chassis" {
   }
 
   field "rack" {
-    value = "prereq('placement.rack_id')"
+    value       = "prereq('placement.rack_id')"
+    update_mode = "if_missing"
   }
 
   field "position" {
-    value = "prereq('placement.rack_position')"
+    value       = "prereq('placement.rack_position')"
+    update_mode = "if_missing"
   }
 
   field "face" {
-    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+    value       = "when(prereq('placement.rack_id') != None, 'front', None)"
+    update_mode = "if_missing"
   }
 
   field "status" {
@@ -486,7 +494,8 @@ object "switch" {
   }
 
   field "role" {
-    value = "prereq('role')"
+    value       = "prereq('role')"
+    update_mode = "if_missing"
   }
 
   field "serial" {
@@ -502,15 +511,18 @@ object "switch" {
   }
 
   field "rack" {
-    value = "prereq('placement.rack_id')"
+    value       = "prereq('placement.rack_id')"
+    update_mode = "if_missing"
   }
 
   field "position" {
-    value = "prereq('placement.rack_position')"
+    value       = "prereq('placement.rack_position')"
+    update_mode = "if_missing"
   }
 
   field "face" {
-    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+    value       = "when(prereq('placement.rack_id') != None, 'front', None)"
+    update_mode = "if_missing"
   }
 
   field "status" {
@@ -599,7 +611,8 @@ object "storage" {
   }
 
   field "role" {
-    value = "prereq('role')"
+    value       = "prereq('role')"
+    update_mode = "if_missing"
   }
 
   field "serial" {
@@ -615,15 +628,18 @@ object "storage" {
   }
 
   field "rack" {
-    value = "prereq('placement.rack_id')"
+    value       = "prereq('placement.rack_id')"
+    update_mode = "if_missing"
   }
 
   field "position" {
-    value = "prereq('placement.rack_position')"
+    value       = "prereq('placement.rack_position')"
+    update_mode = "if_missing"
   }
 
   field "face" {
-    value = "when(prereq('placement.rack_id') != None, 'front', None)"
+    value       = "when(prereq('placement.rack_id') != None, 'front', None)"
+    update_mode = "if_missing"
   }
 
   field "status" {

@@ -238,6 +238,7 @@ class FieldConfig:
     resource: Optional[str] = None
     lookup: Optional[dict] = None
     ensure: bool = False
+    update_mode: str = "replace"  # replace | if_missing
 
 
 @dataclass
@@ -382,6 +383,15 @@ class CollectorConfig:
 # Block parsers
 # ---------------------------------------------------------------------------
 
+def _field_update_mode(value: Any) -> str:
+    mode = str(value or "replace").strip().lower()
+    if mode not in {"replace", "if_missing"}:
+        raise ValueError(
+            f"Unsupported field update_mode {value!r}; expected 'replace' or 'if_missing'"
+        )
+    return mode
+
+
 def _parse_fields(raw: list) -> list[FieldConfig]:
     configs = []
     for label, body in _labeled_list(raw):
@@ -397,6 +407,7 @@ def _parse_fields(raw: list) -> list[FieldConfig]:
             resource=body.get("resource"),
             lookup=lookup,
             ensure=_bool(body.get("ensure", False)),
+            update_mode=_field_update_mode(body.get("update_mode", "replace")),
         ))
     return configs
 

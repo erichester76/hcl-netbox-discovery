@@ -394,6 +394,24 @@ field "name" {
 
 The `value` expression is evaluated and the result is placed directly in the payload under the field name.
 
+Scalar, FK, and tags fields all support an optional `update_mode` attribute:
+
+```hcl
+field "rack" {
+  value       = "prereq('placement.rack_id')"
+  update_mode = "if_missing"
+}
+```
+
+When `update_mode = "if_missing"`, the engine only writes that field when the
+existing NetBox value is blank or unset. If the existing object already has a
+value for the field, the field is omitted from the outgoing payload for both
+dry-runs and live writes.
+
+| Attribute | Required | Description |
+|---|---|---|
+| `update_mode` | no | Field write policy: `"replace"` (default) or `"if_missing"` |
+
 ### Foreign-key field (`type = "fk"`)
 
 ```hcl

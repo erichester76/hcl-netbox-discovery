@@ -47,6 +47,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 | **Dry-run mode** | Preview all payloads that *would* be sent without writing anything to NetBox |
 | **Smart caching** | Optional Redis or SQLite caching with flush/pre-warm controls in the web UI — reduces redundant NetBox API calls |
 | **Flexible field expressions** | 20+ helper functions for transformation (`source()`, `coalesce()`, `regex_file()`, `map_value()`, etc.) |
+| **Field-level update modes** | Mark individual fields as `if_missing` so confirmed NetBox values are only filled when blank |
 | **Nested collections** | Sync interfaces, IP addresses, inventory items, virtual disks, and modules within a single mapping file |
 | **Module support** | Full NetBox module bay / module type / module hierarchy for detailed hardware tracking |
 | **Error isolation** | Failures on individual items are logged and skipped without aborting the run |
