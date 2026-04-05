@@ -262,8 +262,14 @@ object "host" {
 object "vm" {
   source_collection = "vms"
   netbox_resource   = "virtualization.virtual_machines"
-  lookup_by         = ["name"]
+  lookup_by         = ["name", "cluster"]
   max_workers       = 8
+
+  prerequisite "cluster" {
+    method   = "ensure_cluster"
+    args     = { name = "source('runtime.host.parent.name')" }
+    optional = false
+  }
 
   prerequisite "platform" {
     method   = "ensure_platform"
@@ -273,6 +279,10 @@ object "vm" {
 
   field "name" {
     value = "truncate(replace(source('name'), '.clemson.edu', ''), 64)"
+  }
+
+  field "cluster" {
+    value = "prereq('cluster')"
   }
 
   field "status" {
