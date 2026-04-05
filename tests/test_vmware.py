@@ -567,34 +567,80 @@ class TestEnrichVmInterfaces:
     def test_vm_net_gets_vlans_from_dvs_portgroup(self):
         net = MagicMock()
         net.network = "VLAN30-PG"
+        net.macAddress = "00:11:22:33:44:55"
 
         pg = _make_dvs_portgroup("dvpg-30", "VLAN30-PG", 30)
+        device = MagicMock()
+        device.macAddress = "00:11:22:33:44:55"
+        device.deviceInfo.label = "Network adapter 1"
 
         vm = MagicMock()
         vm.network = [pg]
         vm.guest.net = [net]
+        vm.config.hardware.device = [device]
 
         src = VMwareSource()
         enriched = src._enrich_vm_interfaces(vm)
 
         assert len(enriched) == 1
         assert enriched[0]._vlans == [{"id": 30, "name": "VLAN30-PG"}]
+        assert enriched[0].name == "Network adapter 1"
         # Proxy must forward other attributes to the original net object
         assert enriched[0].network == "VLAN30-PG"
 
     def test_vm_net_with_no_matching_portgroup_gets_empty_list(self):
         net = MagicMock()
         net.network = "SomeOtherNetwork"
+        net.macAddress = "AA:BB:CC:DD:EE:FF"
 
         vm = MagicMock()
         vm.network = []
         vm.guest.net = [net]
+        vm.config.hardware.device = []
 
         src = VMwareSource()
         enriched = src._enrich_vm_interfaces(vm)
 
         assert len(enriched) == 1
         assert enriched[0]._vlans == []
+
+    def test_vm_net_name_prefers_matching_device_label(self):
+        net = MagicMock()
+        net.network = "VLAN40-PG"
+        net.name = None
+        net.macAddress = "AA:BB:CC:DD:EE:FF"
+
+        device = MagicMock()
+        device.macAddress = "aa:bb:cc:dd:ee:ff"
+        device.deviceInfo.label = "Network adapter 2"
+
+        vm = MagicMock()
+        vm.network = []
+        vm.guest.net = [net]
+        vm.config.hardware.device = [device]
+
+        src = VMwareSource()
+        enriched = src._enrich_vm_interfaces(vm)
+
+        assert len(enriched) == 1
+        assert enriched[0].name == "Network adapter 2"
+
+    def test_vm_net_name_falls_back_to_guest_name_without_device_match(self):
+        net = MagicMock()
+        net.network = "VLAN50-PG"
+        net.name = "Guest NIC Name"
+        net.macAddress = "11:22:33:44:55:66"
+
+        vm = MagicMock()
+        vm.network = []
+        vm.guest.net = [net]
+        vm.config.hardware.device = []
+
+        src = VMwareSource()
+        enriched = src._enrich_vm_interfaces(vm)
+
+        assert len(enriched) == 1
+        assert enriched[0].name == "Guest NIC Name"
 
     def test_enriched_net_stored_on_vm(self):
         """_get_vms stores the enriched proxies as vm._enriched_net."""

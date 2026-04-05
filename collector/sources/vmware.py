@@ -42,11 +42,15 @@ class _NicProxy:
     wrapped object transparently.
     """
 
-    def __init__(self, wrapped: Any, vlans: list) -> None:
+    def __init__(self, wrapped: Any, vlans: list, **extra: Any) -> None:
         object.__setattr__(self, "_wrapped", wrapped)
         object.__setattr__(self, "_vlans", vlans)
+        object.__setattr__(self, "_extra", extra)
 
     def __getattr__(self, name: str) -> Any:
+        extra = object.__getattribute__(self, "_extra")
+        if name in extra:
+            return extra[name]
         return getattr(object.__getattribute__(self, "_wrapped"), name)
 
 
@@ -344,13 +348,35 @@ class VMwareSource(DataSource):
         except Exception as exc:
             logger.debug("Could not read VM network info: %s", exc)
 
+        device_labels_by_mac: dict[str, str] = {}
+        try:
+            for device in getattr(
+                getattr(getattr(vm, "config", None), "hardware", None), "device", []
+            ):
+                mac_address = getattr(device, "macAddress", None)
+                label = getattr(getattr(device, "deviceInfo", None), "label", None)
+                if mac_address and label:
+                    device_labels_by_mac[str(mac_address).upper()] = label
+        except Exception as exc:
+            logger.debug("Could not read VM device labels: %s", exc)
+
         # Build enriched NIC proxy list
         enriched: list[_NicProxy] = []
         try:
             for net in getattr(getattr(vm, "guest", None), "net", []):
                 network_name = getattr(net, "network", None)
                 vlan_info = network_to_vlan.get(network_name) if network_name else None
-                enriched.append(_NicProxy(net, [vlan_info] if vlan_info else []))
+                mac_address = getattr(net, "macAddress", None)
+                nic_name = None
+                if mac_address:
+                    nic_name = device_labels_by_mac.get(str(mac_address).upper())
+                enriched.append(
+                    _NicProxy(
+                        net,
+                        [vlan_info] if vlan_info else [],
+                        name=nic_name if nic_name is not None else getattr(net, "name", None),
+                    )
+                )
         except Exception as exc:
             logger.debug("Could not enrich VM interface VLAN info: %s", exc)
 
