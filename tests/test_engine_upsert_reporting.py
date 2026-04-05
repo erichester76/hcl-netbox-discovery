@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 from collector.engine import Engine, RunStats
 
 
-def _ctx(*, nb, dry_run: bool = False):
-    return SimpleNamespace(nb=nb, dry_run=dry_run)
+def _ctx(*, nb, dry_run: bool = False, source_obj=None):
+    return SimpleNamespace(nb=nb, dry_run=dry_run, source_obj=source_obj)
 
 
 class TestEngineUpsertReporting:
@@ -151,6 +151,41 @@ class TestEngineUpsertReporting:
         assert result is None
         assert stats.processed == 1
         assert stats.errored == 1
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
+
+    def test_vmware_guest_only_interface_missing_name_is_deliberate_skip(self, caplog):
+        engine = Engine()
+        stats = RunStats("vms")
+        nested_stats = RunStats("vms")
+        nb = MagicMock()
+        source_obj = SimpleNamespace(_guest_only_vm_interface=True)
+
+        with caplog.at_level(logging.INFO):
+            result = engine._upsert(
+                _ctx(nb=nb, source_obj=source_obj),
+                "virtualization.interfaces",
+                {
+                    "mac_address": "AA:BB:CC:DD:EE:FF",
+                    "type": "virtual",
+                    "virtual_machine": 123,
+                    "tags": [{"name": "vmware-sync"}],
+                },
+                lookup_fields=["name", "virtual_machine"],
+                stats=stats,
+                nested_stats=nested_stats,
+            )
+
+        assert result is None
+        assert stats.processed == 0
+        assert stats.errored == 0
+        assert nested_stats.nested_skipped == {
+            "virtualization.interfaces:guest_only_interface": 1
+        }
+        assert (
+            "Skipping VMware guest-only interface without backing device label"
+            in caplog.text
+        )
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
 
