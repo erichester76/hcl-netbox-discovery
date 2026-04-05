@@ -375,6 +375,7 @@ class VMwareSource(DataSource):
                         net,
                         [vlan_info] if vlan_info else [],
                         name=nic_name if nic_name is not None else getattr(net, "name", None),
+                        _guest_only_vm_interface=nic_name is None,
                     )
                 )
         except Exception as exc:

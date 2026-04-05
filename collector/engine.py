@@ -1084,18 +1084,33 @@ class Engine:
     ) -> Any:
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
-            logger.warning(
-                "Skipping upsert  resource=%s  missing_lookup=%s  keys=%s",
-                resource,
-                missing_lookup_fields,
-                sorted(payload.keys()),
+            deliberate_guest_skip = (
+                resource == "virtualization.interfaces"
+                and missing_lookup_fields == ["name"]
+                and getattr(getattr(ctx, "source_obj", None), "_guest_only_vm_interface", False)
             )
-            if stats is not None:
-                stats.record_error()
-            if nested_stats is not None:
-                nested_stats.record_nested_skip(
-                    f"{resource}:{'.'.join(missing_lookup_fields)}"
+            if deliberate_guest_skip:
+                logger.info(
+                    "Skipping VMware guest-only interface without backing device label  keys=%s",
+                    sorted(payload.keys()),
                 )
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(
+                        f"{resource}:guest_only_interface"
+                    )
+            else:
+                logger.warning(
+                    "Skipping upsert  resource=%s  missing_lookup=%s  keys=%s",
+                    resource,
+                    missing_lookup_fields,
+                    sorted(payload.keys()),
+                )
+                if stats is not None:
+                    stats.record_error()
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(
+                        f"{resource}:{'.'.join(missing_lookup_fields)}"
+                    )
             return None
         if ctx.dry_run:
             try:
