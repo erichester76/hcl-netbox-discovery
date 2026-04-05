@@ -10,6 +10,7 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from collector.config import FieldConfig
 from collector.engine import Engine, RunStats
 
 
@@ -153,6 +154,82 @@ class TestEngineUpsertReporting:
         assert stats.errored == 1
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
+
+    def test_live_upsert_omits_if_missing_field_when_existing_value_present(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 10, "name": "r1", "rack": {"id": 7, "name": "Rack A"}}
+        nb.upsert_with_outcome.return_value = SimpleNamespace(
+            object={"id": 10, "name": "r1"},
+            outcome="noop",
+        )
+
+        result = engine._upsert(
+            _ctx(nb=nb),
+            "dcim.devices",
+            {"name": "r1", "rack": 11},
+            lookup_fields=["name"],
+            stats=stats,
+            field_configs=[FieldConfig(name="rack", value="source('rack')", update_mode="if_missing")],
+        )
+
+        assert result == {"id": 10, "name": "r1"}
+        nb.upsert_with_outcome.assert_called_once_with(
+            "dcim.devices",
+            {"name": "r1"},
+            lookup_fields=["name"],
+        )
+        assert stats.skipped == 1
+        assert stats.errored == 0
+
+    def test_live_upsert_keeps_if_missing_field_when_existing_value_missing(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 10, "name": "r1", "rack": None}
+        nb.upsert_with_outcome.return_value = SimpleNamespace(
+            object={"id": 10, "name": "r1", "rack": 11},
+            outcome="updated",
+        )
+
+        result = engine._upsert(
+            _ctx(nb=nb),
+            "dcim.devices",
+            {"name": "r1", "rack": 11},
+            lookup_fields=["name"],
+            stats=stats,
+            field_configs=[FieldConfig(name="rack", value="source('rack')", update_mode="if_missing")],
+        )
+
+        assert result == {"id": 10, "name": "r1", "rack": 11}
+        nb.upsert_with_outcome.assert_called_once_with(
+            "dcim.devices",
+            {"name": "r1", "rack": 11},
+            lookup_fields=["name"],
+        )
+        assert stats.updated == 1
+        assert stats.errored == 0
+
+    def test_dry_run_if_missing_field_does_not_report_update_when_existing_present(self):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.return_value = {"id": 10, "name": "r1", "rack": {"id": 7, "name": "Rack A"}}
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "dcim.devices",
+            {"name": "r1", "rack": 11},
+            lookup_fields=["name"],
+            stats=stats,
+            field_configs=[FieldConfig(name="rack", value="source('rack')", update_mode="if_missing")],
+        )
+
+        assert result == {"id": 10, "name": "r1", "rack": {"id": 7, "name": "Rack A"}}
+        assert stats.skipped == 1
+        assert stats.updated == 0
+        assert stats.errored == 0
 
     def test_vmware_guest_only_interface_missing_name_is_deliberate_skip(self, caplog):
         engine = Engine()

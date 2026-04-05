@@ -23,6 +23,7 @@ from collector.config import (
     _bool,
     _eval_config_str,
     _eval_config_str_with_overrides,
+    _field_update_mode,
     _int,
     _labeled_list,
     _unlabeled_list,
@@ -73,6 +74,18 @@ class TestInt:
 
     def test_int_none_returns_default(self):
         assert _int(None, default=0) == 0
+
+
+class TestFieldUpdateMode:
+    def test_replace_default(self):
+        assert _field_update_mode(None) == "replace"
+
+    def test_if_missing_mode(self):
+        assert _field_update_mode("if_missing") == "if_missing"
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(ValueError, match="update_mode"):
+            _field_update_mode("preserve_forever")
 
 
 class TestLabeledList:
@@ -269,6 +282,33 @@ class TestLoadConfigWithObjects:
         assert prereq.name == "device_type"
         assert prereq.method == "ensure_device_type"
         assert "model" in prereq.args
+
+    def test_parses_field_update_mode(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+
+            object "device" {
+              source_collection = "devices"
+              netbox_resource   = "dcim.devices"
+
+              field "rack" {
+                value       = "source('rack')"
+                update_mode = "if_missing"
+              }
+            }
+        """)
+        cfg = load_config(path)
+        field_cfg = cfg.objects[0].fields[0]
+        assert field_cfg.name == "rack"
+        assert field_cfg.update_mode == "if_missing"
 
     def test_parses_rest_collection_blocks(self, tmp_path):
         path = _write_hcl(tmp_path, """

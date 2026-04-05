@@ -450,6 +450,40 @@ class Engine:
             subset[key] = Engine._normalize_compare_field(ctx, resource, key, value)
         return subset
 
+    @staticmethod
+    def _is_missing_existing_value(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value) == 0
+        if hasattr(value, "id"):
+            return getattr(value, "id", None) is None
+        return False
+
+    @classmethod
+    def _apply_field_update_modes(
+        cls,
+        existing: Any,
+        payload: dict[str, Any],
+        lookup_fields: list[str],
+        field_configs: list[FieldConfig] | None,
+    ) -> dict[str, Any]:
+        if existing is None or not field_configs:
+            return payload
+
+        effective_payload = dict(payload)
+        for field_cfg in field_configs:
+            if field_cfg.update_mode != "if_missing":
+                continue
+            if field_cfg.name in lookup_fields or field_cfg.name not in effective_payload:
+                continue
+            existing_value = cls._record_attr_value(existing, field_cfg.name)
+            if not cls._is_missing_existing_value(existing_value):
+                effective_payload.pop(field_cfg.name, None)
+        return effective_payload
+
     def _next_dry_run_id(self) -> int:
         with self._dry_run_id_lock:
             return next(self._dry_run_id_counter)
@@ -511,10 +545,11 @@ class Engine:
         resource: str,
         payload: dict,
         lookup_fields: list[str],
-    ) -> tuple[str, dict[str, Any], Any]:
+        field_configs: list[FieldConfig] | None = None,
+    ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
-            return "would_create", filters, None
+            return "would_create", filters, None, payload
         try:
             existing = ctx.nb.get(resource, **filters) if filters else None
         except ValueError as exc:
@@ -532,7 +567,7 @@ class Engine:
                 matched_ids=matched_ids,
             ) from exc
         if existing is None:
-            return "would_create", filters, None
+            return "would_create", filters, None, payload
 
         extract_id = self._nb_helper(ctx, "_extract_id")
         object_id = extract_id(existing) if callable(extract_id) else None
@@ -542,11 +577,18 @@ class Engine:
             else:
                 object_id = getattr(existing, "id", None)
         if object_id is None:
-            return "would_create", filters, None
+            return "would_create", filters, None, payload
+
+        effective_payload = self._apply_field_update_modes(
+            existing,
+            payload,
+            lookup_fields,
+            field_configs,
+        )
 
         desired_subset = {
             key: self._normalize_compare_field(ctx, resource, key, value)
-            for key, value in payload.items()
+            for key, value in effective_payload.items()
             if not self._is_preview_reference(value)
         }
         existing_subset = self._build_existing_subset(
@@ -577,8 +619,8 @@ class Engine:
                 filters,
                 diff_payload,
             )
-            return "would_update", filters, existing
-        return "would_noop", filters, existing
+            return "would_update", filters, existing, effective_payload
+        return "would_noop", filters, existing, effective_payload
 
     def run(
         self,
@@ -927,7 +969,12 @@ class Engine:
 
         # 4. Upsert to NetBox
         nb_obj = self._upsert(
-            ctx, obj_cfg.netbox_resource, payload, obj_cfg.lookup_by, stats
+            ctx,
+            obj_cfg.netbox_resource,
+            payload,
+            obj_cfg.lookup_by,
+            stats,
+            field_configs=obj_cfg.fields,
         )
         if nb_obj is None:
             return
@@ -1081,6 +1128,7 @@ class Engine:
         lookup_fields: list[str],
         stats: RunStats | None = None,
         nested_stats: RunStats | None = None,
+        field_configs: list[FieldConfig] | None = None,
     ) -> Any:
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
@@ -1114,11 +1162,12 @@ class Engine:
             return None
         if ctx.dry_run:
             try:
-                dry_run_outcome, lookup_display, existing = self._dry_run_outcome(
+                dry_run_outcome, lookup_display, existing, effective_payload = self._dry_run_outcome(
                     ctx,
                     resource,
                     payload,
                     lookup_fields,
+                    field_configs=field_configs,
                 )
             except AmbiguousDryRunLookupError as exc:
                 logger.warning(
@@ -1146,8 +1195,17 @@ class Engine:
                     stats.record("updated")
                 else:
                     stats.record("skipped")
-            return self._dry_run_preview_object(ctx, resource, payload, existing)
+            return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
+            filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+            if filters and field_configs:
+                existing = ctx.nb.get(resource, **filters)
+                payload = self._apply_field_update_modes(
+                    existing,
+                    payload,
+                    lookup_fields,
+                    field_configs,
+                )
             self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
             outcome = "created"
             obj = None
@@ -1261,6 +1319,7 @@ class Engine:
                     payload,
                     ["name", parent_field],
                     nested_stats=stats,
+                    field_configs=iface_cfg.fields,
                 )
                 iface_id = extract_id(nb_iface)
 
@@ -1319,6 +1378,7 @@ class Engine:
                             ip_payload,
                             ["address"],
                             nested_stats=stats,
+                            field_configs=ip_cfg.fields,
                         )
 
                         # Set primary IPv4 or IPv6 on parent object based on address version
@@ -1664,6 +1724,7 @@ class Engine:
                     payload,
                     ["device", "name"],
                     nested_stats=stats,
+                    field_configs=inv_cfg.fields,
                 )
 
     def _process_disks(
@@ -1715,6 +1776,7 @@ class Engine:
                     payload,
                     ["virtual_machine", "name"],
                     nested_stats=stats,
+                    field_configs=disk_cfg.fields,
                 )
 
     def _process_modules(
