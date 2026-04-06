@@ -435,7 +435,7 @@ class TestAzureSubscriptionFilter:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_image_reference()
+# _resolve_image()
 # ---------------------------------------------------------------------------
 
 
@@ -450,7 +450,7 @@ class TestAzureResolveImageReference:
         img.sku = "22.04-LTS"
 
         compute = MagicMock()
-        resolved_img, label = src._resolve_image_reference(img, "sub-1", compute, "vm-01")
+        resolved_img, label = src._resolve_image(img, "sub-1", compute, "vm-01")
 
         assert resolved_img is img
         assert label == ""
@@ -476,7 +476,7 @@ class TestAzureResolveImageReference:
         compute = MagicMock()
         compute.gallery_images.get.return_value = gallery_def
 
-        resolved_img, label = src._resolve_image_reference(img, "sub-1", compute, "vm-01")
+        resolved_img, label = src._resolve_image(img, "sub-1", compute, "vm-01")
 
         assert resolved_img is fake_identifier
         assert "Gallery: MyGallery / MyImage" in label
@@ -495,14 +495,14 @@ class TestAzureResolveImageReference:
         compute = MagicMock()
         compute.gallery_images.get.side_effect = Exception("API error")
 
-        resolved_img, label = src._resolve_image_reference(img, "sub-1", compute, "vm-01")
+        resolved_img, label = src._resolve_image(img, "sub-1", compute, "vm-01")
 
         assert resolved_img is img
         assert "Gallery" in label
 
 
 # ---------------------------------------------------------------------------
-# _build_vm_dict() — custom_fields and image_reference
+# _build_vm_dict() — custom_fields and image
 # ---------------------------------------------------------------------------
 
 
@@ -535,7 +535,7 @@ class TestAzureBuildVmDictCustomFields:
 
         assert result["custom_fields"]["instance_type"] == "Standard_D2s_v3"
 
-    def test_vm_dict_contains_image_reference_in_custom_fields(self):
+    def test_vm_dict_contains_image_in_custom_fields(self):
         src = AzureSource()
         src._credential = MagicMock()
         vm = self._make_vm()
@@ -546,9 +546,9 @@ class TestAzureBuildVmDictCustomFields:
 
         result = src._build_vm_dict(vm, "sub-1", "Dev", compute, network, {})
 
-        assert "image_reference" in result
-        assert "image_reference" in result["custom_fields"]
-        assert "Marketplace" in result["image_reference"]
+        assert "image" in result
+        assert "image" in result["custom_fields"]
+        assert "Marketplace" in result["image"]
 
     def test_vm_dict_instance_type_field(self):
         src = AzureSource()
