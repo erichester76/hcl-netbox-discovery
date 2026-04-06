@@ -1796,7 +1796,7 @@ class TestProcessModulesPowerInput:
 
     def test_xclarity_modules_hcl_has_attribute_blocks(self):
         """The xclarity-modules.hcl.example mapping file should have attribute blocks
-        on its CPU, Memory, Hard disk, Expansion card, Fan, and Power supply
+        on its CPU, Memory, Hard disk, Expansion card, and Power supply
         module blocks."""
         from collector.config import load_config
         cfg = load_config("mappings/xclarity-modules.hcl.example")
@@ -1823,5 +1823,6 @@ class TestProcessModulesPowerInput:
         # Power supply must have input_current, input_voltage
         assert "input_current" in profile_to_attrs.get("Power supply", [])
         assert "input_voltage" in profile_to_attrs.get("Power supply", [])
-        # Fan must have rpm
-        assert "rpm" in profile_to_attrs.get("Fan", [])
+        # Fan intentionally has no attribute blocks because XClarity reports
+        # live tachometer values rather than stable hardware characteristics.
+        assert profile_to_attrs.get("Fan", []) == []
