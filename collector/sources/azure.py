@@ -235,7 +235,7 @@ class AzureSource(DataSource):
                     if cidr and "/" in cidr:
                         prefixes.append({
                             "prefix":            cidr,
-                            "description":       f"Azure VNet: {vnet_name} ({sub_name})",
+                            "description":       f"Azure VNet: {vnet_name} (Sub: {sub_name})",
                             "is_vnet":           True,
                             "vnet_name":         vnet_name,
                             "subnet_name":       "",
@@ -257,7 +257,7 @@ class AzureSource(DataSource):
                     if cidr and "/" in cidr:
                         prefixes.append({
                             "prefix":            cidr,
-                            "description":       f"Azure Subnet: {subnet.name} (VNet: {vnet_name}, {sub_name})",
+                            "description":       f"Azure Subnet: {subnet.name} (VNet: {vnet_name})",
                             "is_vnet":           False,
                             "vnet_name":         vnet_name,
                             "subnet_name":       subnet.name,
