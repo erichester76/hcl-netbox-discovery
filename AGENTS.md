@@ -207,7 +207,7 @@ Follow this workflow by default unless the user explicitly overrides it:
 4. **Parallel execution**
    - Work the queue in priority order.
    - Parallelize only when write scopes are clearly separable.
-   - When using multiple agents, act as merge manager:
+   - When using multiple agents, act as a merge manager:
      - keep branches current with `origin/main`
      - resolve conflicts proactively
      - avoid duplicating work between branches
