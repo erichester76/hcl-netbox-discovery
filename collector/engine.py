@@ -1415,11 +1415,17 @@ class Engine:
                 # child writes on the same interface item. Preserve dry-run
                 # traversal so nested payloads are still visible in previews.
                 if not nested_ctx.dry_run and iface_id is None:
-                    logger.warning(
-                        "Skipping nested interface data because %s upsert for %r did not return an id",
-                        iface_resource,
-                        payload.get("name"),
+                    deliberate_guest_skip = getattr(
+                        getattr(nested_ctx, "source_obj", None),
+                        "_guest_only_vm_interface",
+                        False,
                     )
+                    if not deliberate_guest_skip:
+                        logger.warning(
+                            "Skipping nested interface data because %s upsert for %r did not return an id",
+                            iface_resource,
+                            payload.get("name"),
+                        )
                     continue
 
                 # Nested IP addresses

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import logging
 from unittest.mock import MagicMock, call, patch
 
 from collector.config import (
@@ -146,6 +147,7 @@ class TestInterfaceWriteIntegrity:
                 )
             ],
         )
+<<<<<<< HEAD
         ctx = _make_ctx(
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
@@ -201,6 +203,42 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
+
+    def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        guest_iface = SimpleNamespace(
+            _guest_only_vm_interface=True,
+            _ips=[{"address": "10.0.0.1/24"}],
+        )
+        ctx = _make_ctx({"_interfaces": [guest_iface]})
+        parent_nb_obj = SimpleNamespace(id=99)
+
+        with patch.object(engine, "_build_payload", return_value={"virtual_machine": 99}), patch.object(
+            engine,
+            "_upsert",
+            return_value=None,
+        ):
+            with caplog.at_level(logging.WARNING):
+                engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert "did not return an id" not in caplog.text
 
     def test_dry_run_existing_parent_preserves_device_identity_for_child_lookup(self):
         engine = Engine()
