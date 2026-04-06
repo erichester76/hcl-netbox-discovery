@@ -53,6 +53,18 @@ def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
     )
 
 
+def _host_route_variant(address: Any) -> str | None:
+    if not isinstance(address, str) or not address:
+        return None
+    try:
+        iface = ipaddress.ip_interface(address)
+    except ValueError:
+        return None
+    if iface.network.prefixlen == iface.max_prefixlen:
+        return None
+    return f"{iface.ip}/{iface.max_prefixlen}"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -505,6 +517,94 @@ class Engine:
             if not cls._is_missing_existing_value(existing_value):
                 effective_payload.pop(field_cfg.name, None)
         return effective_payload
+
+    def _execute_live_upsert(
+        self,
+        ctx: RunContext,
+        resource: str,
+        payload: dict[str, Any],
+        lookup_fields: list[str],
+        field_configs: list[FieldConfig] | None = None,
+    ) -> tuple[Any, str, dict[str, Any]]:
+        filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+        if filters and field_configs:
+            existing = ctx.nb.get(resource, **filters)
+            payload = self._apply_field_update_modes(
+                existing,
+                payload,
+                lookup_fields,
+                field_configs,
+            )
+        self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        outcome = "created"
+        obj = None
+        upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+        if callable(upsert_with_outcome):
+            result = ctx.nb.upsert_with_outcome(
+                resource,
+                payload,
+                lookup_fields=lookup_fields,
+            )
+            candidate_outcome = getattr(result, "outcome", None)
+            if candidate_outcome in {"created", "updated", "noop"}:
+                outcome = candidate_outcome
+                obj = getattr(result, "object", None)
+            else:
+                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+        else:
+            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+        return obj, outcome, payload
+
+    @staticmethod
+    def _record_live_upsert_stats(
+        stats: RunStats | None,
+        outcome: str,
+    ) -> None:
+        if stats is None:
+            return
+        if outcome == "created":
+            stats.record("created")
+        elif outcome == "updated":
+            stats.record("updated")
+        elif outcome == "noop":
+            stats.record("skipped")
+        else:
+            stats.record("created")
+
+    def _normalize_duplicate_ip_host_route(
+        self,
+        ctx: RunContext,
+        payload: dict[str, Any],
+    ) -> bool:
+        desired_address = payload.get("address")
+        host_route = _host_route_variant(desired_address)
+        if host_route is None:
+            return False
+
+        existing_ip = ctx.nb.get("ipam.ip_addresses", address=host_route)
+        existing_ip_id = extract_id(existing_ip)
+        if existing_ip_id is None:
+            return False
+
+        existing_address = self._record_attr_value(existing_ip, "address") or host_route
+        try:
+            desired_iface = ipaddress.ip_interface(desired_address)
+            existing_iface = ipaddress.ip_interface(existing_address)
+        except ValueError:
+            return False
+        if existing_iface.network.prefixlen != existing_iface.max_prefixlen:
+            return False
+        if existing_iface.ip != desired_iface.ip:
+            return False
+
+        logger.info(
+            "Normalizing host-route IP to desired prefix  id=%r  from=%r  to=%r",
+            existing_ip_id,
+            existing_address,
+            desired_address,
+        )
+        ctx.nb.update("ipam.ip_addresses", existing_ip_id, {"address": desired_address})
+        return True
 
     def _next_dry_run_id(self) -> int:
         with self._dry_run_id_lock:
@@ -1220,36 +1320,13 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
-            filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
-            if filters and field_configs:
-                existing = ctx.nb.get(resource, **filters)
-                payload = self._apply_field_update_modes(
-                    existing,
-                    payload,
-                    lookup_fields,
-                    field_configs,
-                )
-            self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
-            outcome = "created"
-            obj = None
-            upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
-            if callable(upsert_with_outcome):
-                result = ctx.nb.upsert_with_outcome(
-                    resource,
-                    payload,
-                    lookup_fields=lookup_fields,
-                )
-                candidate_outcome = getattr(result, "outcome", None)
-                if candidate_outcome in {"created", "updated", "noop"}:
-                    outcome = candidate_outcome
-                    obj = getattr(result, "object", None)
-                else:
-                    # Plain MagicMock instances fabricate arbitrary attributes,
-                    # so treat unknown outcomes as lack of structured support
-                    # and fall back to the legacy upsert() path.
-                    obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
-            else:
-                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            obj, outcome, payload = self._execute_live_upsert(
+                ctx,
+                resource,
+                payload,
+                lookup_fields,
+                field_configs=field_configs,
+            )
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
             logger.info(
                 "Upserted  resource=%-30s  %s  outcome=%s",
@@ -1257,20 +1334,11 @@ class Engine:
                 lookup_display,
                 outcome,
             )
-            if stats is not None:
-                if outcome == "created":
-                    stats.record("created")
-                elif outcome == "updated":
-                    stats.record("updated")
-                elif outcome == "noop":
-                    stats.record("skipped")
-                else:
-                    # Be defensive with unknown adapters/outcomes.
-                    stats.record("created")
+            self._record_live_upsert_stats(stats, outcome)
             return obj
         except Exception as exc:
             if "more than one result" in str(exc):
-                ambiguity_filters = filters or self._lookup_filters(
+                ambiguity_filters = self._lookup_filters(
                     ctx,
                     resource,
                     payload,
@@ -1291,6 +1359,37 @@ class Engine:
                 if nested_stats is not None:
                     nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
             elif _is_duplicate_ip_conflict(resource, exc):
+                try:
+                    normalized = self._normalize_duplicate_ip_host_route(ctx, payload)
+                except Exception as normalize_exc:
+                    logger.error(
+                        "Failed to normalize duplicate host-route IP  resource=%s  address=%r: %s",
+                        resource,
+                        payload.get("address"),
+                        normalize_exc,
+                    )
+                    normalized = False
+                if normalized:
+                    try:
+                        obj, outcome, payload = self._execute_live_upsert(
+                            ctx,
+                            resource,
+                            payload,
+                            lookup_fields,
+                            field_configs=field_configs,
+                        )
+                        lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
+                        logger.info(
+                            "Upserted  resource=%-30s  %s  outcome=%s",
+                            resource,
+                            lookup_display,
+                            outcome,
+                        )
+                        self._record_live_upsert_stats(stats, outcome)
+                        return obj
+                    except Exception as retry_exc:
+                        exc = retry_exc
+            if _is_duplicate_ip_conflict(resource, exc):
                 logger.error(
                     "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
                     resource,
