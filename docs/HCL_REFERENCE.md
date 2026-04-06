@@ -129,6 +129,8 @@ hierarchies. When the installed SDK or Catalyst Center release does not expose
 that site-assignment API, the adapter falls back to the older per-site
 membership walk.
 
+Keep both `mappings/catc.hcl.example` and `mappings/catalyst-center.hcl.example` updated so production deploys see the same name/site/device_type/manufacturer wiring used in CI.
+
 ### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
 
 ```hcl
