@@ -686,6 +686,7 @@ class TestAzureGetAppliances:
         item = result[0]
         assert item["role_name"] == "Azure Load Balancer"
         assert len(item["nics"]) == 1
+        assert item["nics"][0]["mac_address"] is None
         assert item["nics"][0]["ips"] == [{"address": "20.1.2.3/32"}]
 
 
@@ -781,6 +782,7 @@ class TestAzureGetStandaloneNics:
 
         assert result[0]["role_name"] == "Azure Private Endpoint"
         assert result[0]["nic_type"] == "private_endpoint"
+        assert result[0]["nics"][0]["mac_address"] is None
 
     def test_private_link_service_nic_role(self):
         nic = MagicMock()
@@ -804,6 +806,7 @@ class TestAzureGetStandaloneNics:
 
         assert result[0]["role_name"] == "Azure Private Link Service"
         assert result[0]["nic_type"] == "private_link_service"
+        assert result[0]["nics"][0]["mac_address"] is None
 
     def test_collections_registered_in_get_objects(self):
         src = AzureSource()
