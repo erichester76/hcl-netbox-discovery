@@ -486,10 +486,6 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer') or 'Lenovo'"
     }
-
-    attribute "rpm" {
-      value = "int(coalesce('speed', 'rpm')) if coalesce('speed', 'rpm') != None else None"
-    }
   }
 }
 
