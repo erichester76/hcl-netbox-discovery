@@ -507,8 +507,9 @@ class PrerequisiteRunner:
                        auto-generate a schema when no explicit schema is given.
 
         The schema is applied via a dedicated ``nb.update`` (PATCH) call after
-        the upsert so it is always written even when the profile already exists
-        and the upsert would otherwise skip unchanged fields.
+        the upsert when a schema is present and differs from the existing
+        profile value. This avoids relying on upsert behavior for schema
+        changes while still skipping redundant PATCHes.
         """
         name = require_text_arg(args, "name", "ensure_module_type_profile")
         slug = slugify(name)
