@@ -16,6 +16,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from itertools import count
 from typing import Any
 
@@ -45,6 +46,17 @@ logger = logging.getLogger(__name__)
 # does not specify a type expression or when the expression evaluates to a
 # falsy value.
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
+
+
+@dataclass(frozen=True)
+class PrimaryIpReassignmentState:
+    """Tracks how a temporary primary-IP clear should be restored."""
+
+    restore_resource: str
+    restore_parent_id: int
+    primary_field: str
+    previous_ip_id: int
+    restore_after_success: bool
 
 
 def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
@@ -1426,14 +1438,15 @@ class Engine:
         parent_resource: str,
         parent_nb_obj: Any,
         ip_payload: dict[str, Any],
-    ) -> tuple[str, int, str, int, bool] | None:
-        """Clear a same-parent primary IP before reassigning it to another interface.
+    ) -> PrimaryIpReassignmentState | None:
+        """Clear the current owning parent's primary IP before reassignment.
 
         NetBox rejects reassigning an IP while it is the designated primary IP
-        for the parent object. When we detect that exact situation, clear the
-        current primary field first so the subsequent IP upsert can proceed.
-        The caller is responsible for restoring the primary IP after the upsert
-        when appropriate, even on failure.
+        for a device or virtual machine. When we detect that situation, clear
+        the current owning parent's primary field first so the subsequent IP
+        upsert can proceed, whether the IP stays on the same parent or moves to
+        a different one. The caller is responsible for restoring the primary IP
+        after the upsert when appropriate, even on failure.
         """
         nb_get = ctx.nb.get
         try:
@@ -1528,12 +1541,12 @@ class Engine:
             return None
 
         ctx.nb.update(current_parent_resource, current_parent_obj_id, {primary_field: None})
-        return (
-            current_parent_resource,
-            current_parent_obj_id,
-            primary_field,
-            existing_ip_id,
-            restore_after_success,
+        return PrimaryIpReassignmentState(
+            restore_resource=current_parent_resource,
+            restore_parent_id=current_parent_obj_id,
+            primary_field=primary_field,
+            previous_ip_id=existing_ip_id,
+            restore_after_success=restore_after_success,
         )
 
     def _process_interfaces(
@@ -1684,42 +1697,45 @@ class Engine:
                             and parent_nb_obj is not None
                             and not ip_ctx.dry_run
                         ):
-                            (
-                                restore_resource,
-                                restore_parent_id,
-                                primary_field,
-                                previous_ip_id,
-                                restore_after_success,
-                            ) = cleared_primary
-                            should_restore = nb_ip is None or restore_after_success
-                            restored_ip_id = extract_id(nb_ip) or previous_ip_id
+                            should_restore = (
+                                nb_ip is None or cleared_primary.restore_after_success
+                            )
+                            restored_ip_id = (
+                                extract_id(nb_ip) or cleared_primary.previous_ip_id
+                            )
                             if (
                                 should_restore
-                                and restore_parent_id is not None
+                                and cleared_primary.restore_parent_id is not None
                                 and restored_ip_id is not None
                             ):
                                 try:
                                     ctx.nb.update(
-                                        restore_resource,
-                                        restore_parent_id,
-                                        {primary_field: restored_ip_id},
+                                        cleared_primary.restore_resource,
+                                        cleared_primary.restore_parent_id,
+                                        {
+                                            cleared_primary.primary_field: restored_ip_id
+                                        },
                                     )
                                     if (
-                                        restore_resource == obj_cfg.netbox_resource
-                                        and restore_parent_id == extract_id(parent_nb_obj)
-                                        and primary_field == "primary_ip4"
+                                        cleared_primary.restore_resource
+                                        == obj_cfg.netbox_resource
+                                        and cleared_primary.restore_parent_id
+                                        == extract_id(parent_nb_obj)
+                                        and cleared_primary.primary_field == "primary_ip4"
                                     ):
                                         first_primary_ip4_set = True
                                     elif (
-                                        restore_resource == obj_cfg.netbox_resource
-                                        and restore_parent_id == extract_id(parent_nb_obj)
-                                        and primary_field == "primary_ip6"
+                                        cleared_primary.restore_resource
+                                        == obj_cfg.netbox_resource
+                                        and cleared_primary.restore_parent_id
+                                        == extract_id(parent_nb_obj)
+                                        and cleared_primary.primary_field == "primary_ip6"
                                     ):
                                         first_primary_ip6_set = True
                                 except Exception as exc:
                                     logger.debug(
                                         "Failed to restore %s after IP reassignment: %s",
-                                        primary_field,
+                                        cleared_primary.primary_field,
                                         exc,
                                     )
 
