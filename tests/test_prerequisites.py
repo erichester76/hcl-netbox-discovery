@@ -376,6 +376,58 @@ class TestEnsureTenantGroup:
         assert payload["description"] == "Eng teams"
 
 
+class TestEnsureTenantRaceCondition:
+    """_ensure_tenant should recover from uniqueness races."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=17)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result == 17
+        nb.upsert.assert_called_once()
+
+    def test_falls_back_to_get_on_uniqueness_error(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception(
+            "The request failed with code 400 Bad Request: "
+            "{'__all__': ['Constraint \"tenancy_tenant_unique_name\" is violated.']}"
+        )
+        nb.get.return_value = MagicMock(id=18)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result == 18
+        nb.get.assert_called_once_with("tenancy.tenants", slug="4gk-azr-p-sub")
+
+    def test_returns_none_when_fallback_get_fails(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception(
+            "The request failed with code 400 Bad Request: "
+            "{'__all__': ['Constraint \"tenancy_tenant_unique_name\" is violated.']}"
+        )
+        nb.get.side_effect = Exception("not found")
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result is None
+
+    def test_re_raises_non_uniqueness_errors(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception("Network timeout")
+        runner = self._make_runner(nb)
+
+        with pytest.raises(Exception, match="Network timeout"):
+            runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+
 class TestEnsureContactGroup:
     """_ensure_contact_group should upsert tenancy.contact_groups."""
 
