@@ -60,6 +60,7 @@ hcl-netbox-discovery/
 │   ├── xclarity-modules.hcl.example
 │   ├── azure.hcl.example
 │   ├── catc.hcl.example
+│   ├── catalyst-center.hcl.example
 │   ├── nexus.hcl.example
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
