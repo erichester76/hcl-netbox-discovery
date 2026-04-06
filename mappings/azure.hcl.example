@@ -181,7 +181,8 @@ object "vm" {
   }
 
   field "custom_fields" {
-    value = "source('custom_fields')"
+    value       = "source('custom_fields')"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -315,7 +316,8 @@ object "appliance" {
   }
 
   field "custom_fields" {
-    value = "source('custom_fields')"
+    value       = "source('custom_fields')"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -431,7 +433,8 @@ object "standalone_nic" {
   }
 
   field "custom_fields" {
-    value = "source('custom_fields')"
+    value       = "source('custom_fields')"
+    update_mode = "if_missing"
   }
 
   field "tags" {
