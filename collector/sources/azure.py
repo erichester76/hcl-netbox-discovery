@@ -30,8 +30,8 @@ Supported collections
     - subscription_name, subscription_id  (used for tenant prerequisite)
     - location                             (used for cluster prerequisite)
     - platform_publisher, platform_offer, platform_sku, platform_name
-    - image_reference                      (formatted image string)
-    - custom_fields                        (dict: instance_type, image_reference)
+    - image                                (formatted image string)
+    - custom_fields                        (dict: instance_type, image)
     - nics  – list of ``{name, mac_address, ips: [{address}]}``
     - disks – list of ``{name, size_mb}``
 
@@ -339,7 +339,7 @@ class AzureSource(DataSource):
         platform_sku       = ""
         platform_name      = "Unknown"
         instance_type      = ""
-        image_reference    = ""
+        image              = ""
 
         hw = vm.hardware_profile
         if hw:
@@ -349,7 +349,7 @@ class AzureSource(DataSource):
         if sp and sp.image_reference:
             img = sp.image_reference
             # Resolve Shared Gallery images to their definition metadata
-            img, image_reference = self._resolve_image_reference(
+            img, image = self._resolve_image(
                 img, sub_id, compute, vm_name
             )
             if img is not None:
@@ -358,8 +358,8 @@ class AzureSource(DataSource):
                 platform_offer     = getattr(img, "offer", "") or ""
                 platform_sku       = getattr(img, "sku", "") or ""
                 platform_name      = f"{platform_offer} {platform_sku}".strip() or "Unknown"
-                if not image_reference:
-                    image_reference = f"Marketplace: {platform_publisher} / {platform_name}".strip(" /")
+                if not image:
+                    image = f"Marketplace: {platform_publisher} / {platform_name}".strip(" /")
 
         # NICs and IPs
         nics_data  = self._get_vm_nics(vm, network, all_nics)
@@ -382,7 +382,7 @@ class AzureSource(DataSource):
             "vcpus":               vcpus,
             "memory":              memory_mb,
             "instance_type":       instance_type,
-            "image_reference":     image_reference,
+            "image":               image,
             "subscription_name":   sub_name,
             "subscription_id":     sub_id,
             "location":            location,
@@ -395,7 +395,7 @@ class AzureSource(DataSource):
             "disks":               disks_data,
             "custom_fields":       {
                 "instance_type":   instance_type,
-                "image_reference": image_reference,
+                "image":           image,
             },
         }
 
@@ -487,15 +487,15 @@ class AzureSource(DataSource):
                 })
         return disks
 
-    def _resolve_image_reference(
+    def _resolve_image(
         self, img: Any, sub_id: str, compute: Any, vm_name: str
     ) -> tuple:
         """Resolve an image reference, handling Shared Gallery images.
 
-        Returns ``(image_ref_obj, image_reference_str)``.  For marketplace
+        Returns ``(image_ref_obj, image_str)``.  For marketplace
         images ``image_ref_obj`` is the original ``img`` object.  For gallery
         images it is the ``GalleryImageIdentifier`` of the gallery definition.
-        ``image_reference_str`` is a human-readable string or empty string if
+        ``image_str`` is a human-readable string or empty string if
         a marketplace label will be built by the caller.
         """
         img_id = getattr(img, "id", None) or ""

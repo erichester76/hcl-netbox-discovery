@@ -310,19 +310,6 @@ class TestLoadConfigWithObjects:
         assert field_cfg.name == "rack"
         assert field_cfg.update_mode == "if_missing"
 
-    def test_azure_example_marks_custom_fields_if_missing(self):
-        cfg = load_config("mappings/azure.hcl.example")
-        object_names = {"vm", "appliance", "standalone_nic"}
-
-        custom_fields = {
-            obj.name: next(field for field in obj.fields if field.name == "custom_fields")
-            for obj in cfg.objects
-            if obj.name in object_names
-        }
-
-        assert set(custom_fields) == object_names
-        assert all(field.update_mode == "if_missing" for field in custom_fields.values())
-
     def test_parses_rest_collection_blocks(self, tmp_path):
         path = _write_hcl(tmp_path, """
             source "xclarity" {

@@ -485,7 +485,7 @@ Uses the Azure SDK (`azure-identity`, `azure-mgmt-compute`, `azure-mgmt-network`
 
 Supports `api_type = "azure"` with `AZURE_AUTH_METHOD` selecting between `"default"` (DefaultAzureCredential) and `"service_principal"`. Subscription scope can be limited with `subscription_ids` (comma-separated) in the source `extra` block.
 
-Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"`, `"prefixes"`, `"appliances"`, `"standalone_nics"`. VM records include `image_reference` and `custom_fields` (instance_type, image_reference). Shared Gallery images are resolved to their definition metadata.
+Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"`, `"prefixes"`, `"appliances"`, `"standalone_nics"`. VM records include `image` and `custom_fields` (instance_type, image). Shared Gallery images are resolved to their definition metadata.
 
 ---
 
