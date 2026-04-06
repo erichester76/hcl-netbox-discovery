@@ -1284,14 +1284,15 @@ class Engine:
             else:
                 logger.error(
                     "Upsert failed  resource=%s  keys=%s: %s",
-                    resource,
-                    sorted(payload.keys()),
-                    exc,
+                    resource, sorted(payload.keys()), exc,
                 )
+            error_stats = []
             if stats is not None:
-                stats.record_error()
+                error_stats.append(stats)
             if nested_stats is not None and nested_stats is not stats:
-                nested_stats.record_error()
+                error_stats.append(nested_stats)
+            for run_stats in error_stats:
+                run_stats.record_error()
             return None
 
     # ------------------------------------------------------------------
