@@ -612,8 +612,6 @@ class CatalystCenterSource(DataSource):
                 if retry_after is None:
                     delay = min(delay * 2, self._rate_limit_retry_max_delay)
 
-        raise RuntimeError(f"CatalystCenter: exhausted retries for {operation}")
-
     def _extract_status_code(self, exc: Exception) -> int | None:
         """Best-effort extraction of an HTTP status code from an SDK exception."""
         for attr in ("status_code", "status", "http_status"):
