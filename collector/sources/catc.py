@@ -176,6 +176,67 @@ def _coerce_float(value: Any, default: float) -> float:
         return default
 
 
+def _response_items(payload: Any) -> list[Any]:
+    """Return a list from common Catalyst Center SDK response shapes."""
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+
+    for key in ("response", "items", "devices", "networkDevices"):
+        value = _safe_get(payload, key)
+        if isinstance(value, list):
+            return value
+        if value is not None and value is not payload:
+            nested = _response_items(value)
+            if nested:
+                return nested
+
+    return []
+
+
+def _payload_shape(payload: Any, depth: int = 0) -> str:
+    """Return a compact description of a Catalyst Center SDK payload shape."""
+    if payload is None:
+        return "None"
+    if isinstance(payload, list):
+        if not payload:
+            return "list(len=0)"
+        if depth >= 2:
+            return f"list(len={len(payload)})"
+        return f"list(len={len(payload)}, first={_payload_shape(payload[0], depth + 1)})"
+    if isinstance(payload, dict):
+        keys = sorted(payload.keys())
+        if depth >= 2:
+            return f"dict(keys={keys})"
+        nested = {key: _payload_shape(payload[key], depth + 1) for key in keys[:4]}
+        return f"dict(keys={keys}, nested={nested})"
+
+    attrs = []
+    for key in ("response", "items", "devices", "networkDevices"):
+        value = _safe_get(payload, key)
+        if value is not None and value is not payload:
+            attrs.append(f"{key}={_payload_shape(value, depth + 1)}")
+
+    if attrs:
+        return f"{type(payload).__name__}({', '.join(attrs)})"
+    return type(payload).__name__
+
+
+def _payload_preview(payload: Any) -> str:
+    """Return a short one-line preview of a payload item for debug logging."""
+    if payload is None:
+        return "None"
+    if isinstance(payload, dict):
+        preview = {key: payload.get(key) for key in list(payload.keys())[:6]}
+        return repr(preview)
+
+    preview: dict[str, Any] = {}
+    for key in ("deviceId", "siteId", "siteNameHierarchy", "response", "items"):
+        value = _safe_get(payload, key)
+        if value is not None:
+            preview[key] = value
+    return repr(preview or payload)
 # ---------------------------------------------------------------------------
 # CatalystCenterSource
 # ---------------------------------------------------------------------------
@@ -290,6 +351,13 @@ class CatalystCenterSource(DataSource):
             "CatalystCenter: fetched %d inventory devices and %d site assignments",
             len(raw_devices), len(assignments),
         )
+        if raw_devices and not assignments:
+            logger.warning(
+                "CatalystCenter: bulk site assignment lookup returned no assignments "
+                "for %d inventory devices; falling back to per-site membership walk",
+                len(raw_devices),
+            )
+            return self._get_devices_via_site_membership(sites)
 
         devices: list[dict] = []
         seen_devices: set[str] = set()
@@ -379,7 +447,7 @@ class CatalystCenterSource(DataSource):
                     offset=offset,
                     limit=limit,
                 )
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
                     break
                 sites.extend(batch)
@@ -404,7 +472,7 @@ class CatalystCenterSource(DataSource):
                     offset=offset,
                     limit=limit,
                 )
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
                     break
                 devices.extend(batch)
@@ -457,15 +525,34 @@ class CatalystCenterSource(DataSource):
                     )
                     return None
 
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
+                    logger.debug(
+                        "CatalystCenter: empty site assignment batch root=%s offset=%d "
+                        "response_shape=%s",
+                        root_id,
+                        offset,
+                        _payload_shape(resp),
+                    )
                     break
 
+                parsed_in_batch = 0
                 for assignment in batch:
                     device_id = _safe_get(assignment, "deviceId", "") or ""
                     site_hierarchy = _safe_get(assignment, "siteNameHierarchy", "") or ""
                     if device_id and site_hierarchy:
                         assignments[device_id] = site_hierarchy
+                        parsed_in_batch += 1
+
+                if parsed_in_batch == 0:
+                    logger.debug(
+                        "CatalystCenter: unparsed site assignment batch root=%s offset=%d "
+                        "response_shape=%s sample=%s",
+                        root_id,
+                        offset,
+                        _payload_shape(resp),
+                        _payload_preview(batch[0]),
+                    )
 
                 if len(batch) < limit:
                     break
