@@ -510,6 +510,27 @@ class TestEngineUpsertReporting:
         assert stats.created == 1
         nb.get.assert_not_called()
 
+    def test_live_nested_upsert_failure_increments_nested_error_stats(self):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+        nb.upsert_with_outcome.side_effect = Exception("HTTP 400")
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=False),
+            "ipam.ip_addresses",
+            {"address": "10.0.0.1/24"},
+            lookup_fields=["address"],
+            nested_stats=stats,
+        )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.errored == 1
+        assert stats.created == 0
+        assert stats.updated == 0
+        assert stats.skipped == 0
+
     def test_dry_run_ignores_preview_relation_fields_in_diff(self):
         engine = Engine()
         stats = RunStats("ip-addresses")
