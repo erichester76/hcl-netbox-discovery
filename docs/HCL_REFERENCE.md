@@ -140,8 +140,8 @@ Use `membership` when you already know the bulk site-assignment API is slow or
 times out in a given Catalyst Center environment, but still want the adapter to
 fall back to bulk if the membership walk produces no usable device/site pairs.
 
-Keep both `mappings/catc.hcl.example` and `mappings/catalyst-center.hcl.example`
-aligned so the deployed Catalyst Center mapping path uses the same
+Use `mappings/catalyst-center.hcl.example` as the single maintained Catalyst
+Center mapping template so the deployed mapping path uses the same
 name/site/device_type/manufacturer wiring that CI validates.
 
 ### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)

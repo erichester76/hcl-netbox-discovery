@@ -858,7 +858,6 @@ class TestXClarityMappings:
 
 class TestCatcMappings:
     PATHS = [
-        "mappings/catc.hcl.example",
         "mappings/catalyst-center.hcl.example",
     ]
 
@@ -874,7 +873,10 @@ class TestCatcMappings:
         prereqs = {p.name: p for p in device.prerequisites}
         assert prereqs["manufacturer"].args.get("name") == "source('manufacturer')"
         assert prereqs["device_type"].args.get("manufacturer") == "prereq('manufacturer')"
-        assert "source('site_name')" in prereqs["site"].args.get("name", "")
+        assert prereqs["device_type"].args.get("model") == "when(source('model') != '', source('model'), 'Unknown')"
+        assert prereqs["role"].args.get("name") == "when(source('role') != '', source('role'), 'Network Device')"
+        assert prereqs["site"].args.get("name") == "when(source('site_name') != '', source('site_name'), 'Unknown')"
+        assert prereqs["platform"].args.get("name") == "when(source('platform_name') != '', source('platform_name'), 'Unknown')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_device_fields_reference_expected_inputs(self, mapping_path):
@@ -882,7 +884,7 @@ class TestCatcMappings:
         device = self._device_object(cfg)
         assert device is not None
         field_values = {f.name: f.value for f in device.fields}
-        assert "source('name')" in field_values["name"]
+        assert field_values["name"] == "when(source('name') != '', source('name'), 'Unknown')"
         assert field_values["device_type"] == "prereq('device_type')"
         assert "prereq('site')" in field_values["site"]
 

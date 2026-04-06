@@ -76,7 +76,7 @@ object "device" {
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('model'), 'Unknown')"
+      model        = "when(source('model') != '', source('model'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -84,27 +84,27 @@ object "device" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "coalesce(source('role'), 'Network Device')" }
+    args     = { name = "when(source('role') != '', source('role'), 'Network Device')" }
     optional = false
   }
 
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('site_name'), 'Unknown')" }
+    args     = { name = "when(source('site_name') != '', source('site_name'), 'Unknown')" }
     optional = false
   }
 
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform_name'), 'Unknown')"
+      name         = "when(source('platform_name') != '', source('platform_name'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('name'), 'Unknown')"
+    value = "when(source('name') != '', source('name'), 'Unknown')"
   }
 
   field "device_type" {
