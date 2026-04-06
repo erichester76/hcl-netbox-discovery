@@ -1337,7 +1337,7 @@ class Engine:
             self._record_live_upsert_stats(stats, outcome)
             return obj
         except Exception as exc:
-            if "more than one result" in str(exc):
+            if isinstance(exc, ValueError) and "more than one result" in str(exc):
                 ambiguity_filters = self._lookup_filters(
                     ctx,
                     resource,

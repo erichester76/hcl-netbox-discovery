@@ -462,6 +462,30 @@ class TestEngineUpsertReporting:
         assert "match_count=2" in caplog.text
         assert "matched_ids=[11, 22]" in caplog.text
 
+    def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.side_effect = RuntimeError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "dcim.devices",
+                {"serial": "ABC123", "name": "switch-1"},
+                lookup_fields=["serial"],
+                stats=stats,
+                field_configs=[FieldConfig(name="name", value="source('name')")],
+            )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.errored == 1
+        assert "Live lookup ambiguous" not in caplog.text
+        assert "Upsert failed" in caplog.text
+
     def test_dry_run_noop_outcome_counts_skipped(self):
         engine = Engine()
         stats = RunStats("devices")
