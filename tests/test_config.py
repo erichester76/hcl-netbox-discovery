@@ -854,3 +854,34 @@ class TestXClarityMappings:
             site_field = next((f for f in obj.fields if f.name == "site"), None)
             assert site_field is not None, f"object {name} missing site field"
             assert site_field.update_mode == "if_missing"
+
+
+class TestCatcMappings:
+    PATHS = [
+        "mappings/catc.hcl.example",
+        "mappings/catalyst-center.hcl.example",
+    ]
+
+    @staticmethod
+    def _device_object(cfg):
+        return next((o for o in cfg.objects if o.name == "device"), None)
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_manufacturer_device_type_prereqs(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        prereqs = {p.name: p for p in device.prerequisites}
+        assert prereqs["manufacturer"].args.get("name") == "source('manufacturer')"
+        assert prereqs["device_type"].args.get("manufacturer") == "prereq('manufacturer')"
+        assert "source('site_name')" in prereqs["site"].args.get("name", "")
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_device_fields_reference_expected_inputs(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        field_values = {f.name: f.value for f in device.fields}
+        assert "source('name')" in field_values["name"]
+        assert field_values["device_type"] == "prereq('device_type')"
+        assert "prereq('site')" in field_values["site"]
