@@ -33,6 +33,7 @@ source "catc" {
   password          = "env('CATC_PASS')"
   verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
   fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'false')"
+  site_assignment_strategy = "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')"
   wait_on_rate_limit         = "env('CATC_WAIT_ON_RATE_LIMIT', 'true')"
   rate_limit_retry_attempts  = "env('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3')"
   rate_limit_retry_initial_delay = "env('CATC_RATE_LIMIT_RETRY_INITIAL_DELAY', '1.0')"
