@@ -147,7 +147,6 @@ class TestInterfaceWriteIntegrity:
                 )
             ],
         )
-<<<<<<< HEAD
         ctx = _make_ctx(
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
