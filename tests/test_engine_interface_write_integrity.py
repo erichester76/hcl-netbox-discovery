@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 from collector.config import (
@@ -289,6 +289,54 @@ class TestInterfaceWriteIntegrity:
         assert ctx.nb.update.call_args_list == [
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
+        ]
+
+    def test_host_primary_ip_guard_bypasses_cache_for_live_reassignment(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="host",
+            source_collection="hosts",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "vmk0", "_ips": [{"address": "10.70.255.12/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
+
+        def get_side_effect(resource, **kwargs):
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"use_cache": False, "address": "10.70.255.12/24"}
+                return SimpleNamespace(id=109, assigned_object_id=58)
+            if resource == "dcim.devices":
+                assert kwargs == {"use_cache": False, "id": 529}
+                return SimpleNamespace(id=529, primary_ip4=SimpleNamespace(id=109))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get.side_effect = get_side_effect
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=1622), SimpleNamespace(id=109)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("dcim.devices", 529, {"primary_ip4": None}),
+            call("dcim.devices", 529, {"primary_ip4": 109}),
         ]
 
     def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):

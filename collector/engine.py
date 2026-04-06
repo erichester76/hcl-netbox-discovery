@@ -1252,7 +1252,6 @@ class Engine:
         nested_stats: RunStats | None = None,
         field_configs: list[FieldConfig] | None = None,
     ) -> Any:
-        filters: dict[str, Any] | None = None
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
             deliberate_guest_skip = (
@@ -1435,6 +1434,14 @@ class Engine:
         The caller is responsible for restoring the primary IP after the upsert,
         even on failure.
         """
+        def _get_uncached(resource_name: str, **filters: Any) -> Any:
+            try:
+                return ctx.nb.get(resource_name, use_cache=False, **filters)
+            except TypeError as exc:
+                if "use_cache" not in str(exc):
+                    raise
+                return ctx.nb.get(resource_name, **filters)
+
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
         parent_obj_id = extract_id(parent_nb_obj)
@@ -1449,7 +1456,7 @@ class Engine:
         if primary_field is None:
             return None
 
-        existing_ip = ctx.nb.get("ipam.ip_addresses", address=address)
+        existing_ip = _get_uncached("ipam.ip_addresses", address=address)
         existing_ip_id = extract_id(existing_ip)
         if existing_ip_id is None:
             return None
@@ -1462,7 +1469,7 @@ class Engine:
 
         current_parent = parent_nb_obj
         try:
-            refreshed_parent = ctx.nb.get(parent_resource, id=parent_obj_id)
+            refreshed_parent = _get_uncached(parent_resource, id=parent_obj_id)
         except Exception:
             logger.debug(
                 "Failed to refresh %s id=%s before primary IP reassignment; falling back to existing parent object",
