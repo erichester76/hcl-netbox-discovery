@@ -175,6 +175,66 @@ fixes that solved one symptom while leaving the underlying model inconsistent.
   fixes, and adapter transport refactors in one PR unless the user explicitly
   wants a larger coordinated change.
 
+## Default Delivery Loop
+
+Follow this workflow by default unless the user explicitly overrides it:
+
+1. **Artifact-first triage**
+   - Review newly synced artifact bundles before making speculative changes.
+   - Triage findings by source (`vmware`, `xclarity`, `catc`, `azure`, etc.)
+     and by root cause.
+   - Prefer real runtime evidence over assumptions.
+
+2. **Issue creation and labeling**
+   - Create or update GitHub issues for each root cause area.
+   - Apply labels for:
+     - priority (`priority:P0` … `priority:P3`)
+     - issue type (`type:engine`, `type:mapping`, `type:adapter`,
+       `type:observability`, `type:data-quality`)
+     - source (`source:vmware`, `source:xclarity`, `source:catc`,
+       `source:azure`, etc.)
+   - Use the open issues as the authoritative work queue.
+
+3. **Branching discipline**
+   - **Always** start new branches from the current remote `origin/main`, not
+     from the local workspace branch.
+   - Before creating a branch:
+     - `git fetch origin`
+     - branch from `origin/main`
+   - If `main` moves while a PR is open, rebase or merge the latest
+     `origin/main` before attempting merge.
+
+4. **Parallel execution**
+   - Work the queue in priority order.
+   - Parallelize only when write scopes are clearly separable.
+   - When using multiple agents, act as a merge manager:
+     - keep branches current with `origin/main`
+     - resolve conflicts proactively
+     - avoid duplicating work between branches
+
+5. **PR gating**
+   - Do not merge a PR until both are true:
+     - CI is finished and green
+     - Copilot review comments have arrived and actionable comments are handled
+   - After applying any review-driven fix, rerun the gate:
+     - push update
+     - wait for CI again
+     - wait for Copilot review again if needed
+
+6. **Merge criteria**
+   - Merge only after:
+     - the PR is up to date with current `origin/main`
+     - CI is green
+     - Copilot review is clean or any actionable comments are addressed
+   - Treat comments about stale branch bases, drift from `main`, or missing
+     regression coverage as actionable by default.
+
+7. **Idle behavior**
+   - When otherwise waiting, the next checks should be:
+     - open PR status
+     - new artifact bundles
+   - Resume the loop from new artifacts as they arrive.
+
 ## Codebase Landmarks
 
 - `collector/config.py`: HCL parsing and config dataclasses
@@ -216,4 +276,4 @@ If you change:
 - Do not silently rewrite unrelated docs or code.
 - If you notice stale guidance that directly affects the requested task, fix it in the same change and mention it clearly.
 
-Last updated: 2026-04-01
+Last updated: 2026-04-06
