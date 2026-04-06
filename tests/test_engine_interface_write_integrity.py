@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 from collector.config import (
@@ -151,10 +151,18 @@ class TestInterfaceWriteIntegrity:
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
-        ctx.nb.get.side_effect = [
-            SimpleNamespace(id=500, assigned_object_id=7),
-            SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500)),
-        ]
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.0.0.1/24"}
+                return SimpleNamespace(id=500, assigned_object_id=7)
+            if resource == "virtualization.virtual_machines":
+                assert kwargs == {"id": 99}
+                return SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
 
         with patch.object(
             engine,
@@ -192,10 +200,18 @@ class TestInterfaceWriteIntegrity:
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
-        ctx.nb.get.side_effect = [
-            SimpleNamespace(id=500, assigned_object_id=7),
-            SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500)),
-        ]
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.0.0.1/24"}
+                return SimpleNamespace(id=500, assigned_object_id=7)
+            if resource == "virtualization.virtual_machines":
+                assert kwargs == {"id": 99}
+                return SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
 
         with patch.object(
             engine,
@@ -233,10 +249,18 @@ class TestInterfaceWriteIntegrity:
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=None)
-        ctx.nb.get.side_effect = [
-            SimpleNamespace(id=500, assigned_object_id=7),
-            SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500)),
-        ]
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.0.0.1/24"}
+                return SimpleNamespace(id=500, assigned_object_id=7)
+            if resource == "virtualization.virtual_machines":
+                assert kwargs == {"id": 99}
+                return SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
 
         with patch.object(
             engine,
@@ -274,10 +298,18 @@ class TestInterfaceWriteIntegrity:
             {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
-        ctx.nb.get.side_effect = [
-            SimpleNamespace(id=500, assigned_object_id=7),
-            RuntimeError("transient refresh failure"),
-        ]
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.0.0.1/24"}
+                return SimpleNamespace(id=500, assigned_object_id=7)
+            if resource == "virtualization.virtual_machines":
+                assert kwargs == {"id": 99}
+                raise RuntimeError("transient refresh failure")
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
 
         with patch.object(
             engine,
@@ -289,6 +321,103 @@ class TestInterfaceWriteIntegrity:
         assert ctx.nb.update.call_args_list == [
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
+        ]
+
+    def test_host_primary_ip_guard_bypasses_cache_for_live_reassignment(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="host",
+            source_collection="hosts",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "vmk0", "_ips": [{"address": "10.70.255.12/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.70.255.12/24"}
+                return SimpleNamespace(id=109, assigned_object_id=58)
+            if resource == "dcim.devices":
+                assert kwargs == {"id": 529}
+                return SimpleNamespace(id=529, primary_ip4=SimpleNamespace(id=109))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=1622), SimpleNamespace(id=109)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("dcim.devices", 529, {"primary_ip4": None}),
+            call("dcim.devices", 529, {"primary_ip4": 109}),
+        ]
+
+    def test_host_primary_ip_guard_falls_back_when_get_does_not_support_use_cache(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="host",
+            source_collection="hosts",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "vmk0", "_ips": [{"address": "10.70.255.13/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=530, primary_ip4=None)
+
+        def legacy_get(resource, **kwargs):
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.70.255.13/24"}
+                return SimpleNamespace(id=110, assigned_object_id=59)
+            if resource == "dcim.devices":
+                assert kwargs == {"id": 530}
+                return SimpleNamespace(id=530, primary_ip4=SimpleNamespace(id=110))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = legacy_get
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=1623), SimpleNamespace(id=110)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("dcim.devices", 530, {"primary_ip4": None}),
+            call("dcim.devices", 530, {"primary_ip4": 110}),
         ]
 
     def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):
