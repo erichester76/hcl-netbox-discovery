@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from collector.config import (
     CollectorOptions,
@@ -125,6 +125,82 @@ class TestInterfaceWriteIntegrity:
         assert mock_upsert.call_count == 2
         assert mock_upsert.call_args_list[0].args[1] == "dcim.interfaces"
         assert mock_upsert.call_args_list[1].args[1] == "ipam.ip_addresses"
+
+    def test_primary_ip_is_temporarily_cleared_before_same_parent_reassignment(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+        ctx.nb.get.return_value = SimpleNamespace(id=500, assigned_object_id=7)
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=8), SimpleNamespace(id=500)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
+            call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
+        ]
+
+    def test_primary_ip_is_restored_when_reassignment_upsert_fails(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+        ctx.nb.get.return_value = SimpleNamespace(id=500, assigned_object_id=7)
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=8), None],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
+            call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
+        ]
 
     def test_dry_run_existing_parent_preserves_device_identity_for_child_lookup(self):
         engine = Engine()

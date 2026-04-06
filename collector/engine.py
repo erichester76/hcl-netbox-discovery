@@ -151,6 +151,21 @@ def _get_nested_items(parent_obj: Any, source_items_expr: str, resolver: Resolve
     return [result]
 
 
+def _obj_get(obj: Any, key: str) -> Any:
+    """Fetch *key* from dict-like or attribute-based NetBox objects."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _primary_field_for_address(address: str) -> str | None:
+    try:
+        version = ipaddress.ip_interface(address).version
+    except ValueError:
+        return None
+    return "primary_ip4" if version == 4 else "primary_ip6"
+
+
 # ---------------------------------------------------------------------------
 # Run stats (thread-safe)
 # ---------------------------------------------------------------------------
@@ -1258,6 +1273,53 @@ class Engine:
     # Nested collection processors
     # ------------------------------------------------------------------
 
+    def _prepare_primary_ip_reassignment(
+        self,
+        ctx: RunContext,
+        parent_resource: str,
+        parent_nb_obj: Any,
+        ip_payload: dict[str, Any],
+    ) -> tuple[str, int] | None:
+        """Clear a same-parent primary IP before reassigning it to another interface.
+
+        NetBox rejects reassigning an IP while it is the designated primary IP
+        for the parent object. When we detect that exact situation, clear the
+        current primary field first so the subsequent IP upsert can proceed.
+        The caller is responsible for restoring the primary IP after the upsert,
+        even on failure.
+        """
+        address = ip_payload.get("address")
+        desired_assigned_id = ip_payload.get("assigned_object_id")
+        parent_obj_id = extract_id(parent_nb_obj)
+        if (
+            not address
+            or desired_assigned_id is None
+            or parent_obj_id is None
+        ):
+            return None
+
+        primary_field = _primary_field_for_address(address)
+        if primary_field is None:
+            return None
+
+        existing_ip = ctx.nb.get("ipam.ip_addresses", address=address)
+        existing_ip_id = extract_id(existing_ip)
+        if existing_ip_id is None:
+            return None
+
+        current_assigned_id = _obj_get(existing_ip, "assigned_object_id")
+        if current_assigned_id is None:
+            current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
+        if current_assigned_id is None or current_assigned_id == desired_assigned_id:
+            return None
+
+        current_primary_id = extract_id(_obj_get(parent_nb_obj, primary_field))
+        if current_primary_id != existing_ip_id:
+            return None
+
+        ctx.nb.update(parent_resource, parent_obj_id, {primary_field: None})
+        return primary_field, existing_ip_id
+
     def _process_interfaces(
         self,
         obj_cfg: ObjectConfig,
@@ -1372,6 +1434,21 @@ class Engine:
                             ip_payload["assigned_object_id"] = iface_id
 
                         self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
+                        cleared_primary = None
+                        if iface_id is not None and not ip_ctx.dry_run:
+                            try:
+                                cleared_primary = self._prepare_primary_ip_reassignment(
+                                    ctx,
+                                    obj_cfg.netbox_resource,
+                                    parent_nb_obj,
+                                    ip_payload,
+                                )
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to prepare primary IP reassignment for %r: %s",
+                                    ip_payload.get("address"),
+                                    exc,
+                                )
                         nb_ip = self._upsert(
                             ip_ctx,
                             "ipam.ip_addresses",
@@ -1380,6 +1457,31 @@ class Engine:
                             nested_stats=stats,
                             field_configs=ip_cfg.fields,
                         )
+                        if (
+                            cleared_primary is not None
+                            and parent_nb_obj is not None
+                            and not ip_ctx.dry_run
+                        ):
+                            primary_field, previous_ip_id = cleared_primary
+                            restored_ip_id = extract_id(nb_ip) or previous_ip_id
+                            parent_obj_id = extract_id(parent_nb_obj)
+                            if parent_obj_id is not None and restored_ip_id is not None:
+                                try:
+                                    ctx.nb.update(
+                                        obj_cfg.netbox_resource,
+                                        parent_obj_id,
+                                        {primary_field: restored_ip_id},
+                                    )
+                                    if primary_field == "primary_ip4":
+                                        first_primary_ip4_set = True
+                                    elif primary_field == "primary_ip6":
+                                        first_primary_ip6_set = True
+                                except Exception as exc:
+                                    logger.debug(
+                                        "Failed to restore %s after IP reassignment: %s",
+                                        primary_field,
+                                        exc,
+                                    )
 
                         # Set primary IPv4 or IPv6 on parent object based on address version
                         if (
