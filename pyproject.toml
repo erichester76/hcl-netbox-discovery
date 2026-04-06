@@ -7,7 +7,7 @@ package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-pynetbox-wrapper = { git = "https://github.com/erichester76/pynetbox-wrapper.git", rev = "f6b3674825047307f1a74bbd142228c7e919fc20" }
+pynetbox-wrapper = { git = "https://github.com/erichester76/pynetbox-wrapper.git", rev = "e353c76affc6266b3dba36d2a170131ebde44697" }
 pynetbox = "7.3.3"
 pyvmomi = "8.0.3.0.1"
 requests = "2.32.3"
