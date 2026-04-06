@@ -523,6 +523,41 @@ class TestEnsureVrf:
         assert result is None
         nb.upsert.assert_not_called()
 
+
+class TestEnsureCluster:
+    """_ensure_cluster should use type-aware lookup when available."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_uses_name_and_type_lookup_when_type_present(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=77)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_cluster({"name": "Azure eastus2", "type": 34}, dry_run=False)
+
+        assert result == 77
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2", "type": 34},
+            lookup_fields=["name", "type"],
+        )
+
+    def test_falls_back_to_name_only_lookup_without_type(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=78)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_cluster({"name": "Azure eastus2"}, dry_run=False)
+
+        assert result == 78
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2"},
+            lookup_fields=["name"],
+        )
+
     def test_dry_run_returns_none_without_upsert(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
