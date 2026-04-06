@@ -250,6 +250,47 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
 
+    def test_primary_ip_guard_falls_back_to_existing_parent_when_refresh_fails(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "eth0", "_ips": [{"address": "10.0.0.1/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
+        ctx.nb.get.side_effect = [
+            SimpleNamespace(id=500, assigned_object_id=7),
+            RuntimeError("transient refresh failure"),
+        ]
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=8), SimpleNamespace(id=500)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
+            call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
+        ]
+
     def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):
         engine = Engine()
         obj_cfg = ObjectConfig(

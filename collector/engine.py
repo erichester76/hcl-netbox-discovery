@@ -1460,7 +1460,19 @@ class Engine:
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
 
-        current_parent = ctx.nb.get(parent_resource, id=parent_obj_id) or parent_nb_obj
+        current_parent = parent_nb_obj
+        try:
+            refreshed_parent = ctx.nb.get(parent_resource, id=parent_obj_id)
+        except Exception:
+            logger.debug(
+                "Failed to refresh %s id=%s before primary IP reassignment; falling back to existing parent object",
+                parent_resource,
+                parent_obj_id,
+                exc_info=True,
+            )
+        else:
+            if refreshed_parent:
+                current_parent = refreshed_parent
         current_primary_id = extract_id(_obj_get(current_parent, primary_field))
         if current_primary_id != existing_ip_id:
             return None
