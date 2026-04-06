@@ -531,8 +531,8 @@ class PrerequisiteRunner:
             {"name": name, "slug": slug},
             lookup_fields=["name"],
         )
-        # Apply the schema in a separate PATCH after the upsert so it is
-        # always written even when the profile record already existed.
+        # Apply the schema in a separate PATCH after the upsert when it is
+        # present and differs from the current record.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
             existing_schema = extract_field(obj, "schema")
@@ -586,8 +586,8 @@ class PrerequisiteRunner:
 
         # Step 2: apply attributes via a direct PATCH after the profile has
         # been persisted.  Using ``nb.update`` (PATCH) rather than ``upsert``
-        # ensures attributes are always written even when the type record
-        # otherwise appears unchanged.
+        # lets us write attributes only when they differ, even if the type
+        # record itself otherwise appears unchanged.
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
