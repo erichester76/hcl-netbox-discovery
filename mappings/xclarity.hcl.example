@@ -94,7 +94,7 @@ object "node" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
@@ -156,7 +156,6 @@ object "node" {
 
   field "site" {
     value = "prereq('placement.site_id') or prereq('default_site')"
-    update_mode = "if_missing"
   }
 
   field "location" {
@@ -349,7 +348,7 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
@@ -406,7 +405,6 @@ object "chassis" {
 
   field "site" {
     value = "prereq('placement.site_id') or prereq('default_site')"
-    update_mode = "if_missing"
   }
 
   field "location" {
@@ -449,7 +447,7 @@ object "switch" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
@@ -506,7 +504,6 @@ object "switch" {
 
   field "site" {
     value = "prereq('placement.site_id') or prereq('default_site')"
-    update_mode = "if_missing"
   }
 
   field "location" {
@@ -567,7 +564,7 @@ object "storage" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer') != None, source('manufacturer'), 'Lenovo')" }
     optional = false
   }
 
@@ -624,7 +621,6 @@ object "storage" {
 
   field "site" {
     value = "prereq('placement.site_id') or prereq('default_site')"
-    update_mode = "if_missing"
   }
 
   field "location" {

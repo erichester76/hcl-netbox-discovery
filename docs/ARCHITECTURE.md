@@ -501,7 +501,7 @@ Because Active Directory exposes its data over the standard LDAP protocol, `api_
 
 Cisco Catalyst Center (DNA Center) adapter using `dnacentersdk`. Authenticates with user credentials and wraps the Device Inventory API.
 
-Implements `get_objects` for collection `"devices"`. When `fetch_interfaces = "true"` is set in the source block, per-device interface lists are fetched and embedded so the `interface {}` HCL block can sync them. Records include `management_ip_address` and the `dnac_device_type` mapped to a NetBox device-type slug.
+Implements `get_objects` for collection `"devices"`. Device inventory is fetched in bulk from Catalyst Center, then joined to site assignments using the site-assignment API rooted at the shallowest non-Global sites so large hierarchies do not require one membership lookup per site. If that newer site-assignment API is unavailable, the adapter falls back to the older per-site membership walk. When `fetch_interfaces = "true"` is set in the source block, per-device interface lists are fetched and embedded so the `interface {}` HCL block can sync them. The adapter also enables dnacentersdk rate-limit waiting and applies a small fallback retry loop when Catalyst Center still raises 429 responses back to the caller.
 
 ---
 

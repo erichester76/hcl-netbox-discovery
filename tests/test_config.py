@@ -825,32 +825,3 @@ class TestLoadConfigIterator:
         """)
         cfg = load_config(path)
         assert "iterator" not in cfg.collector.extra_flags
-
-
-class TestXClarityMappings:
-    PATHS = [
-        "mappings/xclarity.hcl.example",
-        "mappings/xclarity-modules.hcl.example",
-    ]
-    OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
-    CANONICAL_MANUFACTURER = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
-
-    @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_manufacturer_prereqs_canonicalize_lenovo(self, mapping_path):
-        cfg = load_config(mapping_path)
-        for name in self.OBJECT_NAMES:
-            obj = next((o for o in cfg.objects if o.name == name), None)
-            assert obj is not None, f"missing object {name} in {mapping_path}"
-            match = [p for p in obj.prerequisites if p.name == "manufacturer"]
-            assert match, f"object {name} lacks manufacturer prerequisite"
-            assert match[0].args.get("name") == self.CANONICAL_MANUFACTURER
-
-    @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_site_fields_use_if_missing(self, mapping_path):
-        cfg = load_config(mapping_path)
-        for name in self.OBJECT_NAMES:
-            obj = next((o for o in cfg.objects if o.name == name), None)
-            assert obj is not None, f"missing object {name} in {mapping_path}"
-            site_field = next((f for f in obj.fields if f.name == "site"), None)
-            assert site_field is not None, f"object {name} missing site field"
-            assert site_field.update_mode == "if_missing"

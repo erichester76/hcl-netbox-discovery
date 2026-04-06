@@ -35,7 +35,6 @@ from collector.sources.catc import (  # noqa: E402
     _safe_get,
 )
 
-
 # ---------------------------------------------------------------------------
 # _normalize_model()
 # ---------------------------------------------------------------------------
@@ -133,6 +132,7 @@ class TestCatalystConnect:
             username=catc_config.username,
             password=catc_config.password,
             verify=catc_config.verify_ssl,
+            wait_on_rate_limit=True,
         )
         assert src._client is fake_api
 
@@ -176,6 +176,7 @@ class TestCatalystGetObjects:
     def _connected_source(self) -> CatalystCenterSource:
         src = CatalystCenterSource()
         src._client = MagicMock()
+        src._client.site_design = None
         return src
 
     def test_raises_without_connect(self):
@@ -630,6 +631,7 @@ class TestCatalystFetchDeviceInterfaces:
     def _connected_source(self) -> CatalystCenterSource:
         src = CatalystCenterSource()
         src._client = MagicMock()
+        src._client.site_design = None
         return src
 
     def test_returns_enriched_interfaces(self):
@@ -679,6 +681,7 @@ class TestCatalystGetObjectsWithInterfaces:
     def test_interfaces_fetched_when_enabled(self):
         src = CatalystCenterSource()
         src._client = MagicMock()
+        src._client.site_design = None
         src._fetch_interfaces = True
 
         site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
@@ -724,6 +727,7 @@ class TestCatalystGetObjectsWithInterfaces:
     def test_interfaces_not_fetched_when_disabled(self):
         src = CatalystCenterSource()
         src._client = MagicMock()
+        src._client.site_design = None
         src._fetch_interfaces = False
 
         site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
@@ -750,3 +754,96 @@ class TestCatalystGetObjectsWithInterfaces:
         assert len(result) == 1
         assert "interfaces" not in result[0]
         src._client.devices.get_interface_info_by_id.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# bulk site assignments and 429 handling
+# ---------------------------------------------------------------------------
+
+
+class TestCatalystBulkAssignments:
+    def _connected_source(self) -> CatalystCenterSource:
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        return src
+
+    def test_get_devices_prefers_bulk_site_assignment_join(self):
+        src = self._connected_source()
+
+        root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
+        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        assignment = SimpleNamespace(
+            deviceId="device-uuid-1",
+            siteId="site-1",
+            siteNameHierarchy="Global/US/Southeast/Clemson",
+        )
+
+        src._client.sites.get_site.side_effect = [
+            SimpleNamespace(response=[root_site, child_site]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.devices.get_device_list.side_effect = [
+            SimpleNamespace(response=[device]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.site_design.get_site_assigned_network_devices.return_value = SimpleNamespace(
+            response=[assignment]
+        )
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert result[0]["deviceId"] == "device-uuid-1"
+        assert result[0]["site_name"] == "Clemson"
+        src._client.site_design.get_site_assigned_network_devices.assert_called_once_with(
+            site_id="area-1",
+            offset=1,
+            limit=500,
+        )
+        src._client.sites.get_membership.assert_not_called()
+
+    def test_select_assignment_roots_uses_shallowest_non_global_hierarchy(self):
+        src = self._connected_source()
+        sites = [
+            SimpleNamespace(id="global", siteNameHierarchy="Global"),
+            SimpleNamespace(id="area-1", siteNameHierarchy="Global/US"),
+            SimpleNamespace(id="area-2", siteNameHierarchy="Global/CA"),
+            SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson"),
+        ]
+
+        roots = src._select_assignment_roots(sites)
+
+        assert [site.id for site in roots] == ["area-1", "area-2"]
+
+    def test_rate_limit_backoff_retries_429_and_uses_retry_after(self):
+        src = self._connected_source()
+        src._rate_limit_retry_attempts = 3
+        src._rate_limit_retry_initial_delay = 1.0
+        src._rate_limit_retry_max_delay = 30.0
+        src._rate_limit_retry_jitter = 0.0
+
+        class RateLimitError(Exception):
+            def __init__(self):
+                self.status_code = 429
+                self.response = SimpleNamespace(headers={"Retry-After": "7"})
+
+        fn = MagicMock(side_effect=[RateLimitError(), "ok"])
+
+        with patch("collector.sources.catc.time.sleep") as mock_sleep:
+            result = src._call_with_rate_limit_backoff(fn, "test operation", site_id="site-1")
+
+        assert result == "ok"
+        assert fn.call_count == 2
+        mock_sleep.assert_called_once_with(7.0)
