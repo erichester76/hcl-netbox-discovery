@@ -885,3 +885,22 @@ class TestCatcMappings:
         assert "source('name')" in field_values["name"]
         assert field_values["device_type"] == "prereq('device_type')"
         assert "prereq('site')" in field_values["site"]
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_interface_ip_address_block(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        assert device.interfaces, "device should define interfaces"
+        interface = device.interfaces[0]
+        assert interface.ip_addresses, "interface block must declare ip_address"
+        ip_block = interface.ip_addresses[0]
+        assert ip_block.primary_if == "first"
+        assert (
+            ip_block.source_items
+            == "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+        )
+        address_field = next((f for f in ip_block.fields if f.name == "address"), None)
+        status_field = next((f for f in ip_block.fields if f.name == "status"), None)
+        assert address_field is not None and address_field.value == "source('address')"
+        assert status_field is not None and status_field.value == "'active'"

@@ -181,5 +181,18 @@ object "device" {
     field "mac_address" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
     }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
   }
 }
