@@ -1339,7 +1339,8 @@ class Engine:
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
 
-        current_primary_id = extract_id(_obj_get(parent_nb_obj, primary_field))
+        current_parent = ctx.nb.get(parent_resource, id=parent_obj_id) or parent_nb_obj
+        current_primary_id = extract_id(_obj_get(current_parent, primary_field))
         if current_primary_id != existing_ip_id:
             return None
 
