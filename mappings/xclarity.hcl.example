@@ -133,6 +133,9 @@ object "node" {
       location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
+      site_candidate = "coalesce('location.location', 'dataCenter')"
+      datacenter_candidate = "source('dataCenter')"
+      serial = "str(source('serialNumber'))"
     }
     optional = true
   }

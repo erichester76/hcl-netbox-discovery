@@ -339,6 +339,22 @@ class PrerequisiteRunner:
             except (TypeError, ValueError):
                 result["rack_position"] = position
 
+        site_candidate = args.get("site_candidate")
+        datacenter_candidate = args.get("datacenter_candidate") or args.get("data_center_candidate")
+        serial_candidate = args.get("serial") or args.get("name")
+        mapped_site = args.get("site")
+        if (
+            result["site_id"] is None
+            or str(mapped_site or "").strip().lower() == "unknown"
+        ) and (site_candidate or datacenter_candidate):
+            logger.debug(
+                "[XCLARITY] placement fallback serial=%s raw_site=%s raw_dataCenter=%s mapped_site=%s",
+                serial_candidate or "-",
+                site_candidate or "-",
+                datacenter_candidate or "-",
+                mapped_site or "-",
+            )
+
         return result
 
     def _ensure_tenant_group(self, args: dict, dry_run: bool) -> int | None:

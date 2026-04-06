@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -280,6 +281,29 @@ class TestResolvePlacement:
             "rack_position": None,
         }
         nb.upsert.assert_not_called()
+
+    def test_logs_raw_candidates_when_site_fallbacks(self, caplog):
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+        runner = self._make_runner(nb)
+        caplog.set_level(logging.DEBUG)
+        with caplog.at_level(logging.DEBUG, logger="collector.prerequisites"):
+            result = runner._resolve_placement(
+                {
+                    "site": "Unknown",
+                    "location": "",
+                    "rack": "",
+                    "position": "",
+                    "serial": "ABC123",
+                    "site_candidate": "Site Input",
+                    "datacenter_candidate": "DC-R1",
+                },
+                dry_run=False,
+            )
+        assert result["site_id"] == 1
+        assert "Site Input" in caplog.text
+        assert "DC-R1" in caplog.text
+        assert "Unknown" in caplog.text
 
 
 class TestEnsureTenantGroup:
