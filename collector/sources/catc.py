@@ -45,8 +45,10 @@ Interface dict fields (when fetch_interfaces is enabled)
 from __future__ import annotations
 
 import logging
+import random
 import re
-from typing import Any, Optional
+import time
+from typing import Any
 
 from .base import DataSource
 from .utils import parse_speed_mbps, safe_get
@@ -108,12 +110,12 @@ def _normalize_iface_type(raw_type: str) -> str:
     return _IFACE_TYPE_MAP.get(raw_type, "other")
 
 
-def _parse_speed_mbps(speed_str: str) -> Optional[int]:
+def _parse_speed_mbps(speed_str: str) -> int | None:
     """Delegate to shared helper, treating bare integers as bits-per-second (DNAC)."""
     return parse_speed_mbps(speed_str, numeric_is_bps=True)
 
 
-def _mask_to_prefix(mask: str) -> Optional[int]:
+def _mask_to_prefix(mask: str) -> int | None:
     """Convert a dotted-quad subnet mask to a prefix length.
 
     Returns ``None`` when *mask* is empty or invalid.
@@ -142,6 +144,38 @@ def _hierarchy_part(hierarchy: str, level: int) -> str:
     return parts[level] if len(parts) > level else ""
 
 
+def _hierarchy_depth(hierarchy: str) -> int:
+    """Return the number of populated path segments in *hierarchy*."""
+    if not hierarchy:
+        return 0
+    return len([part for part in hierarchy.split("/") if part])
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    """Return *value* interpreted as a boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    """Return *value* converted to ``int`` or *default* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    """Return *value* converted to ``float`` or *default* on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # CatalystCenterSource
 # ---------------------------------------------------------------------------
@@ -150,9 +184,14 @@ class CatalystCenterSource(DataSource):
     """dnacentersdk-backed source adapter for Cisco Catalyst Center."""
 
     def __init__(self) -> None:
-        self._client: Optional[Any] = None
-        self._config: Optional[Any] = None
+        self._client: Any | None = None
+        self._config: Any | None = None
         self._fetch_interfaces: bool = False
+        self._wait_on_rate_limit: bool = True
+        self._rate_limit_retry_attempts: int = 3
+        self._rate_limit_retry_initial_delay: float = 1.0
+        self._rate_limit_retry_max_delay: float = 30.0
+        self._rate_limit_retry_jitter: float = 0.5
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -181,6 +220,23 @@ class CatalystCenterSource(DataSource):
 
         extra = config.extra or {}
         self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
+        self._wait_on_rate_limit = _coerce_bool(extra.get("wait_on_rate_limit", "true"), True)
+        self._rate_limit_retry_attempts = max(
+            1,
+            _coerce_int(extra.get("rate_limit_retry_attempts", "3"), 3),
+        )
+        self._rate_limit_retry_initial_delay = max(
+            0.0,
+            _coerce_float(extra.get("rate_limit_retry_initial_delay", "1.0"), 1.0),
+        )
+        self._rate_limit_retry_max_delay = max(
+            self._rate_limit_retry_initial_delay,
+            _coerce_float(extra.get("rate_limit_retry_max_delay", "30.0"), 30.0),
+        )
+        self._rate_limit_retry_jitter = max(
+            0.0,
+            _coerce_float(extra.get("rate_limit_retry_jitter", "0.5"), 0.5),
+        )
 
         logger.info("Connecting to Catalyst Center: %s", url)
         self._client = api.DNACenterAPI(
@@ -188,6 +244,7 @@ class CatalystCenterSource(DataSource):
             username=config.username,
             password=config.password,
             verify=config.verify_ssl,
+            wait_on_rate_limit=self._wait_on_rate_limit,
         )
         logger.info("Catalyst Center connection established: %s", config.url)
 
@@ -220,8 +277,53 @@ class CatalystCenterSource(DataSource):
         sites = self._fetch_all_sites()
         logger.debug("CatalystCenter: fetched %d sites", len(sites))
 
+        assignments = self._fetch_site_assignments(sites)
+        if assignments is None:
+            logger.info(
+                "CatalystCenter: falling back to per-site membership walk because "
+                "bulk site assignment lookup is unavailable"
+            )
+            return self._get_devices_via_site_membership(sites)
+
+        raw_devices = self._fetch_all_devices()
+        logger.debug(
+            "CatalystCenter: fetched %d inventory devices and %d site assignments",
+            len(raw_devices), len(assignments),
+        )
+
         devices: list[dict] = []
-        seen_serials: set[str] = set()
+        seen_devices: set[str] = set()
+
+        for device in raw_devices:
+            device_id = _safe_get(device, "id", "") or ""
+            site_hierarchy = assignments.get(device_id, "")
+            if not site_hierarchy:
+                continue
+
+            enriched = self._enrich_device(device, site_hierarchy)
+            dedupe_key = (
+                enriched.get("serial")
+                or device_id
+                or f"{enriched.get('name', 'Unknown')}|{site_hierarchy}"
+            )
+            if dedupe_key in seen_devices:
+                continue
+            seen_devices.add(dedupe_key)
+
+            if self._fetch_interfaces:
+                if device_id:
+                    enriched["interfaces"] = self._fetch_device_interfaces(device_id)
+                else:
+                    enriched["interfaces"] = []
+            devices.append(enriched)
+
+        logger.debug("CatalystCenter: returning %d devices", len(devices))
+        return devices
+
+    def _get_devices_via_site_membership(self, sites: list[Any]) -> list[dict]:
+        """Fallback inventory path using the legacy per-site membership API."""
+        devices: list[dict] = []
+        seen_devices: set[str] = set()
 
         for site in sites:
             site_id = _safe_get(site, "id")
@@ -231,7 +333,11 @@ class CatalystCenterSource(DataSource):
             site_hierarchy = _safe_get(site, "siteNameHierarchy", "")
 
             try:
-                membership = self._client.sites.get_membership(site_id=site_id)
+                membership = self._call_with_rate_limit_backoff(
+                    self._client.sites.get_membership,
+                    f"site membership {site_id}",
+                    site_id=site_id,
+                )
             except Exception as exc:
                 logger.debug("No membership for site %s: %s", site_id, exc)
                 continue
@@ -243,14 +349,14 @@ class CatalystCenterSource(DataSource):
                 if not members or not hasattr(members, "response"):
                     continue
                 for device in (members.response or []):
-                    serial = _safe_get(device, "serialNumber", "")
-                    if serial and serial in seen_serials:
+                    device_id = _safe_get(device, "id", "") or ""
+                    serial = _safe_get(device, "serialNumber", "") or ""
+                    dedupe_key = serial or device_id or f"{_safe_get(device, 'hostname', '')}|{site_hierarchy}"
+                    if dedupe_key in seen_devices:
                         continue
-                    if serial:
-                        seen_serials.add(serial)
+                    seen_devices.add(dedupe_key)
                     enriched = self._enrich_device(device, site_hierarchy)
                     if self._fetch_interfaces:
-                        device_id = enriched.get("deviceId", "")
                         if device_id:
                             enriched["interfaces"] = self._fetch_device_interfaces(device_id)
                         else:
@@ -267,7 +373,12 @@ class CatalystCenterSource(DataSource):
         limit = 500
         while True:
             try:
-                resp = self._client.sites.get_site(offset=offset, limit=limit)
+                resp = self._call_with_rate_limit_backoff(
+                    self._client.sites.get_site,
+                    f"site page offset={offset}",
+                    offset=offset,
+                    limit=limit,
+                )
                 batch = resp.response if hasattr(resp, "response") else []
                 if not batch:
                     break
@@ -279,6 +390,178 @@ class CatalystCenterSource(DataSource):
                 logger.warning("Failed to fetch sites at offset %d: %s", offset, exc)
                 break
         return sites
+
+    def _fetch_all_devices(self) -> list:
+        """Fetch all Catalyst Center inventory devices with pagination."""
+        devices: list = []
+        offset = 1
+        limit = 500
+        while True:
+            try:
+                resp = self._call_with_rate_limit_backoff(
+                    self._client.devices.get_device_list,
+                    f"device list page offset={offset}",
+                    offset=offset,
+                    limit=limit,
+                )
+                batch = resp.response if hasattr(resp, "response") else []
+                if not batch:
+                    break
+                devices.extend(batch)
+                if len(batch) < limit:
+                    break
+                offset += limit
+            except Exception as exc:
+                logger.warning("Failed to fetch device list at offset %d: %s", offset, exc)
+                break
+        return devices
+
+    def _fetch_site_assignments(self, sites: list[Any]) -> dict[str, str] | None:
+        """Return ``device_id -> site hierarchy`` using subtree assignment APIs."""
+        site_design = getattr(self._client, "site_design", None)
+        if site_design is None:
+            return None
+
+        fetcher = (
+            getattr(site_design, "get_site_assigned_network_devices", None)
+            or getattr(site_design, "get_site_assigned_network_devices_v1", None)
+        )
+        if fetcher is None:
+            return None
+
+        roots = self._select_assignment_roots(sites)
+        if not roots:
+            return None
+
+        assignments: dict[str, str] = {}
+        for root in roots:
+            root_id = _safe_get(root, "id", "") or ""
+            if not root_id:
+                continue
+
+            offset = 1
+            limit = 500
+            while True:
+                try:
+                    resp = self._call_with_rate_limit_backoff(
+                        fetcher,
+                        f"site assignment root={root_id} offset={offset}",
+                        site_id=root_id,
+                        offset=offset,
+                        limit=limit,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "CatalystCenter: bulk site assignment fetch failed for root %s: %s",
+                        root_id, exc,
+                    )
+                    return None
+
+                batch = resp.response if hasattr(resp, "response") else []
+                if not batch:
+                    break
+
+                for assignment in batch:
+                    device_id = _safe_get(assignment, "deviceId", "") or ""
+                    site_hierarchy = _safe_get(assignment, "siteNameHierarchy", "") or ""
+                    if device_id and site_hierarchy:
+                        assignments[device_id] = site_hierarchy
+
+                if len(batch) < limit:
+                    break
+                offset += limit
+
+        return assignments
+
+    def _select_assignment_roots(self, sites: list[Any]) -> list[Any]:
+        """Return the smallest disjoint set of root sites for subtree membership queries."""
+        candidates: list[tuple[int, Any]] = []
+        for site in sites:
+            site_id = _safe_get(site, "id", "") or ""
+            hierarchy = _safe_get(site, "siteNameHierarchy", "") or ""
+            depth = _hierarchy_depth(hierarchy)
+            if not site_id or depth <= 1:
+                continue
+            candidates.append((depth, site))
+
+        if not candidates:
+            return []
+
+        min_depth = min(depth for depth, _site in candidates)
+        roots = [site for depth, site in candidates if depth == min_depth]
+        logger.debug(
+            "CatalystCenter: selected %d subtree assignment roots at hierarchy depth %d",
+            len(roots), min_depth,
+        )
+        return roots
+
+    def _call_with_rate_limit_backoff(self, fn: Any, operation: str, **kwargs: Any) -> Any:
+        """Call *fn* and retry 429 failures with exponential backoff."""
+        attempts = self._rate_limit_retry_attempts
+        delay = self._rate_limit_retry_initial_delay
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return fn(**kwargs)
+            except Exception as exc:
+                status_code = self._extract_status_code(exc)
+                if status_code != 429 or attempt >= attempts:
+                    raise
+
+                retry_after = self._extract_retry_after_seconds(exc)
+                sleep_for = retry_after if retry_after is not None else delay
+                if self._rate_limit_retry_jitter:
+                    sleep_for += random.uniform(0.0, self._rate_limit_retry_jitter)
+
+                logger.warning(
+                    "CatalystCenter: 429 rate limit during %s; retrying in %.2fs "
+                    "(attempt %d/%d)",
+                    operation,
+                    sleep_for,
+                    attempt + 1,
+                    attempts,
+                )
+                time.sleep(sleep_for)
+                if retry_after is None:
+                    delay = min(delay * 2, self._rate_limit_retry_max_delay)
+
+        raise RuntimeError(f"CatalystCenter: exhausted retries for {operation}")
+
+    def _extract_status_code(self, exc: Exception) -> int | None:
+        """Best-effort extraction of an HTTP status code from an SDK exception."""
+        for attr in ("status_code", "status", "http_status"):
+            value = getattr(exc, attr, None)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    pass
+
+        response = getattr(exc, "response", None) or getattr(exc, "resp", None)
+        for attr in ("status_code", "status"):
+            value = getattr(response, attr, None)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    pass
+
+        return None
+
+    def _extract_retry_after_seconds(self, exc: Exception) -> float | None:
+        """Return the HTTP ``Retry-After`` header, when present."""
+        response = getattr(exc, "response", None) or getattr(exc, "resp", None)
+        headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
+        if not headers:
+            return None
+
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
+        if retry_after is None:
+            return None
+        try:
+            return max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            return None
 
     def _enrich_device(self, device: Any, site_hierarchy: str) -> dict:
         """Return a normalised dict for a single Catalyst Center device record."""
@@ -331,7 +614,11 @@ class CatalystCenterSource(DataSource):
         not abort the entire collection run.
         """
         try:
-            resp = self._client.devices.get_interface_info_by_id(device_id=device_id)
+            resp = self._call_with_rate_limit_backoff(
+                self._client.devices.get_interface_info_by_id,
+                f"interface inventory for device {device_id}",
+                device_id=device_id,
+            )
             raw_list = resp.response if hasattr(resp, "response") else []
         except Exception as exc:
             logger.warning(

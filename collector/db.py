@@ -132,6 +132,11 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('CATC_USER', 'admin', '', 'Cisco Catalyst Center'),
     ('CATC_PASS', 'changeme', '', 'Cisco Catalyst Center'),
     ('CATC_VERIFY_SSL', 'true', '', 'Cisco Catalyst Center'),
+    ('CATC_WAIT_ON_RATE_LIMIT', 'true', 'Let dnacentersdk honor Catalyst Center Retry-After rate-limit responses automatically (default: true)', 'Cisco Catalyst Center'),
+    ('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3', 'Additional adapter-level retry attempts when Catalyst Center still raises 429 responses (default: 3)', 'Cisco Catalyst Center'),
+    ('CATC_RATE_LIMIT_RETRY_INITIAL_DELAY', '1.0', 'Initial fallback delay in seconds before retrying raised Catalyst Center 429 responses (default: 1.0)', 'Cisco Catalyst Center'),
+    ('CATC_RATE_LIMIT_RETRY_MAX_DELAY', '30.0', 'Maximum fallback delay in seconds between raised Catalyst Center 429 retries (default: 30.0)', 'Cisco Catalyst Center'),
+    ('CATC_RATE_LIMIT_RETRY_JITTER', '0.5', 'Maximum random jitter in seconds added to fallback Catalyst Center 429 retries (default: 0.5)', 'Cisco Catalyst Center'),
     # --- Lenovo XClarity ---
     ('XCLARITY_HOST', 'https://xclarity.example.com', 'XCLARITY_HOST can be just a hostname/IP or a full URL; HTTPS port 443 is always used unless an explicit port is included in the URL.', 'Lenovo XClarity'),
     ('XCLARITY_USER', 'admin', '', 'Lenovo XClarity'),

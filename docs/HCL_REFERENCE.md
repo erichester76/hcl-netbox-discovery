@@ -113,8 +113,21 @@ source "catc" {
   username   = env("CATC_USER")
   password   = env("CATC_PASS")
   verify_ssl = env("CATC_VERIFY_SSL", "true")
+  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "false")
+  wait_on_rate_limit        = env("CATC_WAIT_ON_RATE_LIMIT", "true")
+  rate_limit_retry_attempts = env("CATC_RATE_LIMIT_RETRY_ATTEMPTS", "3")
+  rate_limit_retry_initial_delay = env("CATC_RATE_LIMIT_RETRY_INITIAL_DELAY", "1.0")
+  rate_limit_retry_max_delay = env("CATC_RATE_LIMIT_RETRY_MAX_DELAY", "30.0")
+  rate_limit_retry_jitter   = env("CATC_RATE_LIMIT_RETRY_JITTER", "0.5")
 }
 ```
+
+The Catalyst Center adapter fetches device inventory in bulk, then joins it to
+site assignments using the site-assignment API at the shallowest non-Global
+site roots it can find. This avoids one membership lookup per site on large
+hierarchies. When the installed SDK or Catalyst Center release does not expose
+that site-assignment API, the adapter falls back to the older per-site
+membership walk.
 
 ### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
 
