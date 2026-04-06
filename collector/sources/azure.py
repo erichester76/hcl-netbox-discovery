@@ -637,7 +637,7 @@ class AzureSource(DataSource):
                         if priv_ip:
                             nics.append({
                                 "name":        "azure-firewall-subnet",
-                                "mac_address": "",
+                                "mac_address": None,
                                 "ips":         [{"address": f"{priv_ip}/32"}],
                             })
                     result.append(self._build_appliance_dict(
@@ -676,7 +676,7 @@ class AzureSource(DataSource):
                                         if pip.ip_address:
                                             nics.append({
                                                 "name":        "gateway-subnet",
-                                                "mac_address": "",
+                                                "mac_address": None,
                                                 "ips":         [{"address": f"{pip.ip_address}/32"}],
                                             })
                                     except Exception:
@@ -745,7 +745,7 @@ class AzureSource(DataSource):
             priv_ip = getattr(frontend, "private_ip_address", None)
             if priv_ip:
                 ips.append({"address": f"{priv_ip}/32"})
-            nics.append({"name": nic_name, "mac_address": "", "ips": ips})
+            nics.append({"name": nic_name, "mac_address": None, "ips": ips})
         return nics
 
     # ------------------------------------------------------------------
@@ -811,7 +811,7 @@ class AzureSource(DataSource):
 
                 nics = [{
                     "name":        "primary",
-                    "mac_address": nic.mac_address or "",
+                    "mac_address": nic.mac_address or None,
                     "ips":         ips,
                 }]
 
