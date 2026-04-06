@@ -248,6 +248,7 @@ class CatalystCenterSource(DataSource):
         self._client: Any | None = None
         self._config: Any | None = None
         self._fetch_interfaces: bool = False
+        self._site_assignment_strategy: str = "auto"
         self._wait_on_rate_limit: bool = True
         self._rate_limit_retry_attempts: int = 3
         self._rate_limit_retry_initial_delay: float = 1.0
@@ -281,6 +282,14 @@ class CatalystCenterSource(DataSource):
 
         extra = config.extra or {}
         self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
+        assignment_strategy = str(extra.get("site_assignment_strategy", "auto")).strip().lower()
+        if assignment_strategy not in {"auto", "bulk", "membership"}:
+            logger.warning(
+                "CatalystCenter: unsupported site_assignment_strategy=%r; defaulting to 'auto'",
+                assignment_strategy,
+            )
+            assignment_strategy = "auto"
+        self._site_assignment_strategy = assignment_strategy
         self._wait_on_rate_limit = _coerce_bool(extra.get("wait_on_rate_limit", "true"), True)
         self._rate_limit_retry_attempts = max(
             1,
@@ -338,13 +347,35 @@ class CatalystCenterSource(DataSource):
         sites = self._fetch_all_sites()
         logger.debug("CatalystCenter: fetched %d sites", len(sites))
 
+        strategy = self._site_assignment_strategy
+        logger.debug("CatalystCenter: using site assignment strategy=%s", strategy)
+
+        if strategy == "membership":
+            devices = self._get_devices_via_site_membership(sites)
+            if devices:
+                return devices
+            logger.warning(
+                "CatalystCenter: membership-first site assignment returned no devices; "
+                "falling back to bulk site-assignment join"
+            )
+            bulk_devices = self._get_devices_via_bulk_assignment_join(sites)
+            return bulk_devices or []
+
+        bulk_devices = self._get_devices_via_bulk_assignment_join(sites)
+        if bulk_devices is not None:
+            return bulk_devices
+
+        logger.info(
+            "CatalystCenter: falling back to per-site membership walk because "
+            "bulk site-assignment join did not produce a usable result"
+        )
+        return self._get_devices_via_site_membership(sites)
+
+    def _get_devices_via_bulk_assignment_join(self, sites: list[Any]) -> list[dict] | None:
+        """Return devices using the bulk site-assignment API, or ``None`` on fallback."""
         assignments = self._fetch_site_assignments(sites)
         if assignments is None:
-            logger.info(
-                "CatalystCenter: falling back to per-site membership walk because "
-                "bulk site assignment lookup is unavailable"
-            )
-            return self._get_devices_via_site_membership(sites)
+            return None
 
         raw_devices = self._fetch_all_devices()
         logger.debug(
@@ -354,10 +385,10 @@ class CatalystCenterSource(DataSource):
         if raw_devices and not assignments:
             logger.warning(
                 "CatalystCenter: bulk site assignment lookup returned no assignments "
-                "for %d inventory devices; falling back to per-site membership walk",
+                "for %d inventory devices",
                 len(raw_devices),
             )
-            return self._get_devices_via_site_membership(sites)
+            return None
 
         devices: list[dict] = []
         seen_devices: set[str] = set()

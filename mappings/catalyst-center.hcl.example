@@ -13,6 +13,9 @@
 #                             When true, interfaces are fetched per-device and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   CATC_SITE_ASSIGNMENT_STRATEGY auto | bulk | membership  (default: auto)
+#                             Choose which device/site join method runs first.
+#                             The adapter still falls back to the other method.
 #   CATC_WAIT_ON_RATE_LIMIT   true | false  (default: true)
 #                             Let dnacentersdk honor Retry-After responses from
 #                             Catalyst Center automatically.
@@ -33,6 +36,7 @@ source "catc" {
   password          = "env('CATC_PASS')"
   verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
   fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'false')"
+  site_assignment_strategy = "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')"
   wait_on_rate_limit         = "env('CATC_WAIT_ON_RATE_LIMIT', 'true')"
   rate_limit_retry_attempts  = "env('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3')"
   rate_limit_retry_initial_delay = "env('CATC_RATE_LIMIT_RETRY_INITIAL_DELAY', '1.0')"
