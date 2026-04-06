@@ -13,6 +13,9 @@
 #                             When true, interfaces are fetched per-device and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   CATC_SITE_ASSIGNMENT_STRATEGY auto | bulk | membership  (default: auto)
+#                             Choose which device/site join method runs first.
+#                             The adapter still falls back to the other method.
 #   CATC_WAIT_ON_RATE_LIMIT   true | false  (default: true)
 #                             Let dnacentersdk honor Retry-After responses from
 #                             Catalyst Center automatically.
