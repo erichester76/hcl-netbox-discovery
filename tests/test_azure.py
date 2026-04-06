@@ -215,8 +215,10 @@ class TestAzureGetPrefixes:
         subnet_prefix = next(r for r in result if not r["is_vnet"])
 
         assert vnet_prefix["prefix"] == "10.0.0.0/16"
+        assert vnet_prefix["description"] == "Azure VNet: vnet-east (Sub: Dev)"
         assert vnet_prefix["vnet_name"] == "vnet-east"
         assert subnet_prefix["prefix"] == "10.0.1.0/24"
+        assert subnet_prefix["description"] == "Azure Subnet: subnet-a (VNet: vnet-east)"
         assert subnet_prefix["subnet_name"] == "subnet-a"
 
     def test_skips_prefixes_without_slash(self):
