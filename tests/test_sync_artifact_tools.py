@@ -132,6 +132,16 @@ class TestPullScriptDefaults:
 
         assert Path(args.local_root).resolve() == expected_root
 
+    def test_remote_python_command_quotes_script_and_args(self):
+        command = pull_sync_artifacts._remote_python_command(
+            script="import sys\nprint(sys.argv[1:])\n",
+            argv=["/var/tmp/hcl-sync-artifacts", "DONE"],
+        )
+
+        assert command.startswith("python3 -c ")
+        assert "/var/tmp/hcl-sync-artifacts" in command
+        assert "DONE" in command
+
 
 class TestPullScriptStreamDrain:
     def test_drain_stream_collects_stderr_without_leaking_handle(self):

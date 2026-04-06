@@ -108,18 +108,12 @@ def _list_remote_bundles(
         "            bundles.append(str(marker.parent.relative_to(root)))\n"
         "print(json.dumps(bundles))\n"
     )
+    ssh_command = _remote_python_command(
+        script=script,
+        argv=[remote_root, done_marker_name],
+    )
     result = subprocess.run(
-        [
-            "ssh",
-            "-p",
-            str(ssh_port),
-            remote_host,
-            "python3",
-            "-c",
-            script,
-            remote_root,
-            done_marker_name,
-        ],
+        ["ssh", "-p", str(ssh_port), remote_host, ssh_command],
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -129,6 +123,12 @@ def _list_remote_bundles(
     if not payload:
         return []
     return list(json.loads(payload))
+
+
+def _remote_python_command(script, argv):
+    quoted_script = shlex.quote(script)
+    quoted_args = " ".join(shlex.quote(str(arg)) for arg in argv)
+    return f"python3 -c {quoted_script} {quoted_args}".strip()
 
 
 def _pull_bundle(
