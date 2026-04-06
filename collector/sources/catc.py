@@ -176,6 +176,25 @@ def _coerce_float(value: Any, default: float) -> float:
         return default
 
 
+def _response_items(payload: Any) -> list[Any]:
+    """Return a list from common Catalyst Center SDK response shapes."""
+    if payload is None:
+        return []
+    if isinstance(payload, list):
+        return payload
+
+    for key in ("response", "items", "devices", "networkDevices"):
+        value = _safe_get(payload, key)
+        if isinstance(value, list):
+            return value
+        if value is not None and value is not payload:
+            nested = _response_items(value)
+            if nested:
+                return nested
+
+    return []
+
+
 # ---------------------------------------------------------------------------
 # CatalystCenterSource
 # ---------------------------------------------------------------------------
@@ -290,6 +309,13 @@ class CatalystCenterSource(DataSource):
             "CatalystCenter: fetched %d inventory devices and %d site assignments",
             len(raw_devices), len(assignments),
         )
+        if raw_devices and not assignments:
+            logger.warning(
+                "CatalystCenter: bulk site assignment lookup returned no assignments "
+                "for %d inventory devices; falling back to per-site membership walk",
+                len(raw_devices),
+            )
+            return self._get_devices_via_site_membership(sites)
 
         devices: list[dict] = []
         seen_devices: set[str] = set()
@@ -379,7 +405,7 @@ class CatalystCenterSource(DataSource):
                     offset=offset,
                     limit=limit,
                 )
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
                     break
                 sites.extend(batch)
@@ -404,7 +430,7 @@ class CatalystCenterSource(DataSource):
                     offset=offset,
                     limit=limit,
                 )
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
                     break
                 devices.extend(batch)
@@ -457,7 +483,7 @@ class CatalystCenterSource(DataSource):
                     )
                     return None
 
-                batch = resp.response if hasattr(resp, "response") else []
+                batch = _response_items(resp)
                 if not batch:
                     break
 
