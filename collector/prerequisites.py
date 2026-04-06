@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from itertools import count
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,30 @@ class PrerequisiteRunner:
 
     def __init__(self, nb: Any) -> None:
         self.nb = nb
+        self._dry_run_id_counter = count(start=-1000000, step=-1)
+        self._dry_run_ids: dict[tuple[str, Any], int] = {}
+        self._dry_run_lock = threading.Lock()
+
+    @staticmethod
+    def _freeze_dry_run_key(value: Any) -> Any:
+        """Convert nested dry-run lookup data into a hashable cache key."""
+        if isinstance(value, dict):
+            return tuple(
+                (key, PrerequisiteRunner._freeze_dry_run_key(val))
+                for key, val in sorted(value.items())
+            )
+        if isinstance(value, list):
+            return tuple(PrerequisiteRunner._freeze_dry_run_key(item) for item in value)
+        return value
+
+    def _dry_run_placeholder_id(self, resource: str, lookup: dict[str, Any]) -> int:
+        key = (resource, self._freeze_dry_run_key(lookup))
+        with self._dry_run_lock:
+            placeholder_id = self._dry_run_ids.get(key)
+            if placeholder_id is None:
+                placeholder_id = next(self._dry_run_id_counter)
+                self._dry_run_ids[key] = placeholder_id
+            return placeholder_id
 
     def run(
         self,
@@ -163,7 +189,7 @@ class PrerequisiteRunner:
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_site name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.sites", {"name": name})
         obj = self.nb.upsert(
             "dcim.sites",
             {"name": name, "slug": slug},
@@ -183,7 +209,10 @@ class PrerequisiteRunner:
         lookup = ["name", "site"] if site_id is not None else ["name"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_location name=%s site=%s", name, site_id)
-            return None
+            lookup_payload = {"name": name}
+            if site_id is not None:
+                lookup_payload["site"] = site_id
+            return self._dry_run_placeholder_id("dcim.locations", lookup_payload)
         obj = self.nb.upsert("dcim.locations", payload, lookup_fields=lookup)
         return extract_id(obj)
 
@@ -201,7 +230,10 @@ class PrerequisiteRunner:
         lookup = ["name", "site"] if site_id is not None else ["name"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_rack name=%s site=%s", name, site_id)
-            return None
+            lookup_payload = {"name": name}
+            if site_id is not None:
+                lookup_payload["site"] = site_id
+            return self._dry_run_placeholder_id("dcim.racks", lookup_payload)
         obj = self.nb.upsert("dcim.racks", payload, lookup_fields=lookup)
         return extract_id(obj)
 

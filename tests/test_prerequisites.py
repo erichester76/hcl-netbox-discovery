@@ -281,6 +281,51 @@ class TestResolvePlacement:
         }
         nb.upsert.assert_not_called()
 
+    def test_dry_run_preserves_placeholder_ids_for_site_location_and_rack(self):
+        """Dry-run placement should keep prerequisite identities for downstream lookups."""
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+
+        result = runner._resolve_placement(
+            {
+                "site": "DC1",
+                "location": "Room 31",
+                "rack": "AZ-40",
+                "position": "40",
+            },
+            dry_run=True,
+        )
+
+        assert isinstance(result["site_id"], int)
+        assert result["site_id"] < 0
+        assert isinstance(result["location_id"], int)
+        assert result["location_id"] < 0
+        assert isinstance(result["rack_id"], int)
+        assert result["rack_id"] < 0
+        assert result["rack_position"] == 40
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_ensure_site_reuses_placeholder_for_same_lookup(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+
+        first = runner._ensure_site(
+            {"name": "Clemson University Information Technology Center (ITC)"},
+            dry_run=True,
+        )
+        second = runner._ensure_site(
+            {"name": "Clemson University Information Technology Center (ITC)"},
+            dry_run=True,
+        )
+        different = runner._ensure_site({"name": "Unknown"}, dry_run=True)
+
+        assert isinstance(first, int)
+        assert first < 0
+        assert second == first
+        assert different < 0
+        assert different != first
+        nb.upsert.assert_not_called()
+
 
 class TestEnsureTenantGroup:
     """_ensure_tenant_group should upsert tenancy.tenant_groups."""
