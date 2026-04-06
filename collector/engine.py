@@ -1152,6 +1152,7 @@ class Engine:
         nested_stats: RunStats | None = None,
         field_configs: list[FieldConfig] | None = None,
     ) -> Any:
+        filters: dict[str, Any] | None = None
         missing_lookup_fields = self._missing_lookup_fields(payload, lookup_fields)
         if missing_lookup_fields:
             deliberate_guest_skip = (
@@ -1268,7 +1269,28 @@ class Engine:
                     stats.record("created")
             return obj
         except Exception as exc:
-            if _is_duplicate_ip_conflict(resource, exc):
+            if "more than one result" in str(exc):
+                ambiguity_filters = filters or self._lookup_filters(
+                    ctx,
+                    resource,
+                    payload,
+                    lookup_fields,
+                )
+                match_count, matched_ids = self._ambiguous_lookup_details(
+                    ctx,
+                    resource,
+                    ambiguity_filters,
+                )
+                logger.warning(
+                    "Live lookup ambiguous  resource=%s  filters=%s  match_count=%s  matched_ids=%s",
+                    resource,
+                    ambiguity_filters,
+                    match_count if match_count is not None else "unknown",
+                    matched_ids,
+                )
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
+            elif _is_duplicate_ip_conflict(resource, exc):
                 logger.error(
                     "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
                     resource,
