@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import threading
 import textwrap
+import threading
 from pathlib import Path
 
 import pytest
@@ -14,11 +13,7 @@ from collector.config import (
     CollectionConfig,
     CollectorConfig,
     CollectorOptions,
-    FieldConfig,
     IteratorConfig,
-    NetBoxConfig,
-    ObjectConfig,
-    PrerequisiteConfig,
     SourceConfig,
     _bool,
     _eval_config_str,
@@ -31,7 +26,6 @@ from collector.config import (
     load_config,
 )
 from collector.db import init_db, set_setting
-
 
 # ---------------------------------------------------------------------------
 # Unit helpers
