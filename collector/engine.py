@@ -1426,14 +1426,14 @@ class Engine:
         parent_resource: str,
         parent_nb_obj: Any,
         ip_payload: dict[str, Any],
-    ) -> tuple[str, int] | None:
+    ) -> tuple[str, int, str, int, bool] | None:
         """Clear a same-parent primary IP before reassigning it to another interface.
 
         NetBox rejects reassigning an IP while it is the designated primary IP
         for the parent object. When we detect that exact situation, clear the
         current primary field first so the subsequent IP upsert can proceed.
-        The caller is responsible for restoring the primary IP after the upsert,
-        even on failure.
+        The caller is responsible for restoring the primary IP after the upsert
+        when appropriate, even on failure.
         """
         nb_get = ctx.nb.get
         try:
@@ -1472,13 +1472,52 @@ class Engine:
             return None
 
         current_parent = parent_nb_obj
+        current_parent_resource = parent_resource
+        current_parent_obj_id = parent_obj_id
+        restore_after_success = True
+        assigned_object_type = _obj_get(existing_ip, "assigned_object_type") or ip_payload.get(
+            "assigned_object_type"
+        )
+        parent_link_field = None
+        interface_resource = None
+        if assigned_object_type == "dcim.interface":
+            interface_resource = "dcim.interfaces"
+            parent_link_field = "device"
+            current_parent_resource = "dcim.devices"
+        elif assigned_object_type == "virtualization.vminterface":
+            interface_resource = "virtualization.interfaces"
+            parent_link_field = "virtual_machine"
+            current_parent_resource = "virtualization.virtual_machines"
+
+        if interface_resource and parent_link_field and current_assigned_id is not None:
+            try:
+                current_iface = _get_uncached(interface_resource, id=current_assigned_id)
+            except Exception:
+                logger.debug(
+                    "Failed to refresh %s id=%s before primary IP reassignment; falling back to target parent",
+                    interface_resource,
+                    current_assigned_id,
+                    exc_info=True,
+                )
+            else:
+                linked_parent = _obj_get(current_iface, parent_link_field)
+                linked_parent_id = extract_id(linked_parent)
+                if linked_parent_id is None:
+                    linked_parent_id = _obj_get(current_iface, f"{parent_link_field}_id")
+                if linked_parent_id is not None:
+                    current_parent_obj_id = linked_parent_id
+                    restore_after_success = (
+                        current_parent_resource == parent_resource
+                        and current_parent_obj_id == parent_obj_id
+                    )
+
         try:
-            refreshed_parent = _get_uncached(parent_resource, id=parent_obj_id)
+            refreshed_parent = _get_uncached(current_parent_resource, id=current_parent_obj_id)
         except Exception:
             logger.debug(
                 "Failed to refresh %s id=%s before primary IP reassignment; falling back to existing parent object",
-                parent_resource,
-                parent_obj_id,
+                current_parent_resource,
+                current_parent_obj_id,
                 exc_info=True,
             )
         else:
@@ -1488,8 +1527,14 @@ class Engine:
         if current_primary_id != existing_ip_id:
             return None
 
-        ctx.nb.update(parent_resource, parent_obj_id, {primary_field: None})
-        return primary_field, existing_ip_id
+        ctx.nb.update(current_parent_resource, current_parent_obj_id, {primary_field: None})
+        return (
+            current_parent_resource,
+            current_parent_obj_id,
+            primary_field,
+            existing_ip_id,
+            restore_after_success,
+        )
 
     def _process_interfaces(
         self,
@@ -1639,19 +1684,37 @@ class Engine:
                             and parent_nb_obj is not None
                             and not ip_ctx.dry_run
                         ):
-                            primary_field, previous_ip_id = cleared_primary
+                            (
+                                restore_resource,
+                                restore_parent_id,
+                                primary_field,
+                                previous_ip_id,
+                                restore_after_success,
+                            ) = cleared_primary
+                            should_restore = nb_ip is None or restore_after_success
                             restored_ip_id = extract_id(nb_ip) or previous_ip_id
-                            parent_obj_id = extract_id(parent_nb_obj)
-                            if parent_obj_id is not None and restored_ip_id is not None:
+                            if (
+                                should_restore
+                                and restore_parent_id is not None
+                                and restored_ip_id is not None
+                            ):
                                 try:
                                     ctx.nb.update(
-                                        obj_cfg.netbox_resource,
-                                        parent_obj_id,
+                                        restore_resource,
+                                        restore_parent_id,
                                         {primary_field: restored_ip_id},
                                     )
-                                    if primary_field == "primary_ip4":
+                                    if (
+                                        restore_resource == obj_cfg.netbox_resource
+                                        and restore_parent_id == extract_id(parent_nb_obj)
+                                        and primary_field == "primary_ip4"
+                                    ):
                                         first_primary_ip4_set = True
-                                    elif primary_field == "primary_ip6":
+                                    elif (
+                                        restore_resource == obj_cfg.netbox_resource
+                                        and restore_parent_id == extract_id(parent_nb_obj)
+                                        and primary_field == "primary_ip6"
+                                    ):
                                         first_primary_ip6_set = True
                                 except Exception as exc:
                                     logger.debug(

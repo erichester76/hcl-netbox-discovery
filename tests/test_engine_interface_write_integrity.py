@@ -420,6 +420,117 @@ class TestInterfaceWriteIntegrity:
             call("dcim.devices", 530, {"primary_ip4": 110}),
         ]
 
+    def test_primary_ip_is_cleared_on_old_parent_for_cross_parent_reassignment(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="host",
+            source_collection="hosts",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "vmk0", "_ips": [{"address": "10.70.255.12/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.70.255.12/24"}
+                return SimpleNamespace(
+                    id=109,
+                    assigned_object_id=58,
+                    assigned_object_type="dcim.interface",
+                )
+            if resource == "dcim.interfaces":
+                assert kwargs == {"id": 58}
+                return SimpleNamespace(id=58, device=SimpleNamespace(id=37))
+            if resource == "dcim.devices":
+                assert kwargs == {"id": 37}
+                return SimpleNamespace(id=37, primary_ip4=SimpleNamespace(id=109))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=1622), SimpleNamespace(id=109)],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("dcim.devices", 37, {"primary_ip4": None}),
+        ]
+
+    def test_primary_ip_is_restored_on_old_parent_when_cross_parent_reassignment_fails(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="host",
+            source_collection="hosts",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="never",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {"_interfaces": [{"name": "vmk0", "_ips": [{"address": "10.70.255.12/24"}]}]}
+        )
+        parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
+
+        def get_side_effect(resource, use_cache=False, **kwargs):
+            assert use_cache is False
+            if resource == "ipam.ip_addresses":
+                assert kwargs == {"address": "10.70.255.12/24"}
+                return SimpleNamespace(
+                    id=109,
+                    assigned_object_id=58,
+                    assigned_object_type="dcim.interface",
+                )
+            if resource == "dcim.interfaces":
+                assert kwargs == {"id": 58}
+                return SimpleNamespace(id=58, device=SimpleNamespace(id=37))
+            if resource == "dcim.devices":
+                assert kwargs == {"id": 37}
+                return SimpleNamespace(id=37, primary_ip4=SimpleNamespace(id=109))
+            raise AssertionError(f"Unexpected get() call: {resource!r} {kwargs!r}")
+
+        ctx.nb.get = get_side_effect
+
+        with patch.object(
+            engine,
+            "_upsert",
+            side_effect=[SimpleNamespace(id=1622), None],
+        ):
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert ctx.nb.update.call_args_list == [
+            call("dcim.devices", 37, {"primary_ip4": None}),
+            call("dcim.devices", 37, {"primary_ip4": 109}),
+        ]
+
     def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):
         engine = Engine()
         obj_cfg = ObjectConfig(
