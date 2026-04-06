@@ -276,7 +276,12 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster name=%s", name)
             return None
-        obj = self.nb.upsert("virtualization.clusters", payload, lookup_fields=["name"])
+        lookup_fields = ["name", "type"] if payload.get("type") is not None else ["name"]
+        obj = self.nb.upsert(
+            "virtualization.clusters",
+            payload,
+            lookup_fields=lookup_fields,
+        )
         return extract_id(obj)
 
     def _ensure_inventory_item_role(self, args: dict, dry_run: bool) -> int | None:
