@@ -507,8 +507,9 @@ class PrerequisiteRunner:
                        auto-generate a schema when no explicit schema is given.
 
         The schema is applied via a dedicated ``nb.update`` (PATCH) call after
-        the upsert so it is always written even when the profile already exists
-        and the upsert would otherwise skip unchanged fields.
+        the upsert when a schema is present and differs from the existing
+        profile value. This avoids relying on upsert behavior for schema
+        changes while still skipping redundant PATCHes.
         """
         name = require_text_arg(args, "name", "ensure_module_type_profile")
         slug = slugify(name)
@@ -531,8 +532,8 @@ class PrerequisiteRunner:
             {"name": name, "slug": slug},
             lookup_fields=["name"],
         )
-        # Apply the schema in a separate PATCH after the upsert so it is
-        # always written even when the profile record already existed.
+        # Apply the schema in a separate PATCH after the upsert when it is
+        # present and differs from the current record.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
             existing_schema = extract_field(obj, "schema")
@@ -586,8 +587,8 @@ class PrerequisiteRunner:
 
         # Step 2: apply attributes via a direct PATCH after the profile has
         # been persisted.  Using ``nb.update`` (PATCH) rather than ``upsert``
-        # ensures attributes are always written even when the type record
-        # otherwise appears unchanged.
+        # lets us write attributes only when they differ, even if the type
+        # record itself otherwise appears unchanged.
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
