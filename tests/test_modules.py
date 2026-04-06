@@ -19,7 +19,7 @@ from collector.config import (
     ModuleConfig,
     load_config,
 )
-from collector.prerequisites import PrerequisiteRunner
+from collector.prerequisites import PrerequisiteRunner, load_current_field
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -686,6 +686,49 @@ class TestEnsureModuleType:
         )
         assert result == 50
         nb.update.assert_not_called()
+        nb.get.assert_not_called()
+
+    def test_attributes_patch_skipped_when_refreshed_record_matches(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50},
+        ]
+        nb.get.return_value = {"id": 50, "attributes": {"cores": 16, "speed": 2.5}}
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+        assert result == 50
+        module_type_updates = [
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
+        ]
+        assert module_type_updates == []
+        nb.get.assert_called_once_with("dcim.module_types", id=50)
+
+    def test_load_current_field_bypasses_cache_when_supported(self):
+        calls: list[tuple[str, bool, int]] = []
+
+        class FakeNetBox:
+            def get(self, resource, use_cache=True, **kwargs):
+                calls.append((resource, use_cache, kwargs["id"]))
+                return {"id": kwargs["id"], "attributes": {"cores": 16, "speed": 2.5}}
+
+        value = load_current_field(
+            FakeNetBox(),
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert value == {"cores": 16, "speed": 2.5}
+        assert calls == [("dcim.module_types", False, 50)]
 
     def test_attributes_not_called_when_empty(self):
         """When attributes dict is empty/None, nb.update should not be called."""
@@ -808,6 +851,21 @@ class TestEnsureModuleTypeProfileSchema:
         )
         assert result == 10
         nb.update.assert_not_called()
+        nb.get.assert_not_called()
+
+    def test_schema_update_skipped_when_refreshed_record_matches(self):
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+        nb.get.return_value = {"id": 10, "schema": schema}
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+        assert result == 10
+        nb.update.assert_not_called()
+        nb.get.assert_called_once_with("dcim.module_type_profiles", id=10)
 
     def test_schema_auto_generated_from_attribute_names(self):
         nb = MagicMock()
