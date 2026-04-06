@@ -669,6 +669,24 @@ class TestEnsureModuleType:
         module_type_upsert = nb.upsert.call_args_list[1]
         assert "attributes" not in module_type_upsert[0][1]
 
+    def test_attributes_patch_skipped_when_existing_attributes_match(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+        assert result == 50
+        nb.update.assert_not_called()
+
     def test_attributes_not_called_when_empty(self):
         """When attributes dict is empty/None, nb.update should not be called."""
         nb = MagicMock()
@@ -778,6 +796,18 @@ class TestEnsureModuleTypeProfileSchema:
         assert update_call[0][0] == "dcim.module_type_profiles"
         assert update_call[0][1] == 10
         assert update_call[0][2]["schema"] == schema
+
+    def test_schema_update_skipped_when_existing_schema_matches(self):
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10, "schema": schema}
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+        assert result == 10
+        nb.update.assert_not_called()
 
     def test_schema_auto_generated_from_attribute_names(self):
         nb = MagicMock()

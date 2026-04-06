@@ -55,6 +55,15 @@ def extract_id(obj: Any) -> int | None:
     return getattr(obj, "id", None)
 
 
+def extract_field(obj: Any, field: str) -> Any:
+    """Return *field* from a pynetbox record, dict, or None."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(field)
+    return getattr(obj, field, None)
+
+
 class PrerequisiteArgumentError(ValueError):
     """Raised when a prerequisite method receives invalid required input."""
 
@@ -526,6 +535,9 @@ class PrerequisiteRunner:
         # always written even when the profile record already existed.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
+            existing_schema = extract_field(obj, "schema")
+            if existing_schema == schema:
+                return profile_id
             try:
                 self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
             except Exception as exc:
@@ -579,6 +591,9 @@ class PrerequisiteRunner:
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
+                existing_attrs = extract_field(obj, "attributes")
+                if existing_attrs == clean_attrs:
+                    return module_type_id
                 try:
                     self.nb.update(
                         "dcim.module_types", module_type_id, {"attributes": clean_attrs}
