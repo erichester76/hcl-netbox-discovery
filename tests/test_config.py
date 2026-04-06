@@ -833,7 +833,7 @@ class TestXClarityMappings:
         "mappings/xclarity-modules.hcl.example",
     ]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
-    CANONICAL_MANUFACTURER = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
+    CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_manufacturer_prereqs_canonicalize_lenovo(self, mapping_path):
