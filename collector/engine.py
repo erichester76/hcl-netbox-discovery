@@ -10,6 +10,7 @@ engine.run("mappings/vmware.hcl")
 from __future__ import annotations
 
 import contextvars
+import inspect
 import ipaddress
 import logging
 import threading
@@ -1434,13 +1435,16 @@ class Engine:
         The caller is responsible for restoring the primary IP after the upsert,
         even on failure.
         """
+        nb_get = ctx.nb.get
+        try:
+            nb_get_supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+        except (TypeError, ValueError):
+            nb_get_supports_use_cache = False
+
         def _get_uncached(resource_name: str, **filters: Any) -> Any:
-            try:
-                return ctx.nb.get(resource_name, use_cache=False, **filters)
-            except TypeError as exc:
-                if "use_cache" not in str(exc):
-                    raise
-                return ctx.nb.get(resource_name, **filters)
+            if nb_get_supports_use_cache:
+                return nb_get(resource_name, use_cache=False, **filters)
+            return nb_get(resource_name, **filters)
 
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
