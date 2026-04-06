@@ -46,6 +46,13 @@ logger = logging.getLogger(__name__)
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 
 
+def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
+    return (
+        resource == "ipam.ip_addresses"
+        and "Duplicate IP address found in global table" in str(exc)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1261,12 +1268,30 @@ class Engine:
                     stats.record("created")
             return obj
         except Exception as exc:
-            logger.error(
-                "Upsert failed  resource=%s  keys=%s: %s",
-                resource, sorted(payload.keys()), exc,
-            )
+            if _is_duplicate_ip_conflict(resource, exc):
+                logger.error(
+                    "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
+                    resource,
+                    payload.get("address"),
+                    payload.get("assigned_object_type"),
+                    payload.get("assigned_object_id"),
+                    exc,
+                )
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(
+                        f"{resource}:duplicate_conflict"
+                    )
+            else:
+                logger.error(
+                    "Upsert failed  resource=%s  keys=%s: %s",
+                    resource,
+                    sorted(payload.keys()),
+                    exc,
+                )
             if stats is not None:
                 stats.record_error()
+            if nested_stats is not None and nested_stats is not stats:
+                nested_stats.record_error()
             return None
 
     # ------------------------------------------------------------------

@@ -266,6 +266,34 @@ class TestEngineUpsertReporting:
         nb.upsert.assert_not_called()
         nb.upsert_with_outcome.assert_not_called()
 
+    def test_duplicate_ip_conflict_logs_address_and_nested_reason(self, caplog):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+        nb.upsert_with_outcome.side_effect = Exception(
+            "The request failed with code 400 Bad Request: {'address': ['Duplicate IP address found in global table: 10.0.0.1/24']}"
+        )
+
+        with caplog.at_level(logging.ERROR):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "ipam.ip_addresses",
+                {
+                    "address": "10.0.0.1/24",
+                    "assigned_object_type": "virtualization.vminterface",
+                    "assigned_object_id": 77,
+                },
+                lookup_fields=["address"],
+                nested_stats=stats,
+            )
+
+        assert result is None
+        assert stats.errored == 1
+        assert stats.nested_skipped == {"ipam.ip_addresses:duplicate_conflict": 1}
+        assert "Duplicate IP conflict" in caplog.text
+        assert "10.0.0.1/24" in caplog.text
+        assert "virtualization.vminterface" in caplog.text
+
     def test_dry_run_created_outcome_counts_created(self):
         engine = Engine()
         stats = RunStats("devices")
