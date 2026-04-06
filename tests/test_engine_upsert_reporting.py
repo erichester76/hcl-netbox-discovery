@@ -294,6 +294,47 @@ class TestEngineUpsertReporting:
         assert "10.0.0.1/24" in caplog.text
         assert "virtualization.vminterface" in caplog.text
 
+    def test_duplicate_ip_conflict_normalizes_existing_host_route_and_retries(self, caplog):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+        nb.upsert_with_outcome.side_effect = [
+            Exception(
+                "The request failed with code 400 Bad Request: {'address': ['Duplicate IP address found in global table: 10.0.0.1/32']}"
+            ),
+            SimpleNamespace(
+                object={"id": 55, "address": "10.0.0.1/24"},
+                outcome="updated",
+            ),
+        ]
+        nb.get.return_value = {"id": 55, "address": "10.0.0.1/32"}
+
+        with caplog.at_level(logging.INFO):
+            result = engine._upsert(
+                _ctx(nb=nb, dry_run=False),
+                "ipam.ip_addresses",
+                {
+                    "address": "10.0.0.1/24",
+                    "assigned_object_type": "virtualization.vminterface",
+                    "assigned_object_id": 77,
+                },
+                lookup_fields=["address"],
+                stats=stats,
+                nested_stats=stats,
+            )
+
+        assert result == {"id": 55, "address": "10.0.0.1/24"}
+        assert stats.errored == 0
+        assert stats.updated == 1
+        assert stats.nested_skipped == {}
+        nb.get.assert_called_once_with("ipam.ip_addresses", address="10.0.0.1/32")
+        nb.update.assert_called_once_with(
+            "ipam.ip_addresses",
+            55,
+            {"address": "10.0.0.1/24"},
+        )
+        assert "Normalizing host-route IP to desired prefix" in caplog.text
+
     def test_dry_run_created_outcome_counts_created(self):
         engine = Engine()
         stats = RunStats("devices")
