@@ -295,15 +295,42 @@ class TestResolvePlacement:
                     "rack": "",
                     "position": "",
                     "serial": "ABC123",
+                    "location_candidate": "Campus West",
                     "site_candidate": "Site Input",
                     "datacenter_candidate": "DC-R1",
                 },
                 dry_run=False,
             )
         assert result["site_id"] == 1
+        assert "Campus West" in caplog.text
         assert "Site Input" in caplog.text
         assert "DC-R1" in caplog.text
         assert "Unknown" in caplog.text
+
+    def test_logs_placeholders_when_raw_candidates_are_empty(self, caplog):
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+        runner = self._make_runner(nb)
+        caplog.set_level(logging.DEBUG)
+        with caplog.at_level(logging.DEBUG, logger="collector.prerequisites"):
+            result = runner._resolve_placement(
+                {
+                    "site": "Unknown",
+                    "location": "",
+                    "rack": "",
+                    "position": "",
+                    "serial": "ABC999",
+                    "location_candidate": "",
+                    "site_candidate": "",
+                    "datacenter_candidate": "",
+                },
+                dry_run=False,
+            )
+        assert result["site_id"] == 1
+        assert "ABC999" in caplog.text
+        assert "raw_location=-" in caplog.text
+        assert "site_lookup_input=-" in caplog.text
+        assert "raw_dataCenter=-" in caplog.text
 
 
 class TestEnsureTenantGroup:
