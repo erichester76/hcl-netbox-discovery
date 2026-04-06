@@ -25,6 +25,7 @@ Available methods:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import threading
@@ -64,6 +65,47 @@ def extract_field(obj: Any, field: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(field)
     return getattr(obj, field, None)
+
+
+def load_current_field(
+    nb: Any,
+    resource: str,
+    object_id: int | None,
+    obj: Any,
+    field: str,
+) -> Any:
+    """Return *field* from *obj* or a freshly fetched record when needed.
+
+    Some NetBox upsert responses do not include full `schema` / `attributes`
+    payloads even when the record already exists and the upsert is a no-op.
+    Fetch the current record by ID before deciding whether a follow-on PATCH is
+    actually needed.
+    """
+    value = extract_field(obj, field)
+    if value is not None or object_id is None:
+        return value
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value
+    try:
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
+    except Exception as exc:
+        logger.debug(
+            "Could not refresh %s id=%s for field %r comparison: %s",
+            resource,
+            object_id,
+            field,
+            exc,
+        )
+        return value
+    return extract_field(current, field)
 
 
 class PrerequisiteArgumentError(ValueError):
@@ -609,7 +651,13 @@ class PrerequisiteRunner:
         # present and differs from the current record.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
-            existing_schema = extract_field(obj, "schema")
+            existing_schema = load_current_field(
+                self.nb,
+                "dcim.module_type_profiles",
+                profile_id,
+                obj,
+                "schema",
+            )
             if existing_schema == schema:
                 return profile_id
             try:
@@ -665,7 +713,13 @@ class PrerequisiteRunner:
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
-                existing_attrs = extract_field(obj, "attributes")
+                existing_attrs = load_current_field(
+                    self.nb,
+                    "dcim.module_types",
+                    module_type_id,
+                    obj,
+                    "attributes",
+                )
                 if existing_attrs == clean_attrs:
                     return module_type_id
                 try:
