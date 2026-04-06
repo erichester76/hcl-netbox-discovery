@@ -25,6 +25,7 @@ Available methods:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 from typing import Any
@@ -81,8 +82,18 @@ def load_current_field(
     value = extract_field(obj, field)
     if value is not None or object_id is None:
         return value
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value
     try:
-        current = nb.get(resource, id=object_id)
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
     except Exception as exc:
         logger.debug(
             "Could not refresh %s id=%s for field %r comparison: %s",

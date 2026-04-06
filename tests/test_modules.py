@@ -19,7 +19,7 @@ from collector.config import (
     ModuleConfig,
     load_config,
 )
-from collector.prerequisites import PrerequisiteRunner
+from collector.prerequisites import PrerequisiteRunner, load_current_field
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -710,6 +710,25 @@ class TestEnsureModuleType:
         ]
         assert module_type_updates == []
         nb.get.assert_called_once_with("dcim.module_types", id=50)
+
+    def test_load_current_field_bypasses_cache_when_supported(self):
+        calls: list[tuple[str, bool, int]] = []
+
+        class FakeNetBox:
+            def get(self, resource, use_cache=True, **kwargs):
+                calls.append((resource, use_cache, kwargs["id"]))
+                return {"id": kwargs["id"], "attributes": {"cores": 16, "speed": 2.5}}
+
+        value = load_current_field(
+            FakeNetBox(),
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert value == {"cores": 16, "speed": 2.5}
+        assert calls == [("dcim.module_types", False, 50)]
 
     def test_attributes_not_called_when_empty(self):
         """When attributes dict is empty/None, nb.update should not be called."""
