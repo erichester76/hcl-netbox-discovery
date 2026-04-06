@@ -458,7 +458,18 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_tenant name=%s", name)
             return None
-        obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+        try:
+            obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+        except Exception as exc:
+            exc_str = str(exc)
+            if "400" in exc_str and "unique" in exc_str.lower():
+                logger.debug("ensure_tenant collision for %r — falling back to GET", name)
+                try:
+                    obj = self.nb.get("tenancy.tenants", slug=slug)
+                except Exception:
+                    return None
+            else:
+                raise
         return extract_id(obj)
 
     def _lookup_tenant(self, args: dict, dry_run: bool) -> int | None:
