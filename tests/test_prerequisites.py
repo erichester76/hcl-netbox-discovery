@@ -561,17 +561,23 @@ class TestEnsureCluster:
     def test_dry_run_returns_none_without_upsert(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
-        result = runner._ensure_vrf({"name": "MGMT"}, dry_run=True)
+        result = runner._ensure_cluster({"name": "Azure eastus2", "type": 34}, dry_run=True)
         assert result is None
         nb.upsert.assert_not_called()
 
-    def test_description_included_in_payload(self):
+    def test_group_and_site_are_forwarded_into_payload(self):
         nb = MagicMock()
         nb.upsert.return_value = MagicMock(id=52)
         runner = self._make_runner(nb)
-        runner._ensure_vrf({"name": "PROD", "description": "Production VRF"}, dry_run=False)
-        payload = nb.upsert.call_args[0][1]
-        assert payload["description"] == "Production VRF"
+        runner._ensure_cluster(
+            {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
+            dry_run=False,
+        )
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
+            lookup_fields=["name", "type"],
+        )
 
 
 class TestRequiredIdentityValidation:
