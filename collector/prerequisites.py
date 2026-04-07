@@ -266,29 +266,43 @@ class PrerequisiteRunner:
 
         cache_key = (resource, object_id, field)
         with self._live_field_key_lock(cache_key):
+            return self._load_live_field_unlocked(resource, object_id, obj, field)
+
+    def _load_live_field_unlocked(
+        self,
+        resource: str,
+        object_id: int | None,
+        obj: Any,
+        field: str,
+    ) -> Any:
+        """Return a canonical field value while the per-key lock is already held."""
+        if object_id is None:
+            return normalize_compare_value(extract_field(obj, field))
+
+        cache_key = (resource, object_id, field)
+        with self._live_field_cache_lock:
+            cached = self._live_field_cache.get(cache_key, _MISSING)
+        if cached is not _MISSING:
+            return cached
+
+        current, refreshed_ok = load_current_field_with_status(
+            self.nb,
+            resource,
+            object_id,
+            obj,
+            field,
+            force_refresh=True,
+        )
+        normalized = normalize_compare_value(current)
+
+        if refreshed_ok:
             with self._live_field_cache_lock:
                 cached = self._live_field_cache.get(cache_key, _MISSING)
-            if cached is not _MISSING:
-                return cached
+                if cached is not _MISSING:
+                    return cached
+                self._live_field_cache[cache_key] = normalized
 
-            current, refreshed_ok = load_current_field_with_status(
-                self.nb,
-                resource,
-                object_id,
-                obj,
-                field,
-                force_refresh=True,
-            )
-            normalized = normalize_compare_value(current)
-
-            if refreshed_ok:
-                with self._live_field_cache_lock:
-                    cached = self._live_field_cache.get(cache_key, _MISSING)
-                    if cached is not _MISSING:
-                        return cached
-                    self._live_field_cache[cache_key] = normalized
-
-            return normalized
+        return normalized
 
     def _store_live_field(
         self,
@@ -302,8 +316,21 @@ class PrerequisiteRunner:
             return
         cache_key = (resource, object_id, field)
         with self._live_field_key_lock(cache_key):
-            with self._live_field_cache_lock:
-                self._live_field_cache[cache_key] = normalize_compare_value(value)
+            self._store_live_field_unlocked(resource, object_id, field, value)
+
+    def _store_live_field_unlocked(
+        self,
+        resource: str,
+        object_id: int | None,
+        field: str,
+        value: Any,
+    ) -> None:
+        """Persist a canonical field value while the per-key lock is already held."""
+        if object_id is None:
+            return
+        cache_key = (resource, object_id, field)
+        with self._live_field_cache_lock:
+            self._live_field_cache[cache_key] = normalize_compare_value(value)
 
     @contextmanager
     def _live_field_key_lock(self, cache_key: tuple[str, int, str]):
@@ -814,7 +841,7 @@ class PrerequisiteRunner:
             normalized_schema = normalize_compare_value(schema)
             cache_key = ("dcim.module_type_profiles", profile_id, "schema")
             with self._live_field_key_lock(cache_key):
-                existing_schema = self._load_live_field(
+                existing_schema = self._load_live_field_unlocked(
                     "dcim.module_type_profiles",
                     profile_id,
                     obj,
@@ -824,7 +851,7 @@ class PrerequisiteRunner:
                     return profile_id
                 try:
                     self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
-                    self._store_live_field(
+                    self._store_live_field_unlocked(
                         "dcim.module_type_profiles",
                         profile_id,
                         "schema",
@@ -884,7 +911,7 @@ class PrerequisiteRunner:
                 normalized_attrs = normalize_compare_value(clean_attrs)
                 cache_key = ("dcim.module_types", module_type_id, "attributes")
                 with self._live_field_key_lock(cache_key):
-                    existing_attrs = self._load_live_field(
+                    existing_attrs = self._load_live_field_unlocked(
                         "dcim.module_types",
                         module_type_id,
                         obj,
@@ -896,7 +923,7 @@ class PrerequisiteRunner:
                         self.nb.update(
                             "dcim.module_types", module_type_id, {"attributes": clean_attrs}
                         )
-                        self._store_live_field(
+                        self._store_live_field_unlocked(
                             "dcim.module_types",
                             module_type_id,
                             "attributes",
