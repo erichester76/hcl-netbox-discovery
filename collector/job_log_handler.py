@@ -49,9 +49,6 @@ class JobLogHandler(logging.Handler):
     level before they ever reach any handler.
 
     Records are additionally filtered to:
-    * Only include log entries whose logger name starts with ``collector``
-      (i.e. originating from the collector package, not from Flask, Redis,
-      werkzeug, or any other third-party library running in the same process).
     * Only include log entries whose execution context carries a
       ``current_job_id`` that matches this handler's ``job_id``.  This
       ensures that when multiple mapping jobs run concurrently each job's
@@ -74,9 +71,6 @@ class JobLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         # Skip records from execution contexts belonging to a different job.
         if _current_job_id.get() != self.job_id:
-            return
-        # Skip records that do not originate from the collector package.
-        if not (record.name == "collector" or record.name.startswith("collector.")):
             return
         try:
             msg = self.format(record)
