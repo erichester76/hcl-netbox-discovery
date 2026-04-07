@@ -343,10 +343,10 @@ When multiple override keys are lists, iteration is zip-style: the shortest list
 
 For sources where every endpoint shares the same credentials, keep the shared
 username/password in the `source {}` block and iterate only the URL/host
-variable. For example, VMware can iterate `VCENTER_URL` while continuing to
-read `VCENTER_USER` and `VCENTER_PASS` from the environment once, and
-XClarity can iterate `XCLARITY_HOST` while keeping `XCLARITY_USER` and
-`XCLARITY_PASS` shared.
+variable. For example, VMware can iterate `VCENTER_URL` while keeping
+`VCENTER_USER` and `VCENTER_PASS` in the `source {}` block, and XClarity
+can iterate `XCLARITY_HOST` while keeping `XCLARITY_USER` and
+`XCLARITY_PASS` in the `source {}` block.
 
 ---
 
