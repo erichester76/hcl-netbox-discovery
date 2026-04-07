@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS config_settings (
 # overwritten.  Add new rows here when new environment variables are introduced.
 # ---------------------------------------------------------------------------
 _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
-    # --- Web UI startup settings are env-only and intentionally not seeded here ---
+    # --- Web UI startup settings are env-only except for DB-backed API auth ---
     ('WEB_PORT', '5000', 'TCP port the web UI listens on (default: 5000)', 'Web UI'),
     ('WEB_HOST', '0.0.0.0', 'Bind address for the web UI (default: 0.0.0.0)', 'Web UI'),
     ('WEB_SECRET_KEY', 'change-me-in-production', 'Secret key for Flask sessions \u2013 change this in production!', 'Web UI'),

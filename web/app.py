@@ -17,7 +17,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from flask import Flask, abort, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash
 
 # Ensure the project root is on sys.path so that local packages are importable.
@@ -93,7 +93,6 @@ def create_app() -> Flask:
         if not _auth_enabled():
             return None
         if _is_api_request() and _api_token_matches_request():
-            g.api_authenticated = True
             return None
         is_auth_exempt = _is_auth_exempt(request.endpoint)
         if not is_auth_exempt and not _is_authenticated():
