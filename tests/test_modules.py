@@ -351,7 +351,7 @@ class TestXclarityModulesHcl:
             dry_run=False,
         )
         expr = self._get_module_attr_expr(profile, attr_name)
-        return Resolver(ctx).evaluate(expr)
+        return Resolver(ctx).evaluate_strict(expr, label=f"{profile}.{attr_name}")
 
     def _eval_disk_type(self, source_obj):
         return self._eval_module_attr("Hard disk", "type", source_obj)
@@ -392,21 +392,61 @@ class TestXclarityModulesHcl:
         result = self._eval_module_attr("CPU", "speed", {"speed": 0, "maxSpeedMHZ": 0})
         assert result is None
 
+    def test_cpu_speed_missing_is_suppressed(self):
+        result = self._eval_module_attr("CPU", "speed", {})
+        assert result is None
+
+    def test_cpu_speed_positive_is_returned(self):
+        result = self._eval_module_attr("CPU", "speed", {"speed": 2.4, "maxSpeedMHZ": 2400})
+        assert result == 2400
+
     def test_memory_size_zero_is_suppressed(self):
         result = self._eval_module_attr("Memory", "size", {"capacity": 0})
         assert result is None
+
+    def test_memory_size_missing_is_suppressed(self):
+        result = self._eval_module_attr("Memory", "size", {})
+        assert result is None
+
+    def test_memory_size_positive_is_returned(self):
+        result = self._eval_module_attr("Memory", "size", {"capacity": 32768})
+        assert result == 32768
 
     def test_memory_data_rate_zero_is_suppressed(self):
         result = self._eval_module_attr("Memory", "data_rate", {"speed": 0})
         assert result is None
 
+    def test_memory_data_rate_missing_is_suppressed(self):
+        result = self._eval_module_attr("Memory", "data_rate", {})
+        assert result is None
+
+    def test_memory_data_rate_positive_is_returned(self):
+        result = self._eval_module_attr("Memory", "data_rate", {"speed": 3200})
+        assert result == 3200
+
     def test_hard_disk_size_zero_is_suppressed(self):
         result = self._eval_module_attr("Hard disk", "size", {"capacity": 0})
         assert result is None
 
+    def test_hard_disk_size_missing_is_suppressed(self):
+        result = self._eval_module_attr("Hard disk", "size", {})
+        assert result is None
+
+    def test_hard_disk_size_positive_is_returned(self):
+        result = self._eval_module_attr("Hard disk", "size", {"capacity": 1073741824})
+        assert result == 1
+
     def test_hard_disk_speed_zero_is_suppressed(self):
         result = self._eval_module_attr("Hard disk", "speed", {"rpm": 0})
         assert result is None
+
+    def test_hard_disk_speed_missing_is_suppressed(self):
+        result = self._eval_module_attr("Hard disk", "speed", {})
+        assert result is None
+
+    def test_hard_disk_speed_positive_is_returned(self):
+        result = self._eval_module_attr("Hard disk", "speed", {"rpm": 7200})
+        assert result == 7200
 
 
 # ---------------------------------------------------------------------------
