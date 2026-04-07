@@ -92,8 +92,12 @@ def create_app() -> Flask:
     def require_web_auth() -> Any | None:
         if not _auth_enabled():
             return None
+        if _is_api_request() and _api_token_matches_request():
+            return None
         is_auth_exempt = _is_auth_exempt(request.endpoint)
         if not is_auth_exempt and not _is_authenticated():
+            if _is_api_request():
+                return jsonify({"error": "authentication required"}), 401
             return redirect(url_for("login", next=_safe_next_target(request.full_path)))
         if request.method == "POST":
             _validate_csrf()
@@ -399,6 +403,10 @@ def _configured_password_hash() -> str:
     return os.environ.get("WEB_PASSWORD_HASH", "").strip()
 
 
+def _configured_api_token() -> str:
+    return get_config("WEB_API_TOKEN", "").strip()
+
+
 def _auth_configuration_error() -> str | None:
     if not _auth_enabled():
         return None
@@ -429,8 +437,25 @@ def _is_authenticated() -> bool:
     return bool(session.get("authenticated"))
 
 
+def _is_api_request() -> bool:
+    return request.path.startswith("/api/")
+
+
 def _is_auth_exempt(endpoint: str | None) -> bool:
     return endpoint in {"login", "static"}
+
+
+def _request_api_token() -> str:
+    auth_header = request.headers.get("Authorization", "").strip()
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return request.headers.get("X-API-Key", "").strip()
+
+
+def _api_token_matches_request() -> bool:
+    expected_token = _configured_api_token()
+    supplied_token = _request_api_token()
+    return bool(expected_token and supplied_token) and hmac.compare_digest(supplied_token, expected_token)
 
 
 def _safe_next_target(target: str) -> str:
