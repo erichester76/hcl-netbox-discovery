@@ -1760,7 +1760,6 @@ class Engine:
                         # Set primary IPv4 or IPv6 on parent object based on address version
                         if (
                             ip_cfg.primary_if == "first"
-                            and first_for_iface
                             and nb_ip is not None
                             and parent_nb_obj is not None
                             and not ip_ctx.dry_run

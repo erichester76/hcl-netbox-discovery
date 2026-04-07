@@ -14,9 +14,20 @@ Covers:
 from __future__ import annotations
 
 import ipaddress
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
+
+from collector.config import (
+    CollectorOptions,
+    FieldConfig,
+    InterfaceConfig,
+    IpAddressConfig,
+    ObjectConfig,
+)
+from collector.context import RunContext
+from collector.engine import Engine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,7 +85,6 @@ class TestPrimaryIpAssignment:
         address: str,
         dry_run: bool = False,
         primary_if: str = "first",
-        first_for_iface: bool = True,
         nb_ip_id: int = 10,
         parent_obj_id: int = 99,
         nb_resource: str = "virtualization.virtual_machines",
@@ -97,7 +107,6 @@ class TestPrimaryIpAssignment:
         # Replicate the exact logic block from engine.py
         if (
             primary_if == "first"
-            and first_for_iface
             and nb_ip is not None
             and parent_nb_obj is not None
             and not ip_ctx.dry_run
@@ -192,13 +201,6 @@ class TestPrimaryIpAssignment:
         assert len(calls) == 0
         assert ip4_set is False
 
-    def test_not_first_for_iface_skips_assignment(self):
-        calls, ip4_set, ip6_set = self._run_primary_ip_logic(
-            "10.0.0.1/24", first_for_iface=False
-        )
-        assert len(calls) == 0
-        assert ip4_set is False
-
     def test_ipv4_without_prefix_length_sets_primary(self):
         calls, ip4_set, ip6_set = self._run_primary_ip_logic("10.1.2.3")
         assert ip4_set is True
@@ -206,3 +208,76 @@ class TestPrimaryIpAssignment:
         assert calls[0] == call(
             "virtualization.virtual_machines", 99, {"primary_ip4": 10}
         )
+
+    def test_dual_stack_interface_sets_both_primary_ip_families(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="vm",
+            source_collection="vms",
+            netbox_resource="virtualization.virtual_machines",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[FieldConfig(name="name", value="source('name')")],
+                    ip_addresses=[
+                        IpAddressConfig(
+                            source_items="_ips",
+                            primary_if="first",
+                            fields=[FieldConfig(name="address", value="source('address')")],
+                        )
+                    ],
+                )
+            ],
+        )
+        ctx = RunContext(
+            nb=MagicMock(),
+            source_adapter=None,
+            collector_opts=CollectorOptions(
+                max_workers=1,
+                dry_run=False,
+                sync_tag="",
+                regex_dir="/tmp/regex",
+            ),
+            regex_dir="/tmp/regex",
+            prereqs={},
+            source_obj={
+                "_interfaces": [
+                    {
+                        "name": "nic0",
+                        "_ips": [
+                            {"address": "2001:db8::1/64"},
+                            {"address": "10.0.0.10/24"},
+                        ],
+                    }
+                ]
+            },
+            parent_nb_obj=None,
+            dry_run=False,
+        )
+        parent_nb_obj = SimpleNamespace(id=99)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(engine, "_prepare_primary_ip_reassignment", lambda *args, **kwargs: None)
+            mp.setattr(
+                engine,
+                "_upsert",
+                MagicMock(
+                    side_effect=[
+                        SimpleNamespace(id=501),
+                        SimpleNamespace(id=601),
+                        SimpleNamespace(id=602),
+                    ]
+                ),
+            )
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        assert call(
+            "virtualization.virtual_machines",
+            99,
+            {"primary_ip6": 601},
+        ) in ctx.nb.update.call_args_list
+        assert call(
+            "virtualization.virtual_machines",
+            99,
+            {"primary_ip4": 602},
+        ) in ctx.nb.update.call_args_list
