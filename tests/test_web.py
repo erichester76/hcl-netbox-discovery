@@ -345,6 +345,45 @@ def test_api_running_jobs_returns_active_jobs(app):
     assert data["count"] == 2
 
 
+def test_api_job_artifact_returns_persisted_artifact(app):
+    artifact = {
+        "job_id": 999,
+        "status": "success",
+        "summary": {"devices": {"processed": 2}},
+    }
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True, artifact=artifact)
+
+    resp = app.get(f"/api/jobs/{job_id}/artifact")
+    assert resp.status_code == 200
+    assert resp.get_json() == {
+        "job_id": job_id,
+        "status": "success",
+        "artifact": artifact,
+    }
+
+
+def test_api_job_artifact_returns_null_when_missing(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get(f"/api/jobs/{job_id}/artifact")
+    assert resp.status_code == 200
+    assert resp.get_json() == {
+        "job_id": job_id,
+        "status": "success",
+        "artifact": None,
+    }
+
+
+def test_api_job_artifact_404(app):
+    resp = app.get("/api/jobs/99999/artifact")
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "job not found"}
+
+
 # ---------------------------------------------------------------------------
 # Cache status page
 # ---------------------------------------------------------------------------

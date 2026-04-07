@@ -182,6 +182,7 @@ The web monitor provides a browser-based interface to:
 - **View running jobs** in real time (logs stream automatically via polling)
 - **Browse previous job logs** with colour-coded log levels
 - **Inspect sync summaries** (processed / created / updated / skipped / errored per object type, including `partial` runs)
+- **Fetch persisted job artifacts as JSON** for automation or remote triage
 - **Queue new sync runs** by selecting an HCL mapping file with optional dry-run and debug-log capture flags
 - **Manage cron schedules** for unattended runs
 - **Edit configuration settings** stored in the shared SQLite database
