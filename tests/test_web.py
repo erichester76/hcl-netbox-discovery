@@ -345,6 +345,44 @@ def test_api_running_jobs_returns_active_jobs(app):
     assert data["count"] == 2
 
 
+def test_api_jobs_returns_recent_jobs(app):
+    first_id = create_job("mappings/first.hcl")
+    second_id = create_job("mappings/second.hcl")
+
+    resp = app.get("/api/jobs")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] >= 2
+    assert [job["id"] for job in data["jobs"][:2]] == [second_id, first_id]
+
+
+def test_api_jobs_supports_after_id_and_hcl_file_filter(app):
+    skipped_id = create_job("mappings/skip.hcl")
+    matching_id = create_job("mappings/azure.hcl")
+
+    resp = app.get(f"/api/jobs?after_id={skipped_id}&hcl_file=mappings/azure.hcl")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 1
+    assert [job["id"] for job in data["jobs"]] == [matching_id]
+    assert data["jobs"][0]["hcl_file"] == "mappings/azure.hcl"
+
+
+def test_api_jobs_supports_status_and_limit_filters(app):
+    create_job("mappings/queued.hcl")
+    running_id = create_job("mappings/running.hcl")
+    done_id = create_job("mappings/done.hcl")
+    start_job(running_id)
+    start_job(done_id)
+    finish_job(done_id, success=True)
+
+    resp = app.get("/api/jobs?status=running&limit=1")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["count"] == 1
+    assert [job["id"] for job in data["jobs"]] == [running_id]
+
+
 def test_api_job_artifact_returns_persisted_artifact(app):
     artifact = {
         "job_id": 999,

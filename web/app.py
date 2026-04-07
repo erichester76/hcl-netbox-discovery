@@ -33,6 +33,7 @@ from collector.db import (  # noqa: E402
     get_job,
     get_job_logs,
     get_jobs,
+    get_jobs_filtered,
     get_running_jobs,
     get_schedule,
     get_schedules,
@@ -177,6 +178,24 @@ def create_app() -> Flask:
     def api_running_jobs():
         """Return currently queued/running jobs as JSON (used for dashboard polling)."""
         jobs = get_running_jobs()
+        return jsonify({"jobs": jobs, "count": len(jobs)})
+
+    @app.route("/api/jobs")
+    def api_jobs():
+        """Return recent jobs as JSON for polling completed runs."""
+        after_id = max(request.args.get("after_id", 0, type=int), 0)
+        limit = request.args.get("limit", 100, type=int)
+        if limit <= 0:
+            limit = 100
+        limit = min(limit, 500)
+        status = (request.args.get("status", "") or "").strip() or None
+        hcl_file = (request.args.get("hcl_file", "") or "").strip() or None
+        jobs = get_jobs_filtered(
+            limit=limit,
+            after_id=after_id,
+            status=status,
+            hcl_file=hcl_file,
+        )
         return jsonify({"jobs": jobs, "count": len(jobs)})
 
     @app.route("/api/jobs/<int:job_id>/artifact")

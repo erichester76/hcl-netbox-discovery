@@ -190,6 +190,14 @@ The web monitor provides a browser-based interface to:
 
 The web UI does not execute collectors in-process. It creates queued jobs in the shared SQLite database, and the scheduler loop in `main.py --run-scheduler` picks them up for execution.
 
+For automation, poll recent jobs and then fetch the persisted artifact for any
+newly completed run:
+
+```text
+GET /api/jobs?after_id=<last_seen_id>&hcl_file=mappings/azure.hcl
+GET /api/jobs/<id>/artifact
+```
+
 ### Starting the web server
 
 ```bash

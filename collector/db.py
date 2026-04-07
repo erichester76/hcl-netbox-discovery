@@ -395,6 +395,32 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     return [_row_to_job(r) for r in rows]
 
 
+def get_jobs_filtered(
+    *,
+    limit: int = 100,
+    after_id: int = 0,
+    status: str | None = None,
+    hcl_file: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return filtered jobs, newest first."""
+    clauses = ["id > ?"]
+    params: list[Any] = [after_id]
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    if hcl_file is not None:
+        clauses.append("hcl_file = ?")
+        params.append(hcl_file)
+    params.append(limit)
+    query = (
+        "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+        f"FROM jobs WHERE {' AND '.join(clauses)} ORDER BY id DESC LIMIT ?"
+    )
+    with _conn() as con:
+        rows = con.execute(query, tuple(params)).fetchall()
+    return [_row_to_job(r) for r in rows]
+
+
 def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
