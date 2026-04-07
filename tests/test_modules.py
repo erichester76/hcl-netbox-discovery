@@ -724,6 +724,93 @@ class TestEnsureModuleType:
             (("dcim.module_types",), {"id": 50}),
         ]
 
+    def test_attributes_patch_skipped_when_refreshed_record_serializes_to_match(self):
+        class SerializableValue:
+            def __init__(self, value):
+                self._value = value
+
+            def serialize(self):
+                return self._value
+
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50},
+        ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": SerializableValue({"speed": 2.5, "cores": 16})},
+        ]
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        module_type_updates = [
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
+        ]
+        assert module_type_updates == []
+
+    def test_live_field_refresh_is_cached_per_run(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99},
+            {"id": 50},
+            {"id": 99},
+            {"id": 50},
+        ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+
+        args = {
+            "model": "Intel Xeon Gold 6240",
+            "profile": "CPU",
+            "attributes": {"cores": 16, "speed": 2.5},
+        }
+        assert runner._ensure_module_type(args, dry_run=False) == 50
+        assert runner._ensure_module_type(args, dry_run=False) == 50
+
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
+        nb.update.assert_not_called()
+
+    def test_failed_refresh_fallback_is_not_cached(self):
+        nb = MagicMock()
+        nb.get.side_effect = [
+            Exception("temporary refresh failure"),
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+
+        first = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+        second = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert first is None
+        assert second == {"cores": 16, "speed": 2.5}
+        assert nb.get.call_count == 2
+
     def test_load_current_field_bypasses_cache_when_supported(self):
         calls: list[tuple[str, bool, int]] = []
 
@@ -881,6 +968,28 @@ class TestEnsureModuleTypeProfileSchema:
         assert result == 10
         nb.update.assert_not_called()
         nb.get.assert_called_once_with("dcim.module_type_profiles", id=10)
+
+    def test_schema_update_skipped_when_refreshed_record_serializes_to_match(self):
+        class SerializableValue:
+            def __init__(self, value):
+                self._value = value
+
+            def serialize(self):
+                return self._value
+
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+        nb.get.return_value = {"id": 10, "schema": SerializableValue(schema)}
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+
+        assert result == 10
+        nb.update.assert_not_called()
 
     def test_schema_auto_generated_from_attribute_names(self):
         nb = MagicMock()

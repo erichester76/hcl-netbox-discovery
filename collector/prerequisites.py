@@ -33,6 +33,7 @@ from itertools import count
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,59 @@ def extract_field(obj: Any, field: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(field)
     return getattr(obj, field, None)
+
+
+def normalize_compare_value(value: Any) -> Any:
+    """Normalize NetBox-returned values into plain Python structures.
+
+    NetBox / pynetbox responses for JSON-like fields may arrive as wrapper
+    objects, ordered mappings, or nested record objects. Convert those into a
+    stable structure before comparing them with the desired payload.
+    """
+    if value is None:
+        return None
+
+    serializer = getattr(value, "serialize", None)
+    if callable(serializer):
+        try:
+            value = serializer()
+        except Exception:
+            pass
+
+    if isinstance(value, dict):
+        return {
+            key: normalize_compare_value(val)
+            for key, val in sorted(value.items())
+            if val is not None
+        }
+
+    items = getattr(value, "items", None)
+    if callable(items):
+        try:
+            return {
+                key: normalize_compare_value(val)
+                for key, val in sorted(items())
+                if val is not None
+            }
+        except Exception:
+            pass
+
+    if isinstance(value, (list, tuple)):
+        normalized = [normalize_compare_value(item) for item in value]
+        if all(
+            isinstance(item, dict)
+            and "name" in item
+            and "value" in item
+            for item in normalized
+        ):
+            return {
+                str(item["name"]): normalize_compare_value(item["value"])
+                for item in normalized
+                if item.get("value") is not None
+            }
+        return normalized
+
+    return value
 
 
 def load_current_field(
@@ -110,6 +164,43 @@ def load_current_field(
     return extract_field(current, field)
 
 
+def load_current_field_with_status(
+    nb: Any,
+    resource: str,
+    object_id: int | None,
+    obj: Any,
+    field: str,
+    *,
+    force_refresh: bool = False,
+) -> tuple[Any, bool]:
+    """Return ``(value, refreshed_ok)`` for follow-up field comparisons."""
+    value = extract_field(obj, field)
+    if (value is not None and not force_refresh) or object_id is None:
+        return value, False
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value, False
+    try:
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
+    except Exception as exc:
+        logger.debug(
+            "Could not refresh %s id=%s for field %r comparison: %s",
+            resource,
+            object_id,
+            field,
+            exc,
+        )
+        return value, False
+    return extract_field(current, field), True
+
+
 class PrerequisiteArgumentError(ValueError):
     """Raised when a prerequisite method receives invalid required input."""
 
@@ -136,6 +227,8 @@ class PrerequisiteRunner:
         self._dry_run_id_counter = count(start=-1000000, step=-1)
         self._dry_run_ids: dict[tuple[str, Any], int] = {}
         self._dry_run_lock = threading.Lock()
+        self._live_field_cache: dict[tuple[str, int, str], Any] = {}
+        self._live_field_cache_lock = threading.Lock()
 
     @staticmethod
     def _freeze_dry_run_key(value: Any) -> Any:
@@ -157,6 +250,57 @@ class PrerequisiteRunner:
                 placeholder_id = next(self._dry_run_id_counter)
                 self._dry_run_ids[key] = placeholder_id
             return placeholder_id
+
+    def _load_live_field(
+        self,
+        resource: str,
+        object_id: int | None,
+        obj: Any,
+        field: str,
+    ) -> Any:
+        """Return a canonical field value with a per-run live refresh cache."""
+        if object_id is None:
+            return normalize_compare_value(extract_field(obj, field))
+
+        cache_key = (resource, object_id, field)
+        with self._live_field_cache_lock:
+            cached = self._live_field_cache.get(cache_key, _MISSING)
+        if cached is not _MISSING:
+            return cached
+
+        current, refreshed_ok = load_current_field_with_status(
+            self.nb,
+            resource,
+            object_id,
+            obj,
+            field,
+            force_refresh=True,
+        )
+        normalized = normalize_compare_value(current)
+
+        if refreshed_ok:
+            with self._live_field_cache_lock:
+                cached = self._live_field_cache.get(cache_key, _MISSING)
+                if cached is not _MISSING:
+                    return cached
+                self._live_field_cache[cache_key] = normalized
+
+        return normalized
+
+    def _store_live_field(
+        self,
+        resource: str,
+        object_id: int | None,
+        field: str,
+        value: Any,
+    ) -> None:
+        """Persist a canonical field value into the per-run live refresh cache."""
+        if object_id is None:
+            return
+        with self._live_field_cache_lock:
+            self._live_field_cache[(resource, object_id, field)] = normalize_compare_value(
+                value
+            )
 
     def run(
         self,
@@ -653,18 +797,23 @@ class PrerequisiteRunner:
         # present and differs from the current record.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
-            existing_schema = load_current_field(
-                self.nb,
+            normalized_schema = normalize_compare_value(schema)
+            existing_schema = self._load_live_field(
                 "dcim.module_type_profiles",
                 profile_id,
                 obj,
                 "schema",
-                force_refresh=True,
             )
-            if existing_schema == schema:
+            if existing_schema == normalized_schema:
                 return profile_id
             try:
                 self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
+                self._store_live_field(
+                    "dcim.module_type_profiles",
+                    profile_id,
+                    "schema",
+                    normalized_schema,
+                )
             except Exception as exc:
                 logger.debug(
                     "Could not set schema on module_type_profile %r: %s", name, exc
@@ -716,19 +865,24 @@ class PrerequisiteRunner:
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
-                existing_attrs = load_current_field(
-                    self.nb,
+                normalized_attrs = normalize_compare_value(clean_attrs)
+                existing_attrs = self._load_live_field(
                     "dcim.module_types",
                     module_type_id,
                     obj,
                     "attributes",
-                    force_refresh=True,
                 )
-                if existing_attrs == clean_attrs:
+                if existing_attrs == normalized_attrs:
                     return module_type_id
                 try:
                     self.nb.update(
                         "dcim.module_types", module_type_id, {"attributes": clean_attrs}
+                    )
+                    self._store_live_field(
+                        "dcim.module_types",
+                        module_type_id,
+                        "attributes",
+                        normalized_attrs,
                     )
                 except Exception as exc:
                     logger.debug(
