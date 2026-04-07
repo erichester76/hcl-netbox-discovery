@@ -13,6 +13,7 @@ import contextvars
 import inspect
 import ipaddress
 import logging
+import re as _re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 # does not specify a type expression or when the expression evaluates to a
 # falsy value.
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
+_VMWARE_SNAPSHOT_VMDK_RE = _re.compile(r"(?P<stem>[^/\\]+)-\d{6}(?P<ext>\.vmdk)\b")
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,12 @@ def _host_route_variant(address: Any) -> str | None:
     if iface.network.prefixlen == iface.max_prefixlen:
         return None
     return f"{iface.ip}/{iface.max_prefixlen}"
+
+
+def _normalize_vmware_virtual_disk_description(value: Any) -> Any:
+    if not isinstance(value, str) or not value:
+        return value
+    return _VMWARE_SNAPSHOT_VMDK_RE.sub(r"\g<stem>\g<ext>", value)
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +547,11 @@ class Engine:
         lookup_fields: list[str],
         field_configs: list[FieldConfig] | None = None,
     ) -> tuple[Any, str, dict[str, Any]]:
+        if resource == "virtualization.virtual_disks" and "description" in payload:
+            payload = dict(payload)
+            payload["description"] = _normalize_vmware_virtual_disk_description(
+                payload.get("description")
+            )
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if filters and field_configs:
             existing = ctx.nb.get(resource, **filters)
@@ -682,6 +695,11 @@ class Engine:
         lookup_fields: list[str],
         field_configs: list[FieldConfig] | None = None,
     ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
+        if resource == "virtualization.virtual_disks" and "description" in payload:
+            payload = dict(payload)
+            payload["description"] = _normalize_vmware_virtual_disk_description(
+                payload.get("description")
+            )
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
