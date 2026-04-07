@@ -366,8 +366,8 @@ def finish_job(
         status = "partial"
     else:
         status = "success"
-    summary_json = json.dumps(summary) if summary else None
-    artifact_json = json.dumps(artifact) if artifact else None
+    summary_json = json.dumps(summary) if summary is not None else None
+    artifact_json = json.dumps(artifact) if artifact is not None else None
     with _conn() as con:
         con.execute(
             "UPDATE jobs SET status=?, finished_at=?, summary=?, artifact_json=? WHERE id=?",

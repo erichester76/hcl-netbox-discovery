@@ -130,6 +130,7 @@ Tracks every sync execution, whether started from the CLI or the web UI.
 CREATE TABLE jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     hcl_file    TEXT    NOT NULL,
+    run_token   TEXT,
     status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | partial | failed
     dry_run     INTEGER NOT NULL DEFAULT 0,
     debug_mode  INTEGER NOT NULL DEFAULT 0,
