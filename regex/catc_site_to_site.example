@@ -2,7 +2,7 @@
 (?i)^ITC$,Clemson University Information Technology Center
 (?i)^UCSD$,University of California San Diego
 (?i)^Poole$,Poole Agricultural Center
-(?i)^/WFIC \(Watt Family Innovation Center\)$,Watt Family Innovation Center
+(?i)^WFIC \(Watt Family Innovation Center\)$,Watt Family Innovation Center
 (?i)(Brackett)$,\1 Hall
 (?i)(Benet)$,\1 Hall
 (?i)Barre$,Barre Hall

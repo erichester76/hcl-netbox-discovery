@@ -152,10 +152,15 @@ def _hierarchy_depth(hierarchy: str) -> int:
 
 
 def _normalize_hierarchy_label(value: str) -> str:
-    """Return a title-cased hierarchy label, matching the legacy CATC logic."""
+    """Normalize hierarchy labels while preserving already mixed-case values."""
     if not value:
         return ""
-    return value.title()
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    if normalized.islower() or normalized.isupper():
+        return normalized.title()
+    return normalized
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
