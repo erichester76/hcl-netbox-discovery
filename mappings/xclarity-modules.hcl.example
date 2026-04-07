@@ -360,7 +360,7 @@ object "node" {
     # Module writes are keyed by device + bay_name, so dedupe on the same
     # stable bay identity to avoid conflicting serial/model payloads fighting
     # over one NetBox module row within the same run.
-    dedupe_by    = "str(coalesce('name', 'description'))"
+    dedupe_by    = "coalesce('name', 'description')"
 
     field "bay_name" {
       value = "str(coalesce('name', 'description'))"
