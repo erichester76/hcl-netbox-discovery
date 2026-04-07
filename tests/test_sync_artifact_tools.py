@@ -170,13 +170,11 @@ class TestCaptureTeeStream:
     def test_tee_stream_writes_only_to_file_when_mirroring_disabled(self, tmp_path):
         stream = io.StringIO("line 1\nline 2\n")
         output_path = tmp_path / "stdout.log"
-        mirror = io.StringIO()
 
         with output_path.open("w", encoding="utf-8") as output_file:
             capture_sync_job._tee_stream(stream, output_file, None)
 
         assert output_path.read_text(encoding="utf-8") == "line 1\nline 2\n"
-        assert mirror.getvalue() == ""
 
     def test_tee_stream_writes_to_file_and_mirror_when_enabled(self, tmp_path):
         stream = io.StringIO("line 1\nline 2\n")
