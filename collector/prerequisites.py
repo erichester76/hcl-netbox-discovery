@@ -29,6 +29,7 @@ import inspect
 import logging
 import re
 import threading
+from contextlib import contextmanager
 from itertools import count
 from typing import Any
 
@@ -229,6 +230,7 @@ class PrerequisiteRunner:
         self._dry_run_lock = threading.Lock()
         self._live_field_cache: dict[tuple[str, int, str], Any] = {}
         self._live_field_cache_lock = threading.Lock()
+        self._live_field_key_locks: dict[tuple[str, int, str], threading.RLock] = {}
 
     @staticmethod
     def _freeze_dry_run_key(value: Any) -> Any:
@@ -263,29 +265,30 @@ class PrerequisiteRunner:
             return normalize_compare_value(extract_field(obj, field))
 
         cache_key = (resource, object_id, field)
-        with self._live_field_cache_lock:
-            cached = self._live_field_cache.get(cache_key, _MISSING)
-        if cached is not _MISSING:
-            return cached
-
-        current, refreshed_ok = load_current_field_with_status(
-            self.nb,
-            resource,
-            object_id,
-            obj,
-            field,
-            force_refresh=True,
-        )
-        normalized = normalize_compare_value(current)
-
-        if refreshed_ok:
+        with self._live_field_key_lock(cache_key):
             with self._live_field_cache_lock:
                 cached = self._live_field_cache.get(cache_key, _MISSING)
-                if cached is not _MISSING:
-                    return cached
-                self._live_field_cache[cache_key] = normalized
+            if cached is not _MISSING:
+                return cached
 
-        return normalized
+            current, refreshed_ok = load_current_field_with_status(
+                self.nb,
+                resource,
+                object_id,
+                obj,
+                field,
+                force_refresh=True,
+            )
+            normalized = normalize_compare_value(current)
+
+            if refreshed_ok:
+                with self._live_field_cache_lock:
+                    cached = self._live_field_cache.get(cache_key, _MISSING)
+                    if cached is not _MISSING:
+                        return cached
+                    self._live_field_cache[cache_key] = normalized
+
+            return normalized
 
     def _store_live_field(
         self,
@@ -297,10 +300,21 @@ class PrerequisiteRunner:
         """Persist a canonical field value into the per-run live refresh cache."""
         if object_id is None:
             return
+        cache_key = (resource, object_id, field)
+        with self._live_field_key_lock(cache_key):
+            with self._live_field_cache_lock:
+                self._live_field_cache[cache_key] = normalize_compare_value(value)
+
+    @contextmanager
+    def _live_field_key_lock(self, cache_key: tuple[str, int, str]):
+        """Serialize live refresh / compare / write work for one field key."""
         with self._live_field_cache_lock:
-            self._live_field_cache[(resource, object_id, field)] = normalize_compare_value(
-                value
-            )
+            key_lock = self._live_field_key_locks.get(cache_key)
+            if key_lock is None:
+                key_lock = threading.RLock()
+                self._live_field_key_locks[cache_key] = key_lock
+        with key_lock:
+            yield
 
     def run(
         self,
@@ -798,26 +812,28 @@ class PrerequisiteRunner:
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
             normalized_schema = normalize_compare_value(schema)
-            existing_schema = self._load_live_field(
-                "dcim.module_type_profiles",
-                profile_id,
-                obj,
-                "schema",
-            )
-            if existing_schema == normalized_schema:
-                return profile_id
-            try:
-                self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
-                self._store_live_field(
+            cache_key = ("dcim.module_type_profiles", profile_id, "schema")
+            with self._live_field_key_lock(cache_key):
+                existing_schema = self._load_live_field(
                     "dcim.module_type_profiles",
                     profile_id,
+                    obj,
                     "schema",
-                    normalized_schema,
                 )
-            except Exception as exc:
-                logger.debug(
-                    "Could not set schema on module_type_profile %r: %s", name, exc
-                )
+                if existing_schema == normalized_schema:
+                    return profile_id
+                try:
+                    self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
+                    self._store_live_field(
+                        "dcim.module_type_profiles",
+                        profile_id,
+                        "schema",
+                        normalized_schema,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Could not set schema on module_type_profile %r: %s", name, exc
+                    )
         return profile_id
 
     def _ensure_module_type(self, args: dict, dry_run: bool) -> int | None:
@@ -866,27 +882,29 @@ class PrerequisiteRunner:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
                 normalized_attrs = normalize_compare_value(clean_attrs)
-                existing_attrs = self._load_live_field(
-                    "dcim.module_types",
-                    module_type_id,
-                    obj,
-                    "attributes",
-                )
-                if existing_attrs == normalized_attrs:
-                    return module_type_id
-                try:
-                    self.nb.update(
-                        "dcim.module_types", module_type_id, {"attributes": clean_attrs}
-                    )
-                    self._store_live_field(
+                cache_key = ("dcim.module_types", module_type_id, "attributes")
+                with self._live_field_key_lock(cache_key):
+                    existing_attrs = self._load_live_field(
                         "dcim.module_types",
                         module_type_id,
+                        obj,
                         "attributes",
-                        normalized_attrs,
                     )
-                except Exception as exc:
-                    logger.debug(
-                        "Could not set attributes on module_type %r: %s", model, exc
-                    )
+                    if existing_attrs == normalized_attrs:
+                        return module_type_id
+                    try:
+                        self.nb.update(
+                            "dcim.module_types", module_type_id, {"attributes": clean_attrs}
+                        )
+                        self._store_live_field(
+                            "dcim.module_types",
+                            module_type_id,
+                            "attributes",
+                            normalized_attrs,
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "Could not set attributes on module_type %r: %s", model, exc
+                        )
 
         return module_type_id
