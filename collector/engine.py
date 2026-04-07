@@ -14,8 +14,6 @@ import ipaddress
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from copy import deepcopy
-from itertools import count
 from typing import Any
 
 from deepdiff import DeepDiff
@@ -35,6 +33,7 @@ from .prerequisites import (
     PrerequisiteArgumentError,
     PrerequisiteRunner,
     extract_id,
+    make_dry_run_preview,
     slugify,
 )
 
@@ -249,10 +248,6 @@ class AmbiguousDryRunLookupError(ValueError):
 
 class Engine:
     """Drive a full collector run from an HCL mapping file."""
-
-    def __init__(self) -> None:
-        self._dry_run_id_counter = count(start=-1, step=-1)
-        self._dry_run_id_lock = threading.Lock()
 
     @staticmethod
     def _nb_helper(ctx: RunContext, name: str) -> Any:
@@ -506,10 +501,6 @@ class Engine:
                 effective_payload.pop(field_cfg.name, None)
         return effective_payload
 
-    def _next_dry_run_id(self) -> int:
-        with self._dry_run_id_lock:
-            return next(self._dry_run_id_counter)
-
     def _dry_run_preview_object(
         self,
         ctx: RunContext,
@@ -527,10 +518,7 @@ class Engine:
         if existing_id is not None and existing is not None:
             return existing
 
-        preview = deepcopy(payload)
-        preview["id"] = self._next_dry_run_id()
-        preview["_dry_run_resource"] = resource
-        return preview
+        return make_dry_run_preview(resource, payload)
 
     @classmethod
     def _ambiguous_lookup_details(
@@ -1097,7 +1085,7 @@ class Engine:
                 return None
             if ctx.dry_run:
                 logger.debug("[DRY-RUN] FK lookup %s %s", field_cfg.resource, lookup)
-                return None
+                return make_dry_run_preview(field_cfg.resource, lookup)
             try:
                 if field_cfg.ensure:
                     obj = ctx.nb.upsert(

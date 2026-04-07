@@ -27,9 +27,15 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from copy import deepcopy
+from itertools import count
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_DRY_RUN_PREVIEW_COUNTER = count(start=-1, step=-1)
+_DRY_RUN_PREVIEW_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +68,15 @@ def extract_field(obj: Any, field: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(field)
     return getattr(obj, field, None)
+
+
+def make_dry_run_preview(resource: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a preview object that preserves dry-run identity without writing."""
+    preview = deepcopy(payload)
+    with _DRY_RUN_PREVIEW_LOCK:
+        preview["id"] = next(_DRY_RUN_PREVIEW_COUNTER)
+    preview["_dry_run_resource"] = resource
+    return preview
 
 
 class PrerequisiteArgumentError(ValueError):
@@ -109,7 +124,278 @@ class PrerequisiteRunner:
         if method is None:
             raise ValueError(f"Unknown prerequisite method: {prereq_cfg.method!r}")
 
-        return method(args, dry_run)
+        result = method(args, dry_run)
+        if dry_run and result is None:
+            preview_result = self._dry_run_preview_result(prereq_cfg.method, args)
+            if preview_result is not None:
+                return preview_result
+        return result
+
+    def _dry_run_preview_result(self, method_name: str, args: dict[str, Any]) -> Any:
+        """Preserve prerequisite identity for downstream dry-run lookups."""
+        if method_name == "ensure_manufacturer":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "dcim.manufacturers",
+                    {"name": name, "slug": slugify(name)},
+                )
+            return None
+
+        if method_name == "ensure_device_type":
+            model = args.get("model")
+            if not model:
+                return None
+            payload: dict[str, Any] = {"model": model, "slug": slugify(model)}
+            manufacturer_id = args.get("manufacturer")
+            if manufacturer_id is not None:
+                payload["manufacturer"] = manufacturer_id
+            if args.get("part_number"):
+                payload["part_number"] = args["part_number"]
+            return make_dry_run_preview("dcim.device_types", payload)
+
+        if method_name == "ensure_device_role":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "dcim.device_roles",
+                    {"name": name, "slug": slugify(name), "color": args.get("color", "9e9e9e")},
+                )
+            return None
+
+        if method_name == "ensure_site":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "dcim.sites",
+                    {"name": name, "slug": slugify(name)},
+                )
+            return None
+
+        if method_name == "ensure_location":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            site_id = args.get("site_id") or args.get("site")
+            if site_id is not None:
+                payload["site"] = site_id
+            return make_dry_run_preview("dcim.locations", payload)
+
+        if method_name == "ensure_rack":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name}
+            site_id = args.get("site_id") or args.get("site")
+            location_id = args.get("location_id") or args.get("location")
+            if site_id is not None:
+                payload["site"] = site_id
+            if location_id is not None:
+                payload["location"] = location_id
+            return make_dry_run_preview("dcim.racks", payload)
+
+        if method_name == "ensure_platform":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            manufacturer_id = args.get("manufacturer_id") or args.get("manufacturer")
+            if manufacturer_id is not None:
+                payload["manufacturer"] = manufacturer_id
+            return make_dry_run_preview("dcim.platforms", payload)
+
+        if method_name == "ensure_cluster_type":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "virtualization.cluster_types",
+                    {"name": name, "slug": slugify(name)},
+                )
+            return None
+
+        if method_name == "ensure_cluster_group":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "virtualization.cluster_groups",
+                    {"name": name, "slug": slugify(name)},
+                )
+            return None
+
+        if method_name == "ensure_cluster":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name}
+            for key in ("type", "group", "site"):
+                if args.get(key) is not None:
+                    payload[key] = args[key]
+            return make_dry_run_preview("virtualization.clusters", payload)
+
+        if method_name == "ensure_inventory_item_role":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "dcim.inventory_item_roles",
+                    {"name": name, "slug": slugify(name), "color": args.get("color", "9e9e9e")},
+                )
+            return None
+
+        if method_name == "resolve_placement":
+            result: dict[str, Any] = {
+                "site_id": None,
+                "location_id": None,
+                "rack_id": None,
+                "rack_position": None,
+            }
+            site_name = args.get("site")
+            location_name = args.get("location")
+            rack_name = args.get("rack")
+            position = args.get("position")
+
+            if site_name:
+                result["site_id"] = self._dry_run_preview_result(
+                    "ensure_site",
+                    {"name": site_name},
+                )
+
+            if location_name and result["site_id"] is not None:
+                result["location_id"] = self._dry_run_preview_result(
+                    "ensure_location",
+                    {"name": location_name, "site": result["site_id"]},
+                )
+
+            if rack_name and result["site_id"] is not None:
+                result["rack_id"] = self._dry_run_preview_result(
+                    "ensure_rack",
+                    {
+                        "name": rack_name,
+                        "site": result["site_id"],
+                        "location": result["location_id"],
+                    },
+                )
+
+            if position is not None and result["rack_id"] is not None:
+                try:
+                    pos_int = int(position)
+                    if pos_int > 0:
+                        result["rack_position"] = pos_int
+                except (TypeError, ValueError):
+                    result["rack_position"] = position
+            return result
+
+        if method_name == "ensure_tenant_group":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            if args.get("description"):
+                payload["description"] = args["description"]
+            return make_dry_run_preview("tenancy.tenant_groups", payload)
+
+        if method_name == "ensure_contact_group":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            if args.get("description"):
+                payload["description"] = args["description"]
+            return make_dry_run_preview("tenancy.contact_groups", payload)
+
+        if method_name == "ensure_region":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            if args.get("description"):
+                payload["description"] = args["description"]
+            return make_dry_run_preview("dcim.regions", payload)
+
+        if method_name == "ensure_vlan_group":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {
+                "name": name,
+                "slug": slugify(name),
+                "min_vid": args.get("min_vid", 1),
+                "max_vid": args.get("max_vid", 4094),
+            }
+            if args.get("description"):
+                payload["description"] = args["description"]
+            return make_dry_run_preview("ipam.vlan_groups", payload)
+
+        if method_name == "ensure_vrf":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name}
+            if args.get("rd"):
+                payload["rd"] = args["rd"]
+            if args.get("description"):
+                payload["description"] = args["description"]
+            return make_dry_run_preview("ipam.vrfs", payload)
+
+        if method_name == "ensure_tenant":
+            name = args.get("name")
+            if not name:
+                return None
+            payload: dict[str, Any] = {"name": name, "slug": slugify(name)}
+            if args.get("description"):
+                payload["description"] = args["description"]
+            if args.get("group") is not None:
+                payload["group"] = args["group"]
+            return make_dry_run_preview("tenancy.tenants", payload)
+
+        if method_name == "ensure_module_bay_template":
+            device_type_id = args.get("device_type")
+            name = args.get("name")
+            if device_type_id is None or not name:
+                return None
+            payload: dict[str, Any] = {"device_type": device_type_id, "name": name}
+            if args.get("position"):
+                payload["position"] = args["position"]
+            return make_dry_run_preview("dcim.module_bay_templates", payload)
+
+        if method_name == "ensure_module_bay":
+            device_id = args.get("device")
+            name = args.get("name")
+            if device_id is None or not name:
+                return None
+            payload: dict[str, Any] = {"device": device_id, "name": name}
+            if args.get("position"):
+                payload["position"] = args["position"]
+            return make_dry_run_preview("dcim.module_bays", payload)
+
+        if method_name == "ensure_module_type_profile":
+            name = args.get("name")
+            if name:
+                return make_dry_run_preview(
+                    "dcim.module_type_profiles",
+                    {"name": name, "slug": slugify(name)},
+                )
+            return None
+
+        if method_name == "ensure_module_type":
+            model = args.get("model")
+            if not model:
+                return None
+            payload: dict[str, Any] = {"model": model, "slug": slugify(model)}
+            manufacturer_id = args.get("manufacturer")
+            if manufacturer_id is not None:
+                payload["manufacturer"] = manufacturer_id
+            profile_name = args.get("profile")
+            if profile_name is not None:
+                profile_preview = self._dry_run_preview_result(
+                    "ensure_module_type_profile",
+                    {"name": profile_name},
+                )
+                if profile_preview is not None:
+                    payload["profile"] = profile_preview
+            return make_dry_run_preview("dcim.module_types", payload)
+
+        return None
 
     # ------------------------------------------------------------------
     # Individual methods
