@@ -843,6 +843,7 @@ class TestEnsureModuleTypeProfileSchema:
         nb.update.return_value = MagicMock(id=10)
         runner = self._make_runner(nb)
         schema = {"type": "object", "properties": {"cores": {}}}
+        nb.get.return_value = {"id": 10}
         runner._ensure_module_type_profile(
             {"name": "CPU", "schema": schema},
             dry_run=False,
