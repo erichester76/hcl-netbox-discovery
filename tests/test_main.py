@@ -113,6 +113,23 @@ def _fake_stat():
     return s
 
 
+def _wait_for_job_completion(job_id: int, db_module_ref, timeout: float = 5.0) -> None:
+    import time as _time  # noqa: PLC0415
+
+    deadline = _time.monotonic() + timeout
+    last_status = None
+    while _time.monotonic() < deadline:
+        job = db_module_ref.get_job(job_id)
+        last_status = None if job is None else job["status"]
+        if last_status not in {"queued", "running"}:
+            return
+        _time.sleep(0.05)
+    pytest.fail(
+        f"Timed out waiting for queued job {job_id} to finish; "
+        f"last status was {last_status!r}"
+    )
+
+
 def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     """main() must create a DB job row and mark it success for a good mapping."""
     hcl = tmp_path / "test.hcl"
@@ -429,10 +446,52 @@ def test_run_queued_job_debug_mode_captures_debug_logs(tmp_path, tmp_db):
     )
 
 
+def test_run_queued_job_debug_mode_captures_non_collector_debug_logs(tmp_path, tmp_db):
+    """debug_mode=True must persist DEBUG logs from non-collector loggers too."""
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "thirdparty-debug.hcl"
+    hcl.write_text("")
+
+    external_logger = logging.getLogger("tests.thirdparty.debug")
+    old_level = external_logger.level
+    old_propagate = external_logger.propagate
+    external_logger.setLevel(logging.DEBUG)
+    external_logger.propagate = True
+
+    def fake_run(*args, **kwargs):
+        external_logger.debug("third-party-debug-marker-67890")
+        return [_fake_stat()]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=True)
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _wait_for_job_completion(job_id, db_module)
+    finally:
+        patcher.stop()
+        external_logger.setLevel(old_level)
+        external_logger.propagate = old_propagate
+
+    logs = get_job_logs(job_id)
+    assert any(
+        log["level"] == "DEBUG"
+        and log["logger"] == "tests.thirdparty.debug"
+        and "third-party-debug-marker-67890" in log["message"]
+        for log in logs
+    ), "Non-collector DEBUG log record was not captured in job logs"
+
+
 def test_run_queued_job_non_debug_mode_drops_debug_logs(tmp_path, tmp_db):
     """When debug_mode=False, DEBUG records must NOT appear in job logs."""
-    import time as _time  # noqa: PLC0415
-
     import collector.db as db_module  # noqa: PLC0415
     from collector.db import get_job_logs  # noqa: PLC0415
 
@@ -463,7 +522,7 @@ def test_run_queued_job_non_debug_mode_drops_debug_logs(tmp_path, tmp_db):
     patcher.start()
     try:
         _check_and_run_queued_jobs()
-        _time.sleep(0.5)
+        _wait_for_job_completion(job_id, db_module)
     finally:
         patcher.stop()
 
@@ -472,10 +531,50 @@ def test_run_queued_job_non_debug_mode_drops_debug_logs(tmp_path, tmp_db):
     assert not debug_logs, "DEBUG log records must not appear when debug_mode=False"
 
 
+def test_run_queued_job_non_debug_mode_drops_non_collector_debug_logs(tmp_path, tmp_db):
+    """debug_mode=False must not persist DEBUG logs from non-collector loggers."""
+    import collector.db as db_module  # noqa: PLC0415
+    from collector.db import get_job_logs  # noqa: PLC0415
+
+    hcl = tmp_path / "thirdparty-nodebug.hcl"
+    hcl.write_text("")
+
+    external_logger = logging.getLogger("tests.thirdparty.nodebug")
+    old_level = external_logger.level
+    old_propagate = external_logger.propagate
+    external_logger.setLevel(logging.DEBUG)
+    external_logger.propagate = True
+
+    def fake_run(*args, **kwargs):
+        external_logger.debug("third-party-debug-should-not-appear")
+        return [_fake_stat()]
+
+    fake_engine = MagicMock()
+    fake_engine.run.side_effect = fake_run
+
+    job_id = db_module.create_job(str(hcl), debug_mode=False)
+
+    from main import _check_and_run_queued_jobs  # noqa: PLC0415
+
+    patcher = patch("collector.engine.Engine", return_value=fake_engine)
+    patcher.start()
+    try:
+        _check_and_run_queued_jobs()
+        _wait_for_job_completion(job_id, db_module)
+    finally:
+        patcher.stop()
+        external_logger.setLevel(old_level)
+        external_logger.propagate = old_propagate
+
+    logs = get_job_logs(job_id)
+    assert not any(
+        log["level"] == "DEBUG" and log["logger"] == "tests.thirdparty.nodebug"
+        for log in logs
+    ), "Non-collector DEBUG log records must not appear when debug_mode=False"
+
+
 def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     """After a debug_mode job, the root logger level must be restored."""
-    import time as _time  # noqa: PLC0415
-
     import collector.db as db_module  # noqa: PLC0415
 
     hcl = tmp_path / "restore.hcl"
@@ -495,7 +594,7 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
     patcher.start()
     try:
         _check_and_run_queued_jobs()
-        _time.sleep(0.5)
+        _wait_for_job_completion(db_module.get_jobs(limit=1)[0]["id"], db_module)
         assert root_logger.level == level_before, (
             "Root logger level was not restored after debug_mode job completed"
         )
