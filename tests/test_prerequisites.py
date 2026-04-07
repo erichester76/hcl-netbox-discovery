@@ -97,6 +97,38 @@ def test_require_text_arg_raises_specific_validation_type():
     with pytest.raises(PrerequisiteArgumentError, match="ensure_site"):
         runner._ensure_site({"name": "   "}, dry_run=True)
 
+
+class TestEnsureManufacturerCanonicalization:
+    """_ensure_manufacturer should be case-stable across sources."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_canonicalizes_name_before_create(self):
+        nb = MagicMock()
+        nb.get.return_value = None
+        nb.upsert.return_value = MagicMock(id=101)
+
+        runner = self._make_runner(nb)
+        result = runner._ensure_manufacturer({"name": "  CISCO   SYSTEMS  "}, dry_run=False)
+
+        assert result == 101
+        nb.get.assert_called_once_with("dcim.manufacturers", slug="cisco-systems")
+        payload = nb.upsert.call_args[0][1]
+        assert payload["name"] == "Cisco Systems"
+        assert payload["slug"] == "cisco-systems"
+
+    def test_reuses_existing_slug_without_upsert(self):
+        nb = MagicMock()
+        nb.get.return_value = MagicMock(id=55)
+
+        runner = self._make_runner(nb)
+        result = runner._ensure_manufacturer({"name": "cIsCo"}, dry_run=False)
+
+        assert result == 55
+        nb.get.assert_called_once_with("dcim.manufacturers", slug="cisco")
+        nb.upsert.assert_not_called()
+
     def test_passes_manufacturer_id_to_upsert(self):
         nb = MagicMock()
         platform_obj = MagicMock(id=10)

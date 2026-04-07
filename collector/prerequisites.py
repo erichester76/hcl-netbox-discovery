@@ -216,6 +216,16 @@ def require_text_arg(args: dict[str, Any], key: str, method_name: str) -> str:
     return str(value)
 
 
+def canonicalize_manufacturer_name(name: str) -> str:
+    """Return a stable display name for manufacturer strings.
+
+    Canonicalization is intentionally deterministic to prevent case-only
+    cross-source churn (for example ``"CISCO"`` vs ``"cisco"``).
+    """
+    normalized = " ".join(str(name).strip().split())
+    return normalized.lower().title()
+
+
 # ---------------------------------------------------------------------------
 # PrerequisiteRunner
 # ---------------------------------------------------------------------------
@@ -371,11 +381,16 @@ class PrerequisiteRunner:
     # ------------------------------------------------------------------
 
     def _ensure_manufacturer(self, args: dict, dry_run: bool) -> int | None:
-        name = require_text_arg(args, "name", "ensure_manufacturer")
+        raw_name = require_text_arg(args, "name", "ensure_manufacturer")
+        name = canonicalize_manufacturer_name(raw_name)
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_manufacturer name=%s", name)
             return None
+        existing = self.nb.get("dcim.manufacturers", slug=slug)
+        existing_id = extract_id(existing)
+        if isinstance(existing_id, int):
+            return existing_id
         obj = self.nb.upsert(
             "dcim.manufacturers",
             {"name": name, "slug": slug},
