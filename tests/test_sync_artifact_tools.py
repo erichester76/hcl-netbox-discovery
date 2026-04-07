@@ -152,3 +152,39 @@ class TestPullScriptStreamDrain:
 
         assert b"".join(chunks) == b"warning line 1\nwarning line 2\n"
         assert stream.closed is True
+
+
+class TestCaptureScriptArgs:
+    def test_capture_script_does_not_mirror_output_by_default(self):
+        args = capture_sync_job._parse_args(["mappings/vmware.hcl"])
+
+        assert args.mirror_output is False
+
+    def test_capture_script_can_enable_terminal_mirroring(self):
+        args = capture_sync_job._parse_args(["mappings/vmware.hcl", "--mirror-output"])
+
+        assert args.mirror_output is True
+
+
+class TestCaptureTeeStream:
+    def test_tee_stream_writes_only_to_file_when_mirroring_disabled(self, tmp_path):
+        stream = io.StringIO("line 1\nline 2\n")
+        output_path = tmp_path / "stdout.log"
+        mirror = io.StringIO()
+
+        with output_path.open("w", encoding="utf-8") as output_file:
+            capture_sync_job._tee_stream(stream, output_file, None)
+
+        assert output_path.read_text(encoding="utf-8") == "line 1\nline 2\n"
+        assert mirror.getvalue() == ""
+
+    def test_tee_stream_writes_to_file_and_mirror_when_enabled(self, tmp_path):
+        stream = io.StringIO("line 1\nline 2\n")
+        output_path = tmp_path / "stdout.log"
+        mirror = io.StringIO()
+
+        with output_path.open("w", encoding="utf-8") as output_file:
+            capture_sync_job._tee_stream(stream, output_file, mirror)
+
+        assert output_path.read_text(encoding="utf-8") == "line 1\nline 2\n"
+        assert mirror.getvalue() == "line 1\nline 2\n"
