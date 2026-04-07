@@ -320,16 +320,16 @@ class TestXclarityModulesHcl:
         names = {o.name for o in cfg.objects}
         assert {"node", "chassis", "switch", "storage"} <= names
 
-    def _get_disk_type_expr(self):
-        """Return the 'type' attribute expression from the Hard disk module block."""
+    def _get_module_attr_expr(self, profile: str, attr_name: str):
+        """Return an attribute expression from a module block in the example mapping."""
         cfg = load_config(self.HCL_PATH)
         node = next(o for o in cfg.objects if o.name == "node")
-        hd_mod = next(m for m in node.modules if m.profile == "Hard disk")
-        type_attr = next(a for a in hd_mod.attributes if a.name == "type")
-        return type_attr.value
+        mod = next(m for m in node.modules if m.profile == profile)
+        attr = next(a for a in mod.attributes if a.name == attr_name)
+        return attr.value
 
-    def _eval_disk_type(self, source_obj):
-        """Evaluate the Hard disk 'type' expression against a source object."""
+    def _eval_module_attr(self, profile: str, attr_name: str, source_obj):
+        """Evaluate a module attribute expression against a source object."""
         from collector.config import CollectorOptions
         from collector.context import RunContext
         from collector.field_resolvers import Resolver
@@ -350,8 +350,11 @@ class TestXclarityModulesHcl:
             parent_nb_obj=None,
             dry_run=False,
         )
-        expr = self._get_disk_type_expr()
+        expr = self._get_module_attr_expr(profile, attr_name)
         return Resolver(ctx).evaluate(expr)
+
+    def _eval_disk_type(self, source_obj):
+        return self._eval_module_attr("Hard disk", "type", source_obj)
 
     def test_hard_disk_type_hdd_from_media_type(self):
         """When mediaType is 'HDD', the type attribute should be 'HDD'."""
@@ -384,6 +387,26 @@ class TestXclarityModulesHcl:
         """Normalisation must be case-insensitive ('Rotational' → 'HDD')."""
         result = self._eval_disk_type({"type": "Rotational"})
         assert result == "HDD"
+
+    def test_cpu_speed_zero_is_suppressed(self):
+        result = self._eval_module_attr("CPU", "speed", {"speed": 0, "maxSpeedMHZ": 0})
+        assert result is None
+
+    def test_memory_size_zero_is_suppressed(self):
+        result = self._eval_module_attr("Memory", "size", {"capacity": 0})
+        assert result is None
+
+    def test_memory_data_rate_zero_is_suppressed(self):
+        result = self._eval_module_attr("Memory", "data_rate", {"speed": 0})
+        assert result is None
+
+    def test_hard_disk_size_zero_is_suppressed(self):
+        result = self._eval_module_attr("Hard disk", "size", {"capacity": 0})
+        assert result is None
+
+    def test_hard_disk_speed_zero_is_suppressed(self):
+        result = self._eval_module_attr("Hard disk", "speed", {"rpm": 0})
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
