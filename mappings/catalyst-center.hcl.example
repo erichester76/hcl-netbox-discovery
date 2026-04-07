@@ -90,8 +90,17 @@ object "device" {
 
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "when(source('site_name'), source('site_name'), 'Unknown')" }
+    args     = { name = "when(source('site_name'), regex_file(source('site_name'), 'catc_site_to_site'), 'Unknown')" }
     optional = false
+  }
+
+  prerequisite "location" {
+    method   = "ensure_location"
+    args     = {
+      name = "when(source('location_name'), source('location_name'), None)"
+      site = "prereq('site')"
+    }
+    optional = true
   }
 
   prerequisite "platform" {
@@ -117,6 +126,10 @@ object "device" {
 
   field "site" {
     value = "prereq('site')"
+  }
+
+  field "location" {
+    value = "prereq('location')"
   }
 
   field "platform" {

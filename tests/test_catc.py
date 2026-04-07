@@ -260,6 +260,34 @@ class TestCatalystGetObjects:
         assert d["status"] == "active"
         assert d["site_name"] == "Clemson"
 
+    def test_get_devices_preserves_floor_as_location(self):
+        src = self._connected_source()
+
+        site = SimpleNamespace(
+            id="site-1",
+            siteNameHierarchy="Global/US/Southeast/Watt/First Floor",
+        )
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+
+        result = src.get_objects("devices")
+
+        assert result[0]["site_name"] == "Watt"
+        assert result[0]["location_name"] == "First Floor"
+
     def test_deduplicates_by_serial(self):
         src = self._connected_source()
 
@@ -381,6 +409,22 @@ class TestCatalystEnrichDevice:
         )
         result = src._enrich_device(device, "Global/US/SE/CU")
         assert result["serial"] == "FOC12345"
+
+    def test_hierarchy_labels_are_title_cased(self):
+        src = CatalystCenterSource()
+        device = SimpleNamespace(
+            hostname="ap-01",
+            platformId="AIR-CAP2702E-B-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6",
+            serialNumber="sn001",
+            reachabilityStatus="Reachable",
+            family="Unified AP",
+        )
+        result = src._enrich_device(device, "Global/US/Southeast/watt/first floor")
+        assert result["site_name"] == "Watt"
+        assert result["location_name"] == "First Floor"
 
 
 # ---------------------------------------------------------------------------

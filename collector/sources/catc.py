@@ -151,6 +151,13 @@ def _hierarchy_depth(hierarchy: str) -> int:
     return len([part for part in hierarchy.split("/") if part])
 
 
+def _normalize_hierarchy_label(value: str) -> str:
+    """Return a title-cased hierarchy label, matching the legacy CATC logic."""
+    if not value:
+        return ""
+    return value.title()
+
+
 def _coerce_bool(value: Any, default: bool) -> bool:
     """Return *value* interpreted as a boolean."""
     if isinstance(value, bool):
@@ -694,6 +701,11 @@ class CatalystCenterSource(DataSource):
 
         name = (hostname.split(".")[0] if hostname else "")[:64] or "Unknown"
 
+        site_name = _normalize_hierarchy_label(
+            _hierarchy_part(site_hierarchy, 3) or _hierarchy_part(site_hierarchy, 2)
+        )
+        location_name = _normalize_hierarchy_label(_hierarchy_part(site_hierarchy, 4))
+
         return {
             # --- normalised convenience fields ---
             "name":          name,
@@ -703,10 +715,8 @@ class CatalystCenterSource(DataSource):
             "platform_name": f"{software_type.upper()} {software_version}".strip() or "Unknown",
             "serial":        serial.upper() if serial else "",
             "ip_address":    mgmt_ip,
-            "site_name":     (_hierarchy_part(site_hierarchy, 3)
-                              or _hierarchy_part(site_hierarchy, 2)
-                              or "Unknown"),
-            "location_name": _hierarchy_part(site_hierarchy, 4),
+            "site_name":     site_name,
+            "location_name": location_name,
             "status":        "active" if "Reachable" in reachability else "offline",
             # --- passthrough raw fields ---
             "hostname":             hostname,
