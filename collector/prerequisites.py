@@ -411,7 +411,7 @@ class PrerequisiteRunner:
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_manufacturer name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.manufacturers", {"slug": slug})
         existing = self.nb.get("dcim.manufacturers", slug=slug)
         existing_id = extract_id(existing)
         if isinstance(existing_id, int):
@@ -434,7 +434,10 @@ class PrerequisiteRunner:
             payload["part_number"] = args["part_number"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_device_type model=%s manufacturer=%s", model, manufacturer_id)
-            return None
+            lookup_payload: dict[str, Any] = {"model": model}
+            if manufacturer_id is not None:
+                lookup_payload["manufacturer"] = manufacturer_id
+            return self._dry_run_placeholder_id("dcim.device_types", lookup_payload)
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         obj = self.nb.upsert("dcim.device_types", payload, lookup_fields=lookup)
         return extract_id(obj)
@@ -445,7 +448,7 @@ class PrerequisiteRunner:
         color = args.get("color", "9e9e9e")
         if dry_run:
             logger.info("[DRY-RUN] ensure_device_role name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.device_roles", {"slug": slug})
         obj = self.nb.upsert(
             "dcim.device_roles",
             {"name": name, "slug": slug, "color": color},
@@ -524,7 +527,7 @@ class PrerequisiteRunner:
             payload["manufacturer"] = manufacturer_id
         if dry_run:
             logger.info("[DRY-RUN] ensure_platform name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.platforms", {"slug": slug})
         try:
             obj = self.nb.upsert("dcim.platforms", payload, lookup_fields=["slug"])
         except Exception as exc:
@@ -547,7 +550,7 @@ class PrerequisiteRunner:
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_type name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("virtualization.cluster_types", {"slug": slug})
         obj = self.nb.upsert(
             "virtualization.cluster_types",
             {"name": name, "slug": slug},
@@ -560,7 +563,7 @@ class PrerequisiteRunner:
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_group name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("virtualization.cluster_groups", {"slug": slug})
         obj = self.nb.upsert(
             "virtualization.cluster_groups",
             {"name": name, "slug": slug},
@@ -576,7 +579,10 @@ class PrerequisiteRunner:
                 payload[key] = args[key]
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster name=%s", name)
-            return None
+            lookup_payload: dict[str, Any] = {"name": name}
+            if payload.get("type") is not None:
+                lookup_payload["type"] = payload["type"]
+            return self._dry_run_placeholder_id("virtualization.clusters", lookup_payload)
         lookup_fields = ["name", "type"] if payload.get("type") is not None else ["name"]
         obj = self.nb.upsert(
             "virtualization.clusters",
@@ -591,7 +597,7 @@ class PrerequisiteRunner:
         color = args.get("color", "9e9e9e")
         if dry_run:
             logger.info("[DRY-RUN] ensure_inventory_item_role name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.inventory_item_roles", {"slug": slug})
         obj = self.nb.upsert(
             "dcim.inventory_item_roles",
             {"name": name, "slug": slug, "color": color},
