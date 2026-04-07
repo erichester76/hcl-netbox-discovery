@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import textwrap
+import threading
+from concurrent import futures
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -990,6 +992,56 @@ class TestEnsureModuleTypeProfileSchema:
 
         assert result == 10
         nb.update.assert_not_called()
+
+    def test_schema_refresh_and_patch_are_singleflight_per_profile(self):
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+
+        counters = {"get": 0, "update": 0}
+        counters_lock = threading.Lock()
+        start_event = threading.Event()
+        entered_get = threading.Event()
+        release_get = threading.Event()
+
+        def fake_get(resource, **kwargs):
+            assert resource == "dcim.module_type_profiles"
+            assert kwargs == {"id": 10}
+            with counters_lock:
+                counters["get"] += 1
+            entered_get.set()
+            assert release_get.wait(timeout=1)
+            return {"id": 10}
+
+        def fake_update(resource, object_id, payload):
+            assert resource == "dcim.module_type_profiles"
+            assert object_id == 10
+            assert payload == {"schema": schema}
+            with counters_lock:
+                counters["update"] += 1
+            return {"id": 10}
+
+        nb.get.side_effect = fake_get
+        nb.update.side_effect = fake_update
+
+        runner = self._make_runner(nb)
+
+        def run_once():
+            assert start_event.wait(timeout=1)
+            return runner._ensure_module_type_profile(
+                {"name": "CPU", "schema": schema},
+                dry_run=False,
+            )
+
+        with futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_results = [executor.submit(run_once) for _ in range(4)]
+            start_event.set()
+            assert entered_get.wait(timeout=1)
+            release_get.set()
+            results = [future.result(timeout=2) for future in future_results]
+
+        assert results == [10, 10, 10, 10]
+        assert counters == {"get": 1, "update": 1}
 
     def test_schema_auto_generated_from_attribute_names(self):
         nb = MagicMock()
