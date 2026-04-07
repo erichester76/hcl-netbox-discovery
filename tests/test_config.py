@@ -879,7 +879,9 @@ class TestCatcMappings:
         assert prereqs["device_type"].args.get("manufacturer") == "prereq('manufacturer')"
         assert prereqs["device_type"].args.get("model") == "when(source('model'), source('model'), 'Unknown')"
         assert prereqs["role"].args.get("name") == "when(source('role'), source('role'), 'Network Device')"
-        assert prereqs["site"].args.get("name") == "when(source('site_name'), source('site_name'), 'Unknown')"
+        assert prereqs["site"].args.get("name") == "when(source('site_name'), regex_file(source('site_name'), 'catc_site_to_site'), 'Unknown')"
+        assert prereqs["location"].args.get("name") == "when(source('location_name'), source('location_name'), None)"
+        assert prereqs["location"].args.get("site") == "prereq('site')"
         assert prereqs["platform"].args.get("name") == "when(source('platform_name'), source('platform_name'), 'Unknown')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
@@ -891,6 +893,7 @@ class TestCatcMappings:
         assert field_values["name"] == "when(source('name'), source('name'), 'Unknown')"
         assert field_values["device_type"] == "prereq('device_type')"
         assert "prereq('site')" in field_values["site"]
+        assert field_values["location"] == "prereq('location')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_interface_ip_address_block(self, mapping_path):

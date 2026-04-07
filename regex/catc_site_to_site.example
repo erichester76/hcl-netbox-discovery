@@ -1,0 +1,43 @@
+(?i)(.+) CEO,\1 County Extension Office
+(?i)^ITC$,Clemson University Information Technology Center
+(?i)^UCSD$,University of California San Diego
+(?i)^Poole$,Poole Agricultural Center
+(?i)^WFIC \(Watt Family Innovation Center\)$,Watt Family Innovation Center
+(?i)(Brackett)$,\1 Hall
+(?i)(Benet)$,\1 Hall
+(?i)Barre$,Barre Hall
+(?i)Brooks$,Brooks Center for the Performing Arts
+(?i)(Byrnes)$,\1 Hall
+(?i)(Cooper)$,\1 Library
+(?i)(Cope)$,\1 Hall
+(?i)Cufd,CUFD
+(?i)Cupd,CUPD
+(?i)(Daniel)$,\1 Hall
+(?i)Deic Duke Innovation Center,Duke Energy Innovation Center
+(?i)(Earle)$,\1 Hall
+(?i)(Edwards)$,\1 Hall
+(?i)(Lee)$,\1 Hall
+(?i)(Lehotsky)$,\1 Hall
+(?i)Georegetown County Extension Office,Georgetown County Extension Office
+(?i)Greenville NEW CEO,Greenville County Extension Office (NEW)
+(?i)Greenville New County Extension Office,Greenville County Extension Office (NEW)
+(?i)(Lowry)$,\1 Hall
+(?i)(Long)$,\1 Hall
+(?i)ljc,Littlejohn Coliseum
+(?i)(Martin)$,\1 Hall
+(?i)(Mauldin)$,\1 Hall
+(?i)(McAdams)$,\1 Hall
+(?i)(Mccabe)$,\1 Hall
+(?i)(Olin)$,\1 Hall
+(?i)Vickery,Vickery Hall
+(?i)Pee Dee Rec,Clemson University Pee Dee Research and Education Center
+(?i)Coastal Rec,Clemson University Coastal Research and Education Center
+(?i)Rhodes Research Center,Rhodes Engineering Research Center
+(?i)(Smith)$,\1 Hall
+(?i)(Strode)$,\1 Tower
+(?i)(Sirrine)$,\1 Hall
+(?i)(Sikes)$,\1 Hall
+(?i)(Sanders)$,\1 Hall
+(?i)(Tillman)$,\1 Hall
+(?i)Watt$,Watt Family Innovation Center
+(?i)Greenvilleone,GreenvilleONE
