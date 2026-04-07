@@ -270,44 +270,17 @@ COLLECTOR_DB_PATH=./data/collector_jobs.sqlite3
 LOG_LEVEL=INFO
 ```
 
-### Capture Run Artifacts
+### Job Artifacts
 
-For a pull-based feedback loop, run the capture helper on the remote Docker
-host where real syncs execute:
+Job runs now persist structured artifact JSON in the SQLite jobs table and
+expose that payload through the web API:
 
-```bash
-python src/capture_sync_job.py mappings/vmware.hcl --artifact-root /var/tmp/hcl-sync-artifacts
+```text
+GET /api/jobs/<id>/artifact
 ```
 
-By default the helper writes collector output only to the artifact bundle so it
-can be backgrounded cleanly. Use `--mirror-output` if you want live terminal
-streaming as well:
-
-```bash
-python src/capture_sync_job.py mappings/vmware.hcl --artifact-root /var/tmp/hcl-sync-artifacts --mirror-output
-```
-
-Each run writes a timestamped directory containing:
-
-- `manifest.json`
-- `stdout.log`
-- `stderr.log`
-- `env-context.json`
-- `collector-db-slice.json`
-- `job-summary.json`
-- `job_logs.log`
-- `DONE`
-
-The `DONE` file is written last so the local dev machine can safely pull only
-completed bundles.
-
-On the local dev machine, pull completed bundles over SSH:
-
-```bash
-python src/pull_sync_artifacts.py prod-docker-host /var/tmp/hcl-sync-artifacts
-```
-
-By default, pulled bundles land in `run-artifacts/inbox/` for review.
+Use the job APIs and stored job logs as the supported inspection path. The old
+file-based artifact capture/pull helper scripts have been removed.
 
 ---
 
