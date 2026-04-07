@@ -897,11 +897,13 @@ class TestCatcMappings:
         cfg = load_config(mapping_path)
         device = self._device_object(cfg)
         assert device is not None
+        assert cfg.source.extra.get("fetch_interfaces") == "true"
         assert device.interfaces, "device should define interfaces"
         interface = device.interfaces[0]
         interface_fields = {f.name: f.value for f in interface.fields}
         assert interface_fields["type"] == "when(source('type'), source('type'), 'other')"
         assert interface_fields["description"] == "when(source('description'), source('description'), '')"
+        assert interface_fields["mgmt_only"] == "source('mgmt_only')"
         assert interface.ip_addresses, "interface block must declare ip_address"
         ip_block = interface.ip_addresses[0]
         assert ip_block.primary_if == "first"

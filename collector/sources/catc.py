@@ -281,7 +281,7 @@ class CatalystCenterSource(DataSource):
             )
 
         extra = config.extra or {}
-        self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
+        self._fetch_interfaces = _coerce_bool(extra.get("fetch_interfaces", "true"), True)
         assignment_strategy = str(extra.get("site_assignment_strategy", "auto")).strip().lower()
         if assignment_strategy not in {"auto", "bulk", "membership"}:
             logger.warning(
@@ -410,10 +410,11 @@ class CatalystCenterSource(DataSource):
             seen_devices.add(dedupe_key)
 
             if self._fetch_interfaces:
-                if device_id:
-                    enriched["interfaces"] = self._fetch_device_interfaces(device_id)
-                else:
-                    enriched["interfaces"] = []
+                enriched["interfaces"] = self._collect_interfaces_for_device(
+                    device=device,
+                    device_id=device_id,
+                    enriched_device=enriched,
+                )
             devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
@@ -456,10 +457,11 @@ class CatalystCenterSource(DataSource):
                     seen_devices.add(dedupe_key)
                     enriched = self._enrich_device(device, site_hierarchy)
                     if self._fetch_interfaces:
-                        if device_id:
-                            enriched["interfaces"] = self._fetch_device_interfaces(device_id)
-                        else:
-                            enriched["interfaces"] = []
+                        enriched["interfaces"] = self._collect_interfaces_for_device(
+                            device=device,
+                            device_id=device_id,
+                            enriched_device=enriched,
+                        )
                     devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
@@ -747,6 +749,79 @@ class CatalystCenterSource(DataSource):
             raw_list = []
 
         return [self._enrich_interface(iface) for iface in raw_list]
+
+    def _collect_interfaces_for_device(
+        self,
+        device: Any,
+        device_id: str,
+        enriched_device: dict[str, Any],
+    ) -> list[dict]:
+        """Return the full interface list for a device, including AP parity shims."""
+        interfaces: list[dict]
+        if self._is_unified_ap(device):
+            interfaces = []
+        elif device_id:
+            interfaces = self._fetch_device_interfaces(device_id)
+        else:
+            interfaces = []
+
+        return self._augment_unified_ap_interfaces(device, enriched_device, interfaces)
+
+    def _is_unified_ap(self, device: Any) -> bool:
+        """Return ``True`` when Catalyst Center classifies the device as a unified AP."""
+        family = str(_safe_get(device, "family", "") or "").lower()
+        return "unified ap" in family
+
+    def _augment_unified_ap_interfaces(
+        self,
+        device: Any,
+        enriched_device: dict[str, Any],
+        interfaces: list[dict],
+    ) -> list[dict]:
+        """Add AP management/radio interfaces to match legacy CATC collector behavior."""
+        if not self._is_unified_ap(device):
+            return interfaces
+
+        result = list(interfaces)
+        existing_names = {str(item.get("name", "")).lower() for item in result}
+
+        mgmt_ip = str(enriched_device.get("managementIpAddress", "") or "").strip()
+        mgmt_ip_cidr = ""
+        if mgmt_ip:
+            if "/" in mgmt_ip:
+                mgmt_ip_cidr = mgmt_ip
+            elif ":" in mgmt_ip:
+                mgmt_ip_cidr = f"{mgmt_ip}/128"
+            else:
+                mgmt_ip_cidr = f"{mgmt_ip}/32"
+
+        if "mgmt0" not in existing_names:
+            result.append(
+                {
+                    "name": "mgmt0",
+                    "type": "1000base-t",
+                    "enabled": True,
+                    "description": "Management Interface",
+                    "mac_address": str(_safe_get(device, "macAddress", "") or "").upper(),
+                    "ip_address": mgmt_ip_cidr,
+                    "mgmt_only": True,
+                }
+            )
+            existing_names.add("mgmt0")
+
+        if "radio0" not in existing_names:
+            result.append(
+                {
+                    "name": "radio0",
+                    "type": "other",
+                    "enabled": True,
+                    "description": "Radio Interface",
+                    "mac_address": str(_safe_get(device, "apEthernetMacAddress", "") or "").upper(),
+                    "ip_address": "",
+                }
+            )
+
+        return result
 
     def _enrich_interface(self, iface: Any) -> dict:
         """Return a normalised dict for a single DNAC interface record."""
