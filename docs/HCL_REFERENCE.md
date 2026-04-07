@@ -113,7 +113,7 @@ source "catc" {
   username   = env("CATC_USER")
   password   = env("CATC_PASS")
   verify_ssl = env("CATC_VERIFY_SSL", "true")
-  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "false")
+  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "true")
   site_assignment_strategy  = env("CATC_SITE_ASSIGNMENT_STRATEGY", "auto")
   wait_on_rate_limit        = env("CATC_WAIT_ON_RATE_LIMIT", "true")
   rate_limit_retry_attempts = env("CATC_RATE_LIMIT_RETRY_ATTEMPTS", "3")
@@ -139,6 +139,10 @@ membership walk.
 Use `membership` when you already know the bulk site-assignment API is slow or
 times out in a given Catalyst Center environment, but still want the adapter to
 fall back to bulk if the membership walk produces no usable device/site pairs.
+
+When interface collection is enabled, the adapter also synthesizes `mgmt0` and
+`radio0` for Unified AP devices so management interface/IP parity matches the
+legacy CATC collector behavior.
 
 Use `mappings/catalyst-center.hcl.example` as the single maintained Catalyst
 Center mapping template so the deployed mapping path uses the same

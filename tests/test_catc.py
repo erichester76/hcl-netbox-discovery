@@ -475,14 +475,14 @@ class TestMaskToPrefix:
 
 
 class TestCatalystConnectFetchInterfaces:
-    def test_fetch_interfaces_false_by_default(self, catc_config):
+    def test_fetch_interfaces_true_by_default(self, catc_config):
         catc_config.extra = {}
         _fake_dnac_api = sys.modules["dnacentersdk.api"]
         _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
 
         src = CatalystCenterSource()
         src.connect(catc_config)
-        assert src._fetch_interfaces is False
+        assert src._fetch_interfaces is True
 
     def test_fetch_interfaces_enabled_via_extra(self, catc_config):
         catc_config.extra = {"fetch_interfaces": "true"}
@@ -763,6 +763,50 @@ class TestCatalystGetObjectsWithInterfaces:
         assert "interfaces" in result[0]
         assert len(result[0]["interfaces"]) == 1
         assert result[0]["interfaces"][0]["name"] == "GigabitEthernet1/0/1"
+
+    def test_unified_ap_gets_mgmt0_radio0_with_management_ip(self):
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        src._client.site_design = None
+        src._fetch_interfaces = True
+
+        site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="ap-01",
+            platformId="C9120AXI-B",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.9.3",
+            serialNumber="FCW12345678",
+            reachabilityStatus="Reachable",
+            family="Unified AP",
+            managementIpAddress="10.0.53.115",
+            macAddress="70:7d:b9:33:47:c0",
+            apEthernetMacAddress="38:90:a5:f9:3d:cc",
+            id="ap-device-uuid-1",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        ap = result[0]
+        assert "interfaces" in ap
+        names = {iface["name"] for iface in ap["interfaces"]}
+        assert names == {"mgmt0", "radio0"}
+
+        mgmt0 = next(iface for iface in ap["interfaces"] if iface["name"] == "mgmt0")
+        radio0 = next(iface for iface in ap["interfaces"] if iface["name"] == "radio0")
+
+        assert mgmt0["ip_address"] == "10.0.53.115/32"
+        assert mgmt0["mgmt_only"] is True
+        assert radio0["ip_address"] == ""
+        assert radio0["mac_address"] == "38:90:A5:F9:3D:CC"
+        src._client.devices.get_interface_info_by_id.assert_not_called()
 
     def test_interfaces_not_fetched_when_disabled(self):
         src = CatalystCenterSource()

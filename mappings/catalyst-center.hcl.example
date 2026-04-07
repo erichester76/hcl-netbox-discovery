@@ -9,7 +9,7 @@
 #
 # Optional:
 #   CATC_VERIFY_SSL           true | false  (default: true)
-#   CATC_FETCH_INTERFACES     true | false  (default: false)
+#   CATC_FETCH_INTERFACES     true | false  (default: true)
 #                             When true, interfaces are fetched per-device and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
@@ -35,7 +35,7 @@ source "catc" {
   username          = "env('CATC_USER')"
   password          = "env('CATC_PASS')"
   verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
-  fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'false')"
+  fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'true')"
   site_assignment_strategy = "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')"
   wait_on_rate_limit         = "env('CATC_WAIT_ON_RATE_LIMIT', 'true')"
   rate_limit_retry_attempts  = "env('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3')"
@@ -158,6 +158,10 @@ object "device" {
 
     field "description" {
       value = "when(source('description'), source('description'), '')"
+    }
+
+    field "mgmt_only" {
+      value = "source('mgmt_only')"
     }
 
     field "mac_address" {
