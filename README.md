@@ -390,7 +390,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/xclarity.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
 | `mappings/xclarity-modules.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
 | `mappings/azure.hcl.example` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks, appliances, standalone NICs |
-| `mappings/catc.hcl.example` | Cisco Catalyst Center | Network devices, interfaces, management IPs |
+| `mappings/catalyst-center.hcl.example` | Cisco Catalyst Center | Network devices, interfaces, management IPs |
 | `mappings/nexus.hcl.example` | Cisco Nexus Dashboard (NDFC) | Fabric switches, interfaces |
 | `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
 | `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
@@ -486,7 +486,7 @@ hcl-netbox-discovery/
 │   ├── xclarity.hcl.example
 │   ├── xclarity-modules.hcl.example
 │   ├── azure.hcl.example
-│   ├── catc.hcl.example
+│   ├── catalyst-center.hcl.example
 │   ├── nexus.hcl.example
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example

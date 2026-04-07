@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -281,6 +282,101 @@ class TestResolvePlacement:
         }
         nb.upsert.assert_not_called()
 
+    def test_logs_raw_candidates_when_site_fallbacks(self, caplog):
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+        runner = self._make_runner(nb)
+        caplog.set_level(logging.DEBUG)
+        with caplog.at_level(logging.DEBUG, logger="collector.prerequisites"):
+            result = runner._resolve_placement(
+                {
+                    "site": "Unknown",
+                    "location": "",
+                    "rack": "",
+                    "position": "",
+                    "serial": "ABC123",
+                    "location_candidate": "Campus West",
+                    "site_candidate": "Site Input",
+                    "datacenter_candidate": "DC-R1",
+                },
+                dry_run=False,
+            )
+        assert result["site_id"] == 1
+        assert "Campus West" in caplog.text
+        assert "Site Input" in caplog.text
+        assert "DC-R1" in caplog.text
+        assert "Unknown" in caplog.text
+
+    def test_logs_placeholders_when_raw_candidates_are_empty(self, caplog):
+        nb = MagicMock()
+        nb.upsert.side_effect = self._mock_upsert_side_effect
+        runner = self._make_runner(nb)
+        caplog.set_level(logging.DEBUG)
+        with caplog.at_level(logging.DEBUG, logger="collector.prerequisites"):
+            result = runner._resolve_placement(
+                {
+                    "site": "Unknown",
+                    "location": "",
+                    "rack": "",
+                    "position": "",
+                    "serial": "ABC999",
+                    "location_candidate": "",
+                    "site_candidate": "",
+                    "datacenter_candidate": "",
+                },
+                dry_run=False,
+            )
+        assert result["site_id"] == 1
+        assert "ABC999" in caplog.text
+        assert "raw_location=-" in caplog.text
+        assert "site_lookup_input=-" in caplog.text
+        assert "raw_dataCenter=-" in caplog.text
+
+    def test_dry_run_preserves_placeholder_ids_for_site_location_and_rack(self):
+        """Dry-run placement should keep prerequisite identities for downstream lookups."""
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+
+        result = runner._resolve_placement(
+            {
+                "site": "DC1",
+                "location": "Room 31",
+                "rack": "AZ-40",
+                "position": "40",
+            },
+            dry_run=True,
+        )
+
+        assert isinstance(result["site_id"], int)
+        assert result["site_id"] < 0
+        assert isinstance(result["location_id"], int)
+        assert result["location_id"] < 0
+        assert isinstance(result["rack_id"], int)
+        assert result["rack_id"] < 0
+        assert result["rack_position"] == 40
+        nb.upsert.assert_not_called()
+
+    def test_dry_run_ensure_site_reuses_placeholder_for_same_lookup(self):
+        nb = MagicMock()
+        runner = self._make_runner(nb)
+
+        first = runner._ensure_site(
+            {"name": "Clemson University Information Technology Center (ITC)"},
+            dry_run=True,
+        )
+        second = runner._ensure_site(
+            {"name": "Clemson University Information Technology Center (ITC)"},
+            dry_run=True,
+        )
+        different = runner._ensure_site({"name": "Unknown"}, dry_run=True)
+
+        assert isinstance(first, int)
+        assert first < 0
+        assert second == first
+        assert different < 0
+        assert different != first
+        nb.upsert.assert_not_called()
+
 
 class TestEnsureTenantGroup:
     """_ensure_tenant_group should upsert tenancy.tenant_groups."""
@@ -323,6 +419,58 @@ class TestEnsureTenantGroup:
         )
         payload = nb.upsert.call_args[0][1]
         assert payload["description"] == "Eng teams"
+
+
+class TestEnsureTenantRaceCondition:
+    """_ensure_tenant should recover from uniqueness races."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_returns_id_on_success(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=17)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result == 17
+        nb.upsert.assert_called_once()
+
+    def test_falls_back_to_get_on_uniqueness_error(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception(
+            "The request failed with code 400 Bad Request: "
+            "{'__all__': ['Constraint \"tenancy_tenant_unique_name\" is violated.']}"
+        )
+        nb.get.return_value = MagicMock(id=18)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result == 18
+        nb.get.assert_called_once_with("tenancy.tenants", slug="4gk-azr-p-sub")
+
+    def test_returns_none_when_fallback_get_fails(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception(
+            "The request failed with code 400 Bad Request: "
+            "{'__all__': ['Constraint \"tenancy_tenant_unique_name\" is violated.']}"
+        )
+        nb.get.side_effect = Exception("not found")
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
+
+        assert result is None
+
+    def test_re_raises_non_uniqueness_errors(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = Exception("Network timeout")
+        runner = self._make_runner(nb)
+
+        with pytest.raises(Exception, match="Network timeout"):
+            runner._ensure_tenant({"name": "4gk-azr-p-sub"}, dry_run=False)
 
 
 class TestEnsureContactGroup:
@@ -472,20 +620,61 @@ class TestEnsureVrf:
         assert result is None
         nb.upsert.assert_not_called()
 
+
+class TestEnsureCluster:
+    """_ensure_cluster should use type-aware lookup when available."""
+
+    def _make_runner(self, nb: MagicMock) -> PrerequisiteRunner:
+        return PrerequisiteRunner(nb)
+
+    def test_uses_name_and_type_lookup_when_type_present(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=77)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_cluster({"name": "Azure eastus2", "type": 34}, dry_run=False)
+
+        assert result == 77
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2", "type": 34},
+            lookup_fields=["name", "type"],
+        )
+
+    def test_falls_back_to_name_only_lookup_without_type(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=78)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_cluster({"name": "Azure eastus2"}, dry_run=False)
+
+        assert result == 78
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2"},
+            lookup_fields=["name"],
+        )
+
     def test_dry_run_returns_none_without_upsert(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
-        result = runner._ensure_vrf({"name": "MGMT"}, dry_run=True)
+        result = runner._ensure_cluster({"name": "Azure eastus2", "type": 34}, dry_run=True)
         assert result is None
         nb.upsert.assert_not_called()
 
-    def test_description_included_in_payload(self):
+    def test_group_and_site_are_forwarded_into_payload(self):
         nb = MagicMock()
         nb.upsert.return_value = MagicMock(id=52)
         runner = self._make_runner(nb)
-        runner._ensure_vrf({"name": "PROD", "description": "Production VRF"}, dry_run=False)
-        payload = nb.upsert.call_args[0][1]
-        assert payload["description"] == "Production VRF"
+        runner._ensure_cluster(
+            {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
+            dry_run=False,
+        )
+        nb.upsert.assert_called_once_with(
+            "virtualization.clusters",
+            {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
+            lookup_fields=["name", "type"],
+        )
 
 
 class TestRequiredIdentityValidation:

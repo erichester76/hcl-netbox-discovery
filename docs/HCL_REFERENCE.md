@@ -113,7 +113,8 @@ source "catc" {
   username   = env("CATC_USER")
   password   = env("CATC_PASS")
   verify_ssl = env("CATC_VERIFY_SSL", "true")
-  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "false")
+  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "true")
+  site_assignment_strategy  = env("CATC_SITE_ASSIGNMENT_STRATEGY", "auto")
   wait_on_rate_limit        = env("CATC_WAIT_ON_RATE_LIMIT", "true")
   rate_limit_retry_attempts = env("CATC_RATE_LIMIT_RETRY_ATTEMPTS", "3")
   rate_limit_retry_initial_delay = env("CATC_RATE_LIMIT_RETRY_INITIAL_DELAY", "1.0")
@@ -128,6 +129,24 @@ site roots it can find. This avoids one membership lookup per site on large
 hierarchies. When the installed SDK or Catalyst Center release does not expose
 that site-assignment API, the adapter falls back to the older per-site
 membership walk.
+
+`site_assignment_strategy` controls which path is tried first:
+
+- `auto` (default): bulk site-assignment join first, per-site membership fallback
+- `bulk`: bulk site-assignment join first, per-site membership fallback
+- `membership`: per-site membership walk first, bulk site-assignment fallback
+
+Use `membership` when you already know the bulk site-assignment API is slow or
+times out in a given Catalyst Center environment, but still want the adapter to
+fall back to bulk if the membership walk produces no usable device/site pairs.
+
+When interface collection is enabled, the adapter also synthesizes `mgmt0` and
+`radio0` for Unified AP devices so management interface/IP parity matches the
+legacy CATC collector behavior.
+
+Use `mappings/catalyst-center.hcl.example` as the single maintained Catalyst
+Center mapping template so the deployed mapping path uses the same
+name/site/device_type/manufacturer wiring that CI validates.
 
 ### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
 
@@ -295,8 +314,6 @@ collector {
   iterator {
     max_workers = 2
     VCENTER_URL = ["vc1.example.com", "vc2.example.com"]
-    VCENTER_USER = ["admin", "admin"]
-    VCENTER_PASS = ["secret1", "secret2"]
   }
 }
 ```
@@ -323,6 +340,13 @@ Each `iterator {}` block defines one group of source-connection overrides. The e
 | any other key | yes | A scalar or list of values used as `env()` overrides when rebuilding the source config |
 
 When multiple override keys are lists, iteration is zip-style: the shortest list length determines the number of passes.
+
+For sources where every endpoint shares the same credentials, keep the shared
+username/password in the `source {}` block and iterate only the URL/host
+variable. For example, VMware can iterate `VCENTER_URL` while keeping
+`VCENTER_USER` and `VCENTER_PASS` in the `source {}` block, and XClarity
+can iterate `XCLARITY_HOST` while keeping `XCLARITY_USER` and
+`XCLARITY_PASS` in the `source {}` block.
 
 ---
 

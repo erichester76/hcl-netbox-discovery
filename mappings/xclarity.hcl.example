@@ -94,7 +94,7 @@ object "node" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -103,7 +103,6 @@ object "node" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -133,6 +132,10 @@ object "node" {
       location = "regex_file(source('location.room'), 'xclarity_room_to_location')"
       rack     = "source('location.rack')"
       position = "source('location.lowestRackUnit')"
+      location_candidate = "source('location.location')"
+      site_candidate = "coalesce('location.location', 'dataCenter')"
+      datacenter_candidate = "source('dataCenter')"
+      serial = "str(source('serialNumber'))"
     }
     optional = true
   }
@@ -179,7 +182,7 @@ object "node" {
   }
 
   field "status" {
-    value = "when(source('powerStatus') == 'on', 'active', 'offline')"
+    value = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
   }
 
   field "tags" {
@@ -349,7 +352,7 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -358,7 +361,6 @@ object "chassis" {
     args     = {
       model        = "coalesce('productName', 'machineType')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -449,7 +451,7 @@ object "switch" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -458,7 +460,6 @@ object "switch" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -567,7 +568,7 @@ object "storage" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -576,7 +577,6 @@ object "storage" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }

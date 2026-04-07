@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import threading
 import textwrap
+import threading
 from pathlib import Path
 
 import pytest
@@ -14,11 +13,7 @@ from collector.config import (
     CollectionConfig,
     CollectorConfig,
     CollectorOptions,
-    FieldConfig,
     IteratorConfig,
-    NetBoxConfig,
-    ObjectConfig,
-    PrerequisiteConfig,
     SourceConfig,
     _bool,
     _eval_config_str,
@@ -31,7 +26,6 @@ from collector.config import (
     load_config,
 )
 from collector.db import init_db, set_setting
-
 
 # ---------------------------------------------------------------------------
 # Unit helpers
@@ -833,7 +827,8 @@ class TestXClarityMappings:
         "mappings/xclarity-modules.hcl.example",
     ]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
-    CANONICAL_MANUFACTURER = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
+    CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
+    STATUS_EXPR = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_manufacturer_prereqs_canonicalize_lenovo(self, mapping_path):
@@ -854,3 +849,82 @@ class TestXClarityMappings:
             site_field = next((f for f in obj.fields if f.name == "site"), None)
             assert site_field is not None, f"object {name} missing site field"
             assert site_field.update_mode == "if_missing"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_node_status_normalizes_power_status(self, mapping_path):
+        cfg = load_config(mapping_path)
+        node = next((o for o in cfg.objects if o.name == "node"), None)
+        assert node is not None, f"missing object node in {mapping_path}"
+        status_field = next((f for f in node.fields if f.name == "status"), None)
+        assert status_field is not None, f"node missing status field in {mapping_path}"
+        assert status_field.value == self.STATUS_EXPR
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_top_level_device_types_do_not_write_part_number(self, mapping_path):
+        cfg = load_config(mapping_path)
+        for name in self.OBJECT_NAMES:
+            obj = next((o for o in cfg.objects if o.name == name), None)
+            assert obj is not None, f"missing object {name} in {mapping_path}"
+            prereq = next((p for p in obj.prerequisites if p.name == "device_type"), None)
+            assert prereq is not None, f"object {name} lacks device_type prerequisite"
+            assert "part_number" not in prereq.args
+
+
+class TestCatcMappings:
+    PATHS = [
+        "mappings/catalyst-center.hcl.example",
+    ]
+
+    @staticmethod
+    def _device_object(cfg):
+        return next((o for o in cfg.objects if o.name == "device"), None)
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_manufacturer_device_type_prereqs(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        prereqs = {p.name: p for p in device.prerequisites}
+        assert prereqs["manufacturer"].args.get("name") == "source('manufacturer')"
+        assert prereqs["device_type"].args.get("manufacturer") == "prereq('manufacturer')"
+        assert prereqs["device_type"].args.get("model") == "when(source('model'), source('model'), 'Unknown')"
+        assert prereqs["role"].args.get("name") == "when(source('role'), source('role'), 'Network Device')"
+        assert prereqs["site"].args.get("name") == "when(source('site_name'), regex_file(source('site_name'), 'catc_site_to_site'), 'Unknown')"
+        assert prereqs["location"].args.get("name") == "when(source('location_name'), source('location_name'), None)"
+        assert prereqs["location"].args.get("site") == "prereq('site')"
+        assert prereqs["platform"].args.get("name") == "when(source('platform_name'), source('platform_name'), 'Unknown')"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_device_fields_reference_expected_inputs(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        field_values = {f.name: f.value for f in device.fields}
+        assert field_values["name"] == "when(source('name'), source('name'), 'Unknown')"
+        assert field_values["device_type"] == "prereq('device_type')"
+        assert "prereq('site')" in field_values["site"]
+        assert field_values["location"] == "prereq('location')"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_interface_ip_address_block(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        assert cfg.source.extra.get("fetch_interfaces") == "true"
+        assert device.interfaces, "device should define interfaces"
+        interface = device.interfaces[0]
+        interface_fields = {f.name: f.value for f in interface.fields}
+        assert interface_fields["type"] == "when(source('type'), source('type'), 'other')"
+        assert interface_fields["description"] == "when(source('description'), source('description'), '')"
+        assert interface_fields["mgmt_only"] == "source('mgmt_only')"
+        assert interface.ip_addresses, "interface block must declare ip_address"
+        ip_block = interface.ip_addresses[0]
+        assert ip_block.primary_if == "first"
+        assert (
+            ip_block.source_items
+            == "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+        )
+        address_field = next((f for f in ip_block.fields if f.name == "address"), None)
+        status_field = next((f for f in ip_block.fields if f.name == "status"), None)
+        assert address_field is not None and address_field.value == "source('address')"
+        assert status_field is not None and status_field.value == "'active'"

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import logging
 import textwrap
+import threading
+from concurrent import futures
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +21,7 @@ from collector.config import (
     ModuleConfig,
     load_config,
 )
-from collector.prerequisites import PrerequisiteRunner
+from collector.prerequisites import PrerequisiteRunner, load_current_field
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -675,6 +677,10 @@ class TestEnsureModuleType:
             {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
             {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
         ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
         runner = self._make_runner(nb)
         result = runner._ensure_module_type(
             {
@@ -686,6 +692,145 @@ class TestEnsureModuleType:
         )
         assert result == 50
         nb.update.assert_not_called()
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
+
+    def test_attributes_patch_skipped_when_refreshed_record_matches(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50},
+        ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+        assert result == 50
+        module_type_updates = [
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
+        ]
+        assert module_type_updates == []
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
+
+    def test_attributes_patch_skipped_when_refreshed_record_serializes_to_match(self):
+        class SerializableValue:
+            def __init__(self, value):
+                self._value = value
+
+            def serialize(self):
+                return self._value
+
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50},
+        ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": SerializableValue({"speed": 2.5, "cores": 16})},
+        ]
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attributes": {"cores": 16, "speed": 2.5},
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        module_type_updates = [
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
+        ]
+        assert module_type_updates == []
+
+    def test_live_field_refresh_is_cached_per_run(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [
+            {"id": 99},
+            {"id": 50},
+            {"id": 99},
+            {"id": 50},
+        ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+
+        args = {
+            "model": "Intel Xeon Gold 6240",
+            "profile": "CPU",
+            "attributes": {"cores": 16, "speed": 2.5},
+        }
+        assert runner._ensure_module_type(args, dry_run=False) == 50
+        assert runner._ensure_module_type(args, dry_run=False) == 50
+
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
+        nb.update.assert_not_called()
+
+    def test_failed_refresh_fallback_is_not_cached(self):
+        nb = MagicMock()
+        nb.get.side_effect = [
+            Exception("temporary refresh failure"),
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+
+        first = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+        second = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert first is None
+        assert second == {"cores": 16, "speed": 2.5}
+        assert nb.get.call_count == 2
+
+    def test_load_current_field_bypasses_cache_when_supported(self):
+        calls: list[tuple[str, bool, int]] = []
+
+        class FakeNetBox:
+            def get(self, resource, use_cache=True, **kwargs):
+                calls.append((resource, use_cache, kwargs["id"]))
+                return {"id": kwargs["id"], "attributes": {"cores": 16, "speed": 2.5}}
+
+        value = load_current_field(
+            FakeNetBox(),
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert value == {"cores": 16, "speed": 2.5}
+        assert calls == [("dcim.module_types", False, 50)]
 
     def test_attributes_not_called_when_empty(self):
         """When attributes dict is empty/None, nb.update should not be called."""
@@ -787,6 +932,7 @@ class TestEnsureModuleTypeProfileSchema:
         nb.update.return_value = MagicMock(id=10)
         runner = self._make_runner(nb)
         schema = {"type": "object", "properties": {"cores": {}}}
+        nb.get.return_value = {"id": 10}
         runner._ensure_module_type_profile(
             {"name": "CPU", "schema": schema},
             dry_run=False,
@@ -801,6 +947,7 @@ class TestEnsureModuleTypeProfileSchema:
         nb = MagicMock()
         schema = {"type": "object", "properties": {"cores": {}}}
         nb.upsert.return_value = {"id": 10, "schema": schema}
+        nb.get.return_value = {"id": 10, "schema": schema}
         runner = self._make_runner(nb)
         result = runner._ensure_module_type_profile(
             {"name": "CPU", "schema": schema},
@@ -808,6 +955,93 @@ class TestEnsureModuleTypeProfileSchema:
         )
         assert result == 10
         nb.update.assert_not_called()
+        nb.get.assert_called_once_with("dcim.module_type_profiles", id=10)
+
+    def test_schema_update_skipped_when_refreshed_record_matches(self):
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+        nb.get.return_value = {"id": 10, "schema": schema}
+        runner = self._make_runner(nb)
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+        assert result == 10
+        nb.update.assert_not_called()
+        nb.get.assert_called_once_with("dcim.module_type_profiles", id=10)
+
+    def test_schema_update_skipped_when_refreshed_record_serializes_to_match(self):
+        class SerializableValue:
+            def __init__(self, value):
+                self._value = value
+
+            def serialize(self):
+                return self._value
+
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+        nb.get.return_value = {"id": 10, "schema": SerializableValue(schema)}
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type_profile(
+            {"name": "CPU", "schema": schema},
+            dry_run=False,
+        )
+
+        assert result == 10
+        nb.update.assert_not_called()
+
+    def test_schema_refresh_and_patch_are_singleflight_per_profile(self):
+        nb = MagicMock()
+        schema = {"type": "object", "properties": {"cores": {}}}
+        nb.upsert.return_value = {"id": 10}
+
+        counters = {"get": 0, "update": 0}
+        counters_lock = threading.Lock()
+        start_event = threading.Event()
+        entered_get = threading.Event()
+        release_get = threading.Event()
+
+        def fake_get(resource, **kwargs):
+            assert resource == "dcim.module_type_profiles"
+            assert kwargs == {"id": 10}
+            with counters_lock:
+                counters["get"] += 1
+            entered_get.set()
+            assert release_get.wait(timeout=1)
+            return {"id": 10}
+
+        def fake_update(resource, object_id, payload):
+            assert resource == "dcim.module_type_profiles"
+            assert object_id == 10
+            assert payload == {"schema": schema}
+            with counters_lock:
+                counters["update"] += 1
+            return {"id": 10}
+
+        nb.get.side_effect = fake_get
+        nb.update.side_effect = fake_update
+
+        runner = self._make_runner(nb)
+
+        def run_once():
+            assert start_event.wait(timeout=1)
+            return runner._ensure_module_type_profile(
+                {"name": "CPU", "schema": schema},
+                dry_run=False,
+            )
+
+        with futures.ThreadPoolExecutor(max_workers=4) as executor:
+            future_results = [executor.submit(run_once) for _ in range(4)]
+            start_event.set()
+            assert entered_get.wait(timeout=1)
+            release_get.set()
+            results = [future.result(timeout=2) for future in future_results]
+
+        assert results == [10, 10, 10, 10]
+        assert counters == {"get": 1, "update": 1}
 
     def test_schema_auto_generated_from_attribute_names(self):
         nb = MagicMock()
@@ -1796,7 +2030,7 @@ class TestProcessModulesPowerInput:
 
     def test_xclarity_modules_hcl_has_attribute_blocks(self):
         """The xclarity-modules.hcl.example mapping file should have attribute blocks
-        on its CPU, Memory, Hard disk, Expansion card, Fan, and Power supply
+        on its CPU, Memory, Hard disk, Expansion card, and Power supply
         module blocks."""
         from collector.config import load_config
         cfg = load_config("mappings/xclarity-modules.hcl.example")
@@ -1823,5 +2057,6 @@ class TestProcessModulesPowerInput:
         # Power supply must have input_current, input_voltage
         assert "input_current" in profile_to_attrs.get("Power supply", [])
         assert "input_voltage" in profile_to_attrs.get("Power supply", [])
-        # Fan must have rpm
-        assert "rpm" in profile_to_attrs.get("Fan", [])
+        # Fan intentionally has no attribute blocks because XClarity reports
+        # live tachometer values rather than stable hardware characteristics.
+        assert profile_to_attrs.get("Fan", []) == []

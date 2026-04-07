@@ -9,10 +9,13 @@
 #
 # Optional:
 #   CATC_VERIFY_SSL           true | false  (default: true)
-#   CATC_FETCH_INTERFACES     true | false  (default: false)
+#   CATC_FETCH_INTERFACES     true | false  (default: true)
 #                             When true, interfaces are fetched per-device and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   CATC_SITE_ASSIGNMENT_STRATEGY auto | bulk | membership  (default: auto)
+#                             Choose which device/site join method runs first.
+#                             The adapter still falls back to the other method.
 #   CATC_WAIT_ON_RATE_LIMIT   true | false  (default: true)
 #                             Let dnacentersdk honor Retry-After responses from
 #                             Catalyst Center automatically.
@@ -32,7 +35,8 @@ source "catc" {
   username          = "env('CATC_USER')"
   password          = "env('CATC_PASS')"
   verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
-  fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'false')"
+  fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'true')"
+  site_assignment_strategy = "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')"
   wait_on_rate_limit         = "env('CATC_WAIT_ON_RATE_LIMIT', 'true')"
   rate_limit_retry_attempts  = "env('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3')"
   rate_limit_retry_initial_delay = "env('CATC_RATE_LIMIT_RETRY_INITIAL_DELAY', '1.0')"
@@ -57,18 +61,6 @@ collector {
   sync_inventory   = "env('COLLECTOR_SYNC_INVENTORY', 'true')"
 }
 
-# ---------------------------------------------------------------------------
-# Network Devices
-#
-# The source adapter pre-normalises all Cisco-specific model strings and site
-# hierarchy extraction so that HCL expressions stay simple.
-#
-# Devices are looked up by name + site rather than serial because some CATC
-# device types (patch panels, virtual nodes) report an empty serial.  Querying
-# with serial="" matches every serial-less device and raises "get() returned
-# more than one result".  Name is unique per site in NetBox.
-# ---------------------------------------------------------------------------
-
 object "device" {
   source_collection = "devices"
   netbox_resource   = "dcim.devices"
@@ -84,7 +76,7 @@ object "device" {
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('model'), 'Unknown')"
+      model        = "when(source('model'), source('model'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -92,27 +84,36 @@ object "device" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "coalesce(source('role'), 'Network Device')" }
+    args     = { name = "when(source('role'), source('role'), 'Network Device')" }
     optional = false
   }
 
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('site_name'), 'Unknown')" }
+    args     = { name = "when(source('site_name'), regex_file(source('site_name'), 'catc_site_to_site'), 'Unknown')" }
     optional = false
+  }
+
+  prerequisite "location" {
+    method   = "ensure_location"
+    args     = {
+      name = "when(source('location_name'), source('location_name'), None)"
+      site = "prereq('site')"
+    }
+    optional = true
   }
 
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform_name'), 'Unknown')"
+      name         = "when(source('platform_name'), source('platform_name'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('name'), 'Unknown')"
+    value = "when(source('name'), source('name'), 'Unknown')"
   }
 
   field "device_type" {
@@ -127,13 +128,15 @@ object "device" {
     value = "prereq('site')"
   }
 
+  field "location" {
+    value = "prereq('location')"
+  }
+
   field "platform" {
     value = "prereq('platform')"
   }
 
   field "serial" {
-    # Use or None so that an empty string does not overwrite a previously-set
-    # serial number in the destination.
     value = "source('serial') or None"
   }
 
@@ -150,14 +153,6 @@ object "device" {
     value = "['catc-sync']"
   }
 
-  # ---------------------------------------------------------------------------
-  # Network Interfaces
-  #
-  # Interface sync requires CATC_FETCH_INTERFACES=true so the adapter fetches
-  # and embeds interface data inside each device record.  Set
-  # COLLECTOR_SYNC_INTERFACES=false to skip this step entirely.
-  # ---------------------------------------------------------------------------
-
   interface {
     source_items = "interfaces"
     enabled_if   = "collector.sync_interfaces"
@@ -167,7 +162,7 @@ object "device" {
     }
 
     field "type" {
-      value = "coalesce(source('type'), 'other')"
+      value = "when(source('type'), source('type'), 'other')"
     }
 
     field "enabled" {
@@ -175,11 +170,28 @@ object "device" {
     }
 
     field "description" {
-      value = "coalesce(source('description'), '')"
+      value = "when(source('description'), source('description'), '')"
+    }
+
+    field "mgmt_only" {
+      value = "source('mgmt_only')"
     }
 
     field "mac_address" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
     }
   }
 }

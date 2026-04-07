@@ -294,6 +294,47 @@ class TestEngineUpsertReporting:
         assert "10.0.0.1/24" in caplog.text
         assert "virtualization.vminterface" in caplog.text
 
+    def test_duplicate_ip_conflict_normalizes_existing_host_route_and_retries(self, caplog):
+        engine = Engine()
+        stats = RunStats("vms")
+        nb = MagicMock()
+        nb.upsert_with_outcome.side_effect = [
+            Exception(
+                "The request failed with code 400 Bad Request: {'address': ['Duplicate IP address found in global table: 10.0.0.1/32']}"
+            ),
+            SimpleNamespace(
+                object={"id": 55, "address": "10.0.0.1/24"},
+                outcome="updated",
+            ),
+        ]
+        nb.get.return_value = {"id": 55, "address": "10.0.0.1/32"}
+
+        with caplog.at_level(logging.INFO):
+            result = engine._upsert(
+                _ctx(nb=nb, dry_run=False),
+                "ipam.ip_addresses",
+                {
+                    "address": "10.0.0.1/24",
+                    "assigned_object_type": "virtualization.vminterface",
+                    "assigned_object_id": 77,
+                },
+                lookup_fields=["address"],
+                stats=stats,
+                nested_stats=stats,
+            )
+
+        assert result == {"id": 55, "address": "10.0.0.1/24"}
+        assert stats.errored == 0
+        assert stats.updated == 1
+        assert stats.nested_skipped == {}
+        nb.get.assert_called_once_with("ipam.ip_addresses", address="10.0.0.1/32")
+        nb.update.assert_called_once_with(
+            "ipam.ip_addresses",
+            55,
+            {"address": "10.0.0.1/24"},
+        )
+        assert "Normalizing host-route IP to desired prefix" in caplog.text
+
     def test_dry_run_created_outcome_counts_created(self):
         engine = Engine()
         stats = RunStats("devices")
@@ -390,6 +431,60 @@ class TestEngineUpsertReporting:
         assert "filters={'serial': 'ABC123'}" in caplog.text
         assert "match_count=2" in caplog.text
         assert "matched_ids=[11, 22]" in caplog.text
+
+    def test_live_ambiguous_lookup_records_error_and_logs_context(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb.list.return_value = [{"id": 11}, {"id": 22}]
+
+        with caplog.at_level(logging.WARNING):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "dcim.devices",
+                {"serial": "ABC123", "name": "switch-1"},
+                lookup_fields=["serial"],
+                stats=stats,
+                field_configs=[FieldConfig(name="name", value="source('name')")],
+            )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.errored == 1
+        assert stats.created == 0
+        assert stats.updated == 0
+        assert stats.skipped == 0
+        assert "resource=dcim.devices" in caplog.text
+        assert "filters={'serial': 'ABC123'}" in caplog.text
+        assert "match_count=2" in caplog.text
+        assert "matched_ids=[11, 22]" in caplog.text
+
+    def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.get.side_effect = RuntimeError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "dcim.devices",
+                {"serial": "ABC123", "name": "switch-1"},
+                lookup_fields=["serial"],
+                stats=stats,
+                field_configs=[FieldConfig(name="name", value="source('name')")],
+            )
+
+        assert result is None
+        assert stats.processed == 1
+        assert stats.errored == 1
+        assert "Live lookup ambiguous" not in caplog.text
+        assert "Upsert failed" in caplog.text
 
     def test_dry_run_noop_outcome_counts_skipped(self):
         engine = Engine()

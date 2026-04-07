@@ -25,11 +25,16 @@ Available methods:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import re
+import threading
+from contextlib import contextmanager
+from itertools import count
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,139 @@ def extract_field(obj: Any, field: str) -> Any:
     return getattr(obj, field, None)
 
 
+def normalize_compare_value(value: Any) -> Any:
+    """Normalize NetBox-returned values into plain Python structures.
+
+    NetBox / pynetbox responses for JSON-like fields may arrive as wrapper
+    objects, ordered mappings, or nested record objects. Convert those into a
+    stable structure before comparing them with the desired payload.
+    """
+    if value is None:
+        return None
+
+    serializer = getattr(value, "serialize", None)
+    if callable(serializer):
+        try:
+            value = serializer()
+        except Exception:
+            pass
+
+    if isinstance(value, dict):
+        return {
+            key: normalize_compare_value(val)
+            for key, val in sorted(value.items())
+            if val is not None
+        }
+
+    items = getattr(value, "items", None)
+    if callable(items):
+        try:
+            return {
+                key: normalize_compare_value(val)
+                for key, val in sorted(items())
+                if val is not None
+            }
+        except Exception:
+            pass
+
+    if isinstance(value, (list, tuple)):
+        normalized = [normalize_compare_value(item) for item in value]
+        if all(
+            isinstance(item, dict)
+            and "name" in item
+            and "value" in item
+            for item in normalized
+        ):
+            return {
+                str(item["name"]): normalize_compare_value(item["value"])
+                for item in normalized
+                if item.get("value") is not None
+            }
+        return normalized
+
+    return value
+
+
+def load_current_field(
+    nb: Any,
+    resource: str,
+    object_id: int | None,
+    obj: Any,
+    field: str,
+    *,
+    force_refresh: bool = False,
+) -> Any:
+    """Return *field* from *obj* or a freshly fetched record when needed.
+
+    Some NetBox upsert responses do not include full `schema` / `attributes`
+    payloads even when the record already exists and the upsert is a no-op.
+    Fetch the current record by ID before deciding whether a follow-on PATCH is
+    actually needed.
+    """
+    value = extract_field(obj, field)
+    if (value is not None and not force_refresh) or object_id is None:
+        return value
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value
+    try:
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
+    except Exception as exc:
+        logger.debug(
+            "Could not refresh %s id=%s for field %r comparison: %s",
+            resource,
+            object_id,
+            field,
+            exc,
+        )
+        return value
+    return extract_field(current, field)
+
+
+def load_current_field_with_status(
+    nb: Any,
+    resource: str,
+    object_id: int | None,
+    obj: Any,
+    field: str,
+    *,
+    force_refresh: bool = False,
+) -> tuple[Any, bool]:
+    """Return ``(value, refreshed_ok)`` for follow-up field comparisons."""
+    value = extract_field(obj, field)
+    if (value is not None and not force_refresh) or object_id is None:
+        return value, False
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value, False
+    try:
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
+    except Exception as exc:
+        logger.debug(
+            "Could not refresh %s id=%s for field %r comparison: %s",
+            resource,
+            object_id,
+            field,
+            exc,
+        )
+        return value, False
+    return extract_field(current, field), True
+
+
 class PrerequisiteArgumentError(ValueError):
     """Raised when a prerequisite method receives invalid required input."""
 
@@ -87,6 +225,123 @@ class PrerequisiteRunner:
 
     def __init__(self, nb: Any) -> None:
         self.nb = nb
+        self._dry_run_id_counter = count(start=-1000000, step=-1)
+        self._dry_run_ids: dict[tuple[str, Any], int] = {}
+        self._dry_run_lock = threading.Lock()
+        self._live_field_cache: dict[tuple[str, int, str], Any] = {}
+        self._live_field_cache_lock = threading.Lock()
+        self._live_field_key_locks: dict[tuple[str, int, str], threading.RLock] = {}
+
+    @staticmethod
+    def _freeze_dry_run_key(value: Any) -> Any:
+        """Convert nested dry-run lookup data into a hashable cache key."""
+        if isinstance(value, dict):
+            return tuple(
+                (key, PrerequisiteRunner._freeze_dry_run_key(val))
+                for key, val in sorted(value.items())
+            )
+        if isinstance(value, list):
+            return tuple(PrerequisiteRunner._freeze_dry_run_key(item) for item in value)
+        return value
+
+    def _dry_run_placeholder_id(self, resource: str, lookup: dict[str, Any]) -> int:
+        key = (resource, self._freeze_dry_run_key(lookup))
+        with self._dry_run_lock:
+            placeholder_id = self._dry_run_ids.get(key)
+            if placeholder_id is None:
+                placeholder_id = next(self._dry_run_id_counter)
+                self._dry_run_ids[key] = placeholder_id
+            return placeholder_id
+
+    def _load_live_field(
+        self,
+        resource: str,
+        object_id: int | None,
+        obj: Any,
+        field: str,
+    ) -> Any:
+        """Return a canonical field value with a per-run live refresh cache."""
+        if object_id is None:
+            return normalize_compare_value(extract_field(obj, field))
+
+        cache_key = (resource, object_id, field)
+        with self._live_field_key_lock(cache_key):
+            return self._load_live_field_unlocked(resource, object_id, obj, field)
+
+    def _load_live_field_unlocked(
+        self,
+        resource: str,
+        object_id: int | None,
+        obj: Any,
+        field: str,
+    ) -> Any:
+        """Return a canonical field value while the per-key lock is already held."""
+        if object_id is None:
+            return normalize_compare_value(extract_field(obj, field))
+
+        cache_key = (resource, object_id, field)
+        with self._live_field_cache_lock:
+            cached = self._live_field_cache.get(cache_key, _MISSING)
+        if cached is not _MISSING:
+            return cached
+
+        current, refreshed_ok = load_current_field_with_status(
+            self.nb,
+            resource,
+            object_id,
+            obj,
+            field,
+            force_refresh=True,
+        )
+        normalized = normalize_compare_value(current)
+
+        if refreshed_ok:
+            with self._live_field_cache_lock:
+                cached = self._live_field_cache.get(cache_key, _MISSING)
+                if cached is not _MISSING:
+                    return cached
+                self._live_field_cache[cache_key] = normalized
+
+        return normalized
+
+    def _store_live_field(
+        self,
+        resource: str,
+        object_id: int | None,
+        field: str,
+        value: Any,
+    ) -> None:
+        """Persist a canonical field value into the per-run live refresh cache."""
+        if object_id is None:
+            return
+        cache_key = (resource, object_id, field)
+        with self._live_field_key_lock(cache_key):
+            self._store_live_field_unlocked(resource, object_id, field, value)
+
+    def _store_live_field_unlocked(
+        self,
+        resource: str,
+        object_id: int | None,
+        field: str,
+        value: Any,
+    ) -> None:
+        """Persist a canonical field value while the per-key lock is already held."""
+        if object_id is None:
+            return
+        cache_key = (resource, object_id, field)
+        with self._live_field_cache_lock:
+            self._live_field_cache[cache_key] = normalize_compare_value(value)
+
+    @contextmanager
+    def _live_field_key_lock(self, cache_key: tuple[str, int, str]):
+        """Serialize live refresh / compare / write work for one field key."""
+        with self._live_field_cache_lock:
+            key_lock = self._live_field_key_locks.get(cache_key)
+            if key_lock is None:
+                key_lock = threading.RLock()
+                self._live_field_key_locks[cache_key] = key_lock
+        with key_lock:
+            yield
 
     def run(
         self,
@@ -163,7 +418,7 @@ class PrerequisiteRunner:
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_site name=%s", name)
-            return None
+            return self._dry_run_placeholder_id("dcim.sites", {"name": name})
         obj = self.nb.upsert(
             "dcim.sites",
             {"name": name, "slug": slug},
@@ -183,7 +438,10 @@ class PrerequisiteRunner:
         lookup = ["name", "site"] if site_id is not None else ["name"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_location name=%s site=%s", name, site_id)
-            return None
+            lookup_payload = {"name": name}
+            if site_id is not None:
+                lookup_payload["site"] = site_id
+            return self._dry_run_placeholder_id("dcim.locations", lookup_payload)
         obj = self.nb.upsert("dcim.locations", payload, lookup_fields=lookup)
         return extract_id(obj)
 
@@ -201,7 +459,10 @@ class PrerequisiteRunner:
         lookup = ["name", "site"] if site_id is not None else ["name"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_rack name=%s site=%s", name, site_id)
-            return None
+            lookup_payload = {"name": name}
+            if site_id is not None:
+                lookup_payload["site"] = site_id
+            return self._dry_run_placeholder_id("dcim.racks", lookup_payload)
         obj = self.nb.upsert("dcim.racks", payload, lookup_fields=lookup)
         return extract_id(obj)
 
@@ -276,7 +537,12 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster name=%s", name)
             return None
-        obj = self.nb.upsert("virtualization.clusters", payload, lookup_fields=["name"])
+        lookup_fields = ["name", "type"] if payload.get("type") is not None else ["name"]
+        obj = self.nb.upsert(
+            "virtualization.clusters",
+            payload,
+            lookup_fields=lookup_fields,
+        )
         return extract_id(obj)
 
     def _ensure_inventory_item_role(self, args: dict, dry_run: bool) -> int | None:
@@ -338,6 +604,31 @@ class PrerequisiteRunner:
                     result["rack_position"] = pos_int
             except (TypeError, ValueError):
                 result["rack_position"] = position
+
+        site_candidate = args.get("site_candidate")
+        location_candidate = args.get("location_candidate")
+        datacenter_candidate = args.get("datacenter_candidate") or args.get("data_center_candidate")
+        serial_candidate = args.get("serial") or args.get("name")
+        mapped_site = args.get("site")
+        has_xclarity_candidates = any(
+            key in args
+            for key in ("site_candidate", "location_candidate", "datacenter_candidate", "data_center_candidate")
+        )
+        if (
+            result["site_id"] is None
+            or str(mapped_site or "").strip().lower() == "unknown"
+        ) and has_xclarity_candidates:
+            logger.debug(
+                (
+                    "[XCLARITY] placement fallback serial=%s raw_location=%s "
+                    "site_lookup_input=%s raw_dataCenter=%s mapped_site=%s"
+                ),
+                serial_candidate or "-",
+                location_candidate or "-",
+                site_candidate or "-",
+                datacenter_candidate or "-",
+                mapped_site or "-",
+            )
 
         return result
 
@@ -428,7 +719,18 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_tenant name=%s", name)
             return None
-        obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+        try:
+            obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+        except Exception as exc:
+            exc_str = str(exc)
+            if "400" in exc_str and "unique" in exc_str.lower():
+                logger.debug("ensure_tenant collision for %r — falling back to GET", name)
+                try:
+                    obj = self.nb.get("tenancy.tenants", slug=slug)
+                except Exception:
+                    return None
+            else:
+                raise
         return extract_id(obj)
 
     def _lookup_tenant(self, args: dict, dry_run: bool) -> int | None:
@@ -507,8 +809,9 @@ class PrerequisiteRunner:
                        auto-generate a schema when no explicit schema is given.
 
         The schema is applied via a dedicated ``nb.update`` (PATCH) call after
-        the upsert so it is always written even when the profile already exists
-        and the upsert would otherwise skip unchanged fields.
+        the upsert when a schema is present and differs from the existing
+        profile value. This avoids relying on upsert behavior for schema
+        changes while still skipping redundant PATCHes.
         """
         name = require_text_arg(args, "name", "ensure_module_type_profile")
         slug = slugify(name)
@@ -531,19 +834,33 @@ class PrerequisiteRunner:
             {"name": name, "slug": slug},
             lookup_fields=["name"],
         )
-        # Apply the schema in a separate PATCH after the upsert so it is
-        # always written even when the profile record already existed.
+        # Apply the schema in a separate PATCH after the upsert when it is
+        # present and differs from the current record.
         profile_id = extract_id(obj)
         if profile_id is not None and schema is not None:
-            existing_schema = extract_field(obj, "schema")
-            if existing_schema == schema:
-                return profile_id
-            try:
-                self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
-            except Exception as exc:
-                logger.debug(
-                    "Could not set schema on module_type_profile %r: %s", name, exc
+            normalized_schema = normalize_compare_value(schema)
+            cache_key = ("dcim.module_type_profiles", profile_id, "schema")
+            with self._live_field_key_lock(cache_key):
+                existing_schema = self._load_live_field_unlocked(
+                    "dcim.module_type_profiles",
+                    profile_id,
+                    obj,
+                    "schema",
                 )
+                if existing_schema == normalized_schema:
+                    return profile_id
+                try:
+                    self.nb.update("dcim.module_type_profiles", profile_id, {"schema": schema})
+                    self._store_live_field_unlocked(
+                        "dcim.module_type_profiles",
+                        profile_id,
+                        "schema",
+                        normalized_schema,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Could not set schema on module_type_profile %r: %s", name, exc
+                    )
         return profile_id
 
     def _ensure_module_type(self, args: dict, dry_run: bool) -> int | None:
@@ -586,21 +903,35 @@ class PrerequisiteRunner:
 
         # Step 2: apply attributes via a direct PATCH after the profile has
         # been persisted.  Using ``nb.update`` (PATCH) rather than ``upsert``
-        # ensures attributes are always written even when the type record
-        # otherwise appears unchanged.
+        # lets us write attributes only when they differ, even if the type
+        # record itself otherwise appears unchanged.
         if module_type_id and attrs:
             clean_attrs = {k: v for k, v in attrs.items() if v is not None}
             if clean_attrs:
-                existing_attrs = extract_field(obj, "attributes")
-                if existing_attrs == clean_attrs:
-                    return module_type_id
-                try:
-                    self.nb.update(
-                        "dcim.module_types", module_type_id, {"attributes": clean_attrs}
+                normalized_attrs = normalize_compare_value(clean_attrs)
+                cache_key = ("dcim.module_types", module_type_id, "attributes")
+                with self._live_field_key_lock(cache_key):
+                    existing_attrs = self._load_live_field_unlocked(
+                        "dcim.module_types",
+                        module_type_id,
+                        obj,
+                        "attributes",
                     )
-                except Exception as exc:
-                    logger.debug(
-                        "Could not set attributes on module_type %r: %s", model, exc
-                    )
+                    if existing_attrs == normalized_attrs:
+                        return module_type_id
+                    try:
+                        self.nb.update(
+                            "dcim.module_types", module_type_id, {"attributes": clean_attrs}
+                        )
+                        self._store_live_field_unlocked(
+                            "dcim.module_types",
+                            module_type_id,
+                            "attributes",
+                            normalized_attrs,
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            "Could not set attributes on module_type %r: %s", model, exc
+                        )
 
         return module_type_id

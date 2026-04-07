@@ -382,11 +382,17 @@ class TestProcessTaggedVlans:
 # ---------------------------------------------------------------------------
 
 
-def _make_nb_vlan_obj(record_id: int, vid: int, site_id: int | None = None) -> MagicMock:
+def _make_nb_vlan_obj(
+    record_id: int,
+    vid: int,
+    site_id: int | None = None,
+    name: str | None = None,
+) -> MagicMock:
     """Create a mock NetBox VLAN object like pynetbox returns."""
     vlan = MagicMock()
     vlan.id = record_id
     vlan.vid = vid
+    vlan.name = name or f"VLAN{vid}"
     if site_id is None:
         vlan.site = None
     else:
@@ -533,6 +539,52 @@ class TestFindOrCreateVlanMultisite:
         assert payload["site"] == 3
         assert upsert_call[1]["lookup_fields"] == []
         assert result == new_vlan
+
+    def test_site_vlan_preserves_existing_name_to_prevent_flapping(self):
+        """When matching an existing site VLAN, keep its current name stable."""
+        engine = _make_engine()
+        ctx = _make_ctx()
+        existing = _make_nb_vlan_obj(
+            record_id=3393,
+            vid=3393,
+            site_id=5,
+            name="10.20.193-3393-Core-vMotion",
+        )
+        ctx.nb.list.return_value = [existing]
+        ctx.nb.upsert.return_value = _make_nb_vlan(3393)
+
+        engine._find_or_create_vlan_multisite(
+            {"vid": 3393, "name": "10.20.193-3393-Genetec-vMotion", "site": 5},
+            ctx,
+        )
+
+        upsert_call = ctx.nb.upsert.call_args
+        payload = upsert_call[0][1]
+        assert payload["id"] == 3393
+        assert payload["name"] == "10.20.193-3393-Core-vMotion"
+
+    def test_siteless_vlan_preserves_existing_name_to_prevent_flapping(self):
+        """When matching an existing siteless VLAN, keep its current name stable."""
+        engine = _make_engine()
+        ctx = _make_ctx()
+        existing = _make_nb_vlan_obj(
+            record_id=1701,
+            vid=3393,
+            site_id=None,
+            name="10.20.193-3393-Core-vMotion",
+        )
+        ctx.nb.list.return_value = [existing]
+        ctx.nb.upsert.return_value = _make_nb_vlan(1701)
+
+        engine._find_or_create_vlan_multisite(
+            {"vid": 3393, "name": "10.20.193-3393-Genetec-vMotion", "site": 8},
+            ctx,
+        )
+
+        upsert_call = ctx.nb.upsert.call_args
+        payload = upsert_call[0][1]
+        assert payload["id"] == 1701
+        assert payload["name"] == "10.20.193-3393-Core-vMotion"
 
     def test_process_tagged_vlans_uses_multisite_for_ipam_vlans(self):
         """_process_tagged_vlans should call _find_or_create_vlan_multisite for ipam.vlans."""

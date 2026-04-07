@@ -166,6 +166,46 @@ class TestCatalystConnect:
         with pytest.raises(RuntimeError, match="CATC_USER"):
             src.connect(catc_config)
 
+    def test_connect_defaults_site_assignment_strategy_to_auto(self, catc_config):
+        fake_api = MagicMock()
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=fake_api)
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+
+        assert src._site_assignment_strategy == "auto"
+
+    def test_connect_accepts_membership_site_assignment_strategy(self, catc_config):
+        catc_config.extra = {
+            "fetch_interfaces": "false",
+            "site_assignment_strategy": "membership",
+        }
+        fake_api = MagicMock()
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=fake_api)
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+
+        assert src._site_assignment_strategy == "membership"
+
+    def test_connect_invalid_site_assignment_strategy_defaults_to_auto(self, catc_config, caplog):
+        catc_config.extra = {
+            "fetch_interfaces": "false",
+            "site_assignment_strategy": "bogus",
+        }
+        fake_api = MagicMock()
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=fake_api)
+
+        src = CatalystCenterSource()
+        with caplog.at_level("WARNING"):
+            src.connect(catc_config)
+
+        assert src._site_assignment_strategy == "auto"
+        assert "unsupported site_assignment_strategy" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # get_objects()
@@ -219,6 +259,34 @@ class TestCatalystGetObjects:
         assert d["serial"] == "FOC12345678"
         assert d["status"] == "active"
         assert d["site_name"] == "Clemson"
+
+    def test_get_devices_preserves_floor_as_location(self):
+        src = self._connected_source()
+
+        site = SimpleNamespace(
+            id="site-1",
+            siteNameHierarchy="Global/US/Southeast/Watt/First Floor",
+        )
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+
+        result = src.get_objects("devices")
+
+        assert result[0]["site_name"] == "Watt"
+        assert result[0]["location_name"] == "First Floor"
 
     def test_deduplicates_by_serial(self):
         src = self._connected_source()
@@ -342,6 +410,22 @@ class TestCatalystEnrichDevice:
         result = src._enrich_device(device, "Global/US/SE/CU")
         assert result["serial"] == "FOC12345"
 
+    def test_hierarchy_labels_are_title_cased(self):
+        src = CatalystCenterSource()
+        device = SimpleNamespace(
+            hostname="ap-01",
+            platformId="AIR-CAP2702E-B-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6",
+            serialNumber="sn001",
+            reachabilityStatus="Reachable",
+            family="Unified AP",
+        )
+        result = src._enrich_device(device, "Global/US/Southeast/watt/first floor")
+        assert result["site_name"] == "Watt"
+        assert result["location_name"] == "First Floor"
+
 
 # ---------------------------------------------------------------------------
 # close()
@@ -435,14 +519,14 @@ class TestMaskToPrefix:
 
 
 class TestCatalystConnectFetchInterfaces:
-    def test_fetch_interfaces_false_by_default(self, catc_config):
+    def test_fetch_interfaces_true_by_default(self, catc_config):
         catc_config.extra = {}
         _fake_dnac_api = sys.modules["dnacentersdk.api"]
         _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
 
         src = CatalystCenterSource()
         src.connect(catc_config)
-        assert src._fetch_interfaces is False
+        assert src._fetch_interfaces is True
 
     def test_fetch_interfaces_enabled_via_extra(self, catc_config):
         catc_config.extra = {"fetch_interfaces": "true"}
@@ -724,6 +808,50 @@ class TestCatalystGetObjectsWithInterfaces:
         assert len(result[0]["interfaces"]) == 1
         assert result[0]["interfaces"][0]["name"] == "GigabitEthernet1/0/1"
 
+    def test_unified_ap_gets_mgmt0_radio0_with_management_ip(self):
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        src._client.site_design = None
+        src._fetch_interfaces = True
+
+        site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="ap-01",
+            platformId="C9120AXI-B",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.9.3",
+            serialNumber="FCW12345678",
+            reachabilityStatus="Reachable",
+            family="Unified AP",
+            managementIpAddress="10.0.53.115",
+            macAddress="70:7d:b9:33:47:c0",
+            apEthernetMacAddress="38:90:a5:f9:3d:cc",
+            id="ap-device-uuid-1",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        ap = result[0]
+        assert "interfaces" in ap
+        names = {iface["name"] for iface in ap["interfaces"]}
+        assert names == {"mgmt0", "radio0"}
+
+        mgmt0 = next(iface for iface in ap["interfaces"] if iface["name"] == "mgmt0")
+        radio0 = next(iface for iface in ap["interfaces"] if iface["name"] == "radio0")
+
+        assert mgmt0["ip_address"] == "10.0.53.115/32"
+        assert mgmt0["mgmt_only"] is True
+        assert radio0["ip_address"] == ""
+        assert radio0["mac_address"] == "38:90:A5:F9:3D:CC"
+        src._client.devices.get_interface_info_by_id.assert_not_called()
+
     def test_interfaces_not_fetched_when_disabled(self):
         src = CatalystCenterSource()
         src._client = MagicMock()
@@ -814,8 +942,44 @@ class TestCatalystBulkAssignments:
         )
         src._client.sites.get_membership.assert_not_called()
 
-    def test_get_devices_parses_wrapped_bulk_assignment_response(self):
+    def test_get_devices_prefers_membership_when_configured(self):
         src = self._connected_source()
+        src._site_assignment_strategy = "membership"
+
+        root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
+        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        membership = SimpleNamespace(device=[SimpleNamespace(response=[device])])
+
+        src._client.sites.get_site.side_effect = [
+            SimpleNamespace(response=[root_site, child_site]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.sites.get_membership.side_effect = [
+            SimpleNamespace(device=[]),
+            membership,
+        ]
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert result[0]["deviceId"] == "device-uuid-1"
+        src._client.site_design.get_site_assigned_network_devices.assert_not_called()
+
+    def test_get_devices_membership_first_falls_back_to_bulk(self):
+        src = self._connected_source()
+        src._site_assignment_strategy = "membership"
 
         root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
         child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
@@ -841,6 +1005,10 @@ class TestCatalystBulkAssignments:
             SimpleNamespace(response=[root_site, child_site]),
             SimpleNamespace(response=[]),
         ]
+        src._client.sites.get_membership.side_effect = [
+            SimpleNamespace(device=[]),
+            SimpleNamespace(device=[]),
+        ]
         src._client.devices.get_device_list.side_effect = [
             SimpleNamespace(response=[device]),
             SimpleNamespace(response=[]),
@@ -853,50 +1021,8 @@ class TestCatalystBulkAssignments:
 
         assert len(result) == 1
         assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
-        src._client.sites.get_membership.assert_not_called()
-
-    def test_get_devices_falls_back_when_bulk_assignment_parse_returns_empty(self):
-        src = self._connected_source()
-
-        root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
-        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
-        device = SimpleNamespace(
-            hostname="switch-01.clemson.edu",
-            platformId="C9300-48P-K9",
-            role="ACCESS",
-            softwareType="IOS-XE",
-            softwareVersion="17.6.4",
-            serialNumber="FOC12345678",
-            reachabilityStatus="Reachable",
-            family="Switches",
-            managementIpAddress="10.0.0.1",
-            id="device-uuid-1",
-        )
-        membership = SimpleNamespace(device=[SimpleNamespace(response=[device])])
-
-        src._client.sites.get_site.side_effect = [
-            SimpleNamespace(response=[root_site, child_site]),
-            SimpleNamespace(response=[]),
-        ]
-        src._client.devices.get_device_list.side_effect = [
-            SimpleNamespace(response=[device]),
-            SimpleNamespace(response=[]),
-        ]
-        src._client.site_design.get_site_assigned_network_devices.return_value = SimpleNamespace(
-            response={}
-        )
-        src._client.sites.get_membership.side_effect = [
-            SimpleNamespace(device=[]),
-            membership,
-        ]
-
-        result = src.get_objects("devices")
-
-        assert len(result) == 1
-        assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
         assert src._client.sites.get_membership.called
+        src._client.site_design.get_site_assigned_network_devices.assert_called_once()
 
     def test_select_assignment_roots_uses_shallowest_non_global_hierarchy(self):
         src = self._connected_source()

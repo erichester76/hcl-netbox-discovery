@@ -35,6 +35,19 @@
 #   location.room          → NetBox location (area within site)
 #   location.rack          → NetBox rack
 #   location.lowestRackUnit → rack position (front face, U number)
+#
+# Multiple XClarity support (iterator):
+#   To collect from more than one XClarity instance, add an iterator {} block
+#   inside the collector {} block. Keep XCLARITY_USER and XCLARITY_PASS in the
+#   source block when credentials are shared and iterate only XCLARITY_HOST.
+#   Example:
+#
+#     collector {
+#       iterator {
+#         max_workers   = 2
+#         XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
+#       }
+#     }
 
 source "xclarity" {
   api_type   = "rest"
@@ -84,6 +97,12 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
+
+  # Uncomment and populate to collect from multiple XClarity instances in one run:
+  # iterator {
+  #   max_workers   = 2
+  #   XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
+  # }
 }
 
 # ---------------------------------------------------------------------------
@@ -98,7 +117,7 @@ object "node" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -107,7 +126,6 @@ object "node" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -178,7 +196,7 @@ object "node" {
   }
 
   field "status" {
-    value = "when(source('powerStatus') == 'on', 'active', 'offline')"
+    value = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
   }
 
   # Network interfaces — one block covers all physical ports from onboard
@@ -486,10 +504,6 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer') or 'Lenovo'"
     }
-
-    attribute "rpm" {
-      value = "int(coalesce('speed', 'rpm')) if coalesce('speed', 'rpm') != None else None"
-    }
   }
 }
 
@@ -504,7 +518,7 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -513,7 +527,6 @@ object "chassis" {
     args     = {
       model        = "coalesce('productName', 'machineType')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -605,7 +618,7 @@ object "switch" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -614,7 +627,6 @@ object "switch" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -723,7 +735,7 @@ object "storage" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -732,7 +744,6 @@ object "storage" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }

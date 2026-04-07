@@ -151,6 +151,18 @@ def _hierarchy_depth(hierarchy: str) -> int:
     return len([part for part in hierarchy.split("/") if part])
 
 
+def _normalize_hierarchy_label(value: str) -> str:
+    """Normalize hierarchy labels while preserving already mixed-case values."""
+    if not value:
+        return ""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    if normalized.islower() or normalized.isupper():
+        return normalized.title()
+    return normalized
+
+
 def _coerce_bool(value: Any, default: bool) -> bool:
     """Return *value* interpreted as a boolean."""
     if isinstance(value, bool):
@@ -237,8 +249,6 @@ def _payload_preview(payload: Any) -> str:
         if value is not None:
             preview[key] = value
     return repr(preview or payload)
-
-
 # ---------------------------------------------------------------------------
 # CatalystCenterSource
 # ---------------------------------------------------------------------------
@@ -250,6 +260,7 @@ class CatalystCenterSource(DataSource):
         self._client: Any | None = None
         self._config: Any | None = None
         self._fetch_interfaces: bool = False
+        self._site_assignment_strategy: str = "auto"
         self._wait_on_rate_limit: bool = True
         self._rate_limit_retry_attempts: int = 3
         self._rate_limit_retry_initial_delay: float = 1.0
@@ -282,7 +293,15 @@ class CatalystCenterSource(DataSource):
             )
 
         extra = config.extra or {}
-        self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
+        self._fetch_interfaces = _coerce_bool(extra.get("fetch_interfaces", "true"), True)
+        assignment_strategy = str(extra.get("site_assignment_strategy", "auto")).strip().lower()
+        if assignment_strategy not in {"auto", "bulk", "membership"}:
+            logger.warning(
+                "CatalystCenter: unsupported site_assignment_strategy=%r; defaulting to 'auto'",
+                assignment_strategy,
+            )
+            assignment_strategy = "auto"
+        self._site_assignment_strategy = assignment_strategy
         self._wait_on_rate_limit = _coerce_bool(extra.get("wait_on_rate_limit", "true"), True)
         self._rate_limit_retry_attempts = max(
             1,
@@ -340,13 +359,35 @@ class CatalystCenterSource(DataSource):
         sites = self._fetch_all_sites()
         logger.debug("CatalystCenter: fetched %d sites", len(sites))
 
+        strategy = self._site_assignment_strategy
+        logger.debug("CatalystCenter: using site assignment strategy=%s", strategy)
+
+        if strategy == "membership":
+            devices = self._get_devices_via_site_membership(sites)
+            if devices:
+                return devices
+            logger.warning(
+                "CatalystCenter: membership-first site assignment returned no devices; "
+                "falling back to bulk site-assignment join"
+            )
+            bulk_devices = self._get_devices_via_bulk_assignment_join(sites)
+            return bulk_devices or []
+
+        bulk_devices = self._get_devices_via_bulk_assignment_join(sites)
+        if bulk_devices is not None:
+            return bulk_devices
+
+        logger.info(
+            "CatalystCenter: falling back to per-site membership walk because "
+            "bulk site-assignment join did not produce a usable result"
+        )
+        return self._get_devices_via_site_membership(sites)
+
+    def _get_devices_via_bulk_assignment_join(self, sites: list[Any]) -> list[dict] | None:
+        """Return devices using the bulk site-assignment API, or ``None`` on fallback."""
         assignments = self._fetch_site_assignments(sites)
         if assignments is None:
-            logger.info(
-                "CatalystCenter: falling back to per-site membership walk because "
-                "bulk site assignment lookup is unavailable"
-            )
-            return self._get_devices_via_site_membership(sites)
+            return None
 
         raw_devices = self._fetch_all_devices()
         logger.debug(
@@ -356,10 +397,10 @@ class CatalystCenterSource(DataSource):
         if raw_devices and not assignments:
             logger.warning(
                 "CatalystCenter: bulk site assignment lookup returned no assignments "
-                "for %d inventory devices; falling back to per-site membership walk",
+                "for %d inventory devices",
                 len(raw_devices),
             )
-            return self._get_devices_via_site_membership(sites)
+            return None
 
         devices: list[dict] = []
         seen_devices: set[str] = set()
@@ -381,10 +422,11 @@ class CatalystCenterSource(DataSource):
             seen_devices.add(dedupe_key)
 
             if self._fetch_interfaces:
-                if device_id:
-                    enriched["interfaces"] = self._fetch_device_interfaces(device_id)
-                else:
-                    enriched["interfaces"] = []
+                enriched["interfaces"] = self._collect_interfaces_for_device(
+                    device=device,
+                    device_id=device_id,
+                    enriched_device=enriched,
+                )
             devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
@@ -427,10 +469,11 @@ class CatalystCenterSource(DataSource):
                     seen_devices.add(dedupe_key)
                     enriched = self._enrich_device(device, site_hierarchy)
                     if self._fetch_interfaces:
-                        if device_id:
-                            enriched["interfaces"] = self._fetch_device_interfaces(device_id)
-                        else:
-                            enriched["interfaces"] = []
+                        enriched["interfaces"] = self._collect_interfaces_for_device(
+                            device=device,
+                            device_id=device_id,
+                            enriched_device=enriched,
+                        )
                     devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
@@ -614,8 +657,6 @@ class CatalystCenterSource(DataSource):
                 if retry_after is None:
                     delay = min(delay * 2, self._rate_limit_retry_max_delay)
 
-        raise RuntimeError(f"CatalystCenter: exhausted retries for {operation}")
-
     def _extract_status_code(self, exc: Exception) -> int | None:
         """Best-effort extraction of an HTTP status code from an SDK exception."""
         for attr in ("status_code", "status", "http_status"):
@@ -667,6 +708,11 @@ class CatalystCenterSource(DataSource):
 
         name = (hostname.split(".")[0] if hostname else "")[:64] or "Unknown"
 
+        site_name = _normalize_hierarchy_label(
+            _hierarchy_part(site_hierarchy, 3) or _hierarchy_part(site_hierarchy, 2)
+        )
+        location_name = _normalize_hierarchy_label(_hierarchy_part(site_hierarchy, 4))
+
         return {
             # --- normalised convenience fields ---
             "name":          name,
@@ -676,10 +722,8 @@ class CatalystCenterSource(DataSource):
             "platform_name": f"{software_type.upper()} {software_version}".strip() or "Unknown",
             "serial":        serial.upper() if serial else "",
             "ip_address":    mgmt_ip,
-            "site_name":     (_hierarchy_part(site_hierarchy, 3)
-                              or _hierarchy_part(site_hierarchy, 2)
-                              or "Unknown"),
-            "location_name": _hierarchy_part(site_hierarchy, 4),
+            "site_name":     site_name,
+            "location_name": location_name,
             "status":        "active" if "Reachable" in reachability else "offline",
             # --- passthrough raw fields ---
             "hostname":             hostname,
@@ -720,6 +764,79 @@ class CatalystCenterSource(DataSource):
             raw_list = []
 
         return [self._enrich_interface(iface) for iface in raw_list]
+
+    def _collect_interfaces_for_device(
+        self,
+        device: Any,
+        device_id: str,
+        enriched_device: dict[str, Any],
+    ) -> list[dict]:
+        """Return the full interface list for a device, including AP parity shims."""
+        interfaces: list[dict]
+        if self._is_unified_ap(device):
+            interfaces = []
+        elif device_id:
+            interfaces = self._fetch_device_interfaces(device_id)
+        else:
+            interfaces = []
+
+        return self._augment_unified_ap_interfaces(device, enriched_device, interfaces)
+
+    def _is_unified_ap(self, device: Any) -> bool:
+        """Return ``True`` when Catalyst Center classifies the device as a unified AP."""
+        family = str(_safe_get(device, "family", "") or "").lower()
+        return "unified ap" in family
+
+    def _augment_unified_ap_interfaces(
+        self,
+        device: Any,
+        enriched_device: dict[str, Any],
+        interfaces: list[dict],
+    ) -> list[dict]:
+        """Add AP management/radio interfaces to match legacy CATC collector behavior."""
+        if not self._is_unified_ap(device):
+            return interfaces
+
+        result = list(interfaces)
+        existing_names = {str(item.get("name", "")).lower() for item in result}
+
+        mgmt_ip = str(enriched_device.get("managementIpAddress", "") or "").strip()
+        mgmt_ip_cidr = ""
+        if mgmt_ip:
+            if "/" in mgmt_ip:
+                mgmt_ip_cidr = mgmt_ip
+            elif ":" in mgmt_ip:
+                mgmt_ip_cidr = f"{mgmt_ip}/128"
+            else:
+                mgmt_ip_cidr = f"{mgmt_ip}/32"
+
+        if "mgmt0" not in existing_names:
+            result.append(
+                {
+                    "name": "mgmt0",
+                    "type": "1000base-t",
+                    "enabled": True,
+                    "description": "Management Interface",
+                    "mac_address": str(_safe_get(device, "macAddress", "") or "").upper(),
+                    "ip_address": mgmt_ip_cidr,
+                    "mgmt_only": True,
+                }
+            )
+            existing_names.add("mgmt0")
+
+        if "radio0" not in existing_names:
+            result.append(
+                {
+                    "name": "radio0",
+                    "type": "other",
+                    "enabled": True,
+                    "description": "Radio Interface",
+                    "mac_address": str(_safe_get(device, "apEthernetMacAddress", "") or "").upper(),
+                    "ip_address": "",
+                }
+            )
+
+        return result
 
     def _enrich_interface(self, iface: Any) -> dict:
         """Return a normalised dict for a single DNAC interface record."""

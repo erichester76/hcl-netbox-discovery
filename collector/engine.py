@@ -10,12 +10,14 @@ engine.run("mappings/vmware.hcl")
 from __future__ import annotations
 
 import contextvars
+import inspect
 import ipaddress
 import logging
 import re as _re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from itertools import count
 from typing import Any
 
@@ -48,11 +50,34 @@ _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 _VMWARE_SNAPSHOT_VMDK_RE = _re.compile(r"(?P<stem>[^/\\]+)-\d{6}(?P<ext>\.vmdk)\b")
 
 
+@dataclass(frozen=True)
+class PrimaryIpReassignmentState:
+    """Tracks how a temporary primary-IP clear should be restored."""
+
+    restore_resource: str
+    restore_parent_id: int
+    primary_field: str
+    previous_ip_id: int
+    restore_after_success: bool
+
+
 def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
     return (
         resource == "ipam.ip_addresses"
         and "Duplicate IP address found in global table" in str(exc)
     )
+
+
+def _host_route_variant(address: Any) -> str | None:
+    if not isinstance(address, str) or not address:
+        return None
+    try:
+        iface = ipaddress.ip_interface(address)
+    except ValueError:
+        return None
+    if iface.network.prefixlen == iface.max_prefixlen:
+        return None
+    return f"{iface.ip}/{iface.max_prefixlen}"
 
 
 def _normalize_vmware_virtual_disk_description(value: Any) -> Any:
@@ -514,18 +539,98 @@ class Engine:
                 effective_payload.pop(field_cfg.name, None)
         return effective_payload
 
-    @classmethod
-    def _normalize_payload_for_resource(
-        cls,
+    def _execute_live_upsert(
+        self,
+        ctx: RunContext,
         resource: str,
         payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        normalized_payload = dict(payload)
-        if resource == "virtualization.virtual_disks" and "description" in normalized_payload:
-            normalized_payload["description"] = _normalize_vmware_virtual_disk_description(
-                normalized_payload.get("description")
+        lookup_fields: list[str],
+        field_configs: list[FieldConfig] | None = None,
+    ) -> tuple[Any, str, dict[str, Any]]:
+        if resource == "virtualization.virtual_disks" and "description" in payload:
+            payload = dict(payload)
+            payload["description"] = _normalize_vmware_virtual_disk_description(
+                payload.get("description")
             )
-        return normalized_payload
+        filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
+        if filters and field_configs:
+            existing = ctx.nb.get(resource, **filters)
+            payload = self._apply_field_update_modes(
+                existing,
+                payload,
+                lookup_fields,
+                field_configs,
+            )
+        self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        outcome = "created"
+        obj = None
+        upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+        if callable(upsert_with_outcome):
+            result = ctx.nb.upsert_with_outcome(
+                resource,
+                payload,
+                lookup_fields=lookup_fields,
+            )
+            candidate_outcome = getattr(result, "outcome", None)
+            if candidate_outcome in {"created", "updated", "noop"}:
+                outcome = candidate_outcome
+                obj = getattr(result, "object", None)
+            else:
+                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+        else:
+            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+        return obj, outcome, payload
+
+    @staticmethod
+    def _record_live_upsert_stats(
+        stats: RunStats | None,
+        outcome: str,
+    ) -> None:
+        if stats is None:
+            return
+        if outcome == "created":
+            stats.record("created")
+        elif outcome == "updated":
+            stats.record("updated")
+        elif outcome == "noop":
+            stats.record("skipped")
+        else:
+            stats.record("created")
+
+    def _normalize_duplicate_ip_host_route(
+        self,
+        ctx: RunContext,
+        payload: dict[str, Any],
+    ) -> bool:
+        desired_address = payload.get("address")
+        host_route = _host_route_variant(desired_address)
+        if host_route is None:
+            return False
+
+        existing_ip = ctx.nb.get("ipam.ip_addresses", address=host_route)
+        existing_ip_id = extract_id(existing_ip)
+        if existing_ip_id is None:
+            return False
+
+        existing_address = self._record_attr_value(existing_ip, "address") or host_route
+        try:
+            desired_iface = ipaddress.ip_interface(desired_address)
+            existing_iface = ipaddress.ip_interface(existing_address)
+        except ValueError:
+            return False
+        if existing_iface.network.prefixlen != existing_iface.max_prefixlen:
+            return False
+        if existing_iface.ip != desired_iface.ip:
+            return False
+
+        logger.info(
+            "Normalizing host-route IP to desired prefix  id=%r  from=%r  to=%r",
+            existing_ip_id,
+            existing_address,
+            desired_address,
+        )
+        ctx.nb.update("ipam.ip_addresses", existing_ip_id, {"address": desired_address})
+        return True
 
     def _next_dry_run_id(self) -> int:
         with self._dry_run_id_lock:
@@ -590,7 +695,11 @@ class Engine:
         lookup_fields: list[str],
         field_configs: list[FieldConfig] | None = None,
     ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
-        payload = self._normalize_payload_for_resource(resource, payload)
+        if resource == "virtualization.virtual_disks" and "description" in payload:
+            payload = dict(payload)
+            payload["description"] = _normalize_vmware_virtual_disk_description(
+                payload.get("description")
+            )
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
@@ -1241,37 +1350,13 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
-            payload = self._normalize_payload_for_resource(resource, payload)
-            filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
-            if filters and field_configs:
-                existing = ctx.nb.get(resource, **filters)
-                payload = self._apply_field_update_modes(
-                    existing,
-                    payload,
-                    lookup_fields,
-                    field_configs,
-                )
-            self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
-            outcome = "created"
-            obj = None
-            upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
-            if callable(upsert_with_outcome):
-                result = ctx.nb.upsert_with_outcome(
-                    resource,
-                    payload,
-                    lookup_fields=lookup_fields,
-                )
-                candidate_outcome = getattr(result, "outcome", None)
-                if candidate_outcome in {"created", "updated", "noop"}:
-                    outcome = candidate_outcome
-                    obj = getattr(result, "object", None)
-                else:
-                    # Plain MagicMock instances fabricate arbitrary attributes,
-                    # so treat unknown outcomes as lack of structured support
-                    # and fall back to the legacy upsert() path.
-                    obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
-            else:
-                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            obj, outcome, payload = self._execute_live_upsert(
+                ctx,
+                resource,
+                payload,
+                lookup_fields,
+                field_configs=field_configs,
+            )
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
             logger.info(
                 "Upserted  resource=%-30s  %s  outcome=%s",
@@ -1279,18 +1364,61 @@ class Engine:
                 lookup_display,
                 outcome,
             )
-            if stats is not None:
-                if outcome == "created":
-                    stats.record("created")
-                elif outcome == "updated":
-                    stats.record("updated")
-                elif outcome == "noop":
-                    stats.record("skipped")
-                else:
-                    # Be defensive with unknown adapters/outcomes.
-                    stats.record("created")
+            self._record_live_upsert_stats(stats, outcome)
             return obj
         except Exception as exc:
+            if isinstance(exc, ValueError) and "more than one result" in str(exc):
+                ambiguity_filters = self._lookup_filters(
+                    ctx,
+                    resource,
+                    payload,
+                    lookup_fields,
+                )
+                match_count, matched_ids = self._ambiguous_lookup_details(
+                    ctx,
+                    resource,
+                    ambiguity_filters,
+                )
+                logger.warning(
+                    "Live lookup ambiguous  resource=%s  filters=%s  match_count=%s  matched_ids=%s",
+                    resource,
+                    ambiguity_filters,
+                    match_count if match_count is not None else "unknown",
+                    matched_ids,
+                )
+                if nested_stats is not None:
+                    nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
+            elif _is_duplicate_ip_conflict(resource, exc):
+                try:
+                    normalized = self._normalize_duplicate_ip_host_route(ctx, payload)
+                except Exception as normalize_exc:
+                    logger.error(
+                        "Failed to normalize duplicate host-route IP  resource=%s  address=%r: %s",
+                        resource,
+                        payload.get("address"),
+                        normalize_exc,
+                    )
+                    normalized = False
+                if normalized:
+                    try:
+                        obj, outcome, payload = self._execute_live_upsert(
+                            ctx,
+                            resource,
+                            payload,
+                            lookup_fields,
+                            field_configs=field_configs,
+                        )
+                        lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
+                        logger.info(
+                            "Upserted  resource=%-30s  %s  outcome=%s",
+                            resource,
+                            lookup_display,
+                            outcome,
+                        )
+                        self._record_live_upsert_stats(stats, outcome)
+                        return obj
+                    except Exception as retry_exc:
+                        exc = retry_exc
             if _is_duplicate_ip_conflict(resource, exc):
                 logger.error(
                     "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
@@ -1328,15 +1456,27 @@ class Engine:
         parent_resource: str,
         parent_nb_obj: Any,
         ip_payload: dict[str, Any],
-    ) -> tuple[str, int] | None:
-        """Clear a same-parent primary IP before reassigning it to another interface.
+    ) -> PrimaryIpReassignmentState | None:
+        """Clear the current owning parent's primary IP before reassignment.
 
         NetBox rejects reassigning an IP while it is the designated primary IP
-        for the parent object. When we detect that exact situation, clear the
-        current primary field first so the subsequent IP upsert can proceed.
-        The caller is responsible for restoring the primary IP after the upsert,
-        even on failure.
+        for a device or virtual machine. When we detect that situation, clear
+        the current owning parent's primary field first so the subsequent IP
+        upsert can proceed, whether the IP stays on the same parent or moves to
+        a different one. The caller is responsible for restoring the primary IP
+        after the upsert when appropriate, even on failure.
         """
+        nb_get = ctx.nb.get
+        try:
+            nb_get_supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+        except (TypeError, ValueError):
+            nb_get_supports_use_cache = False
+
+        def _get_uncached(resource_name: str, **filters: Any) -> Any:
+            if nb_get_supports_use_cache:
+                return nb_get(resource_name, use_cache=False, **filters)
+            return nb_get(resource_name, **filters)
+
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
         parent_obj_id = extract_id(parent_nb_obj)
@@ -1351,7 +1491,7 @@ class Engine:
         if primary_field is None:
             return None
 
-        existing_ip = ctx.nb.get("ipam.ip_addresses", address=address)
+        existing_ip = _get_uncached("ipam.ip_addresses", address=address)
         existing_ip_id = extract_id(existing_ip)
         if existing_ip_id is None:
             return None
@@ -1362,13 +1502,70 @@ class Engine:
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
 
-        current_parent = ctx.nb.get(parent_resource, id=parent_obj_id) or parent_nb_obj
+        current_parent = parent_nb_obj
+        current_parent_resource = parent_resource
+        current_parent_obj_id = parent_obj_id
+        restore_after_success = True
+        assigned_object_type = _obj_get(existing_ip, "assigned_object_type") or ip_payload.get(
+            "assigned_object_type"
+        )
+        parent_link_field = None
+        interface_resource = None
+        if assigned_object_type == "dcim.interface":
+            interface_resource = "dcim.interfaces"
+            parent_link_field = "device"
+            current_parent_resource = "dcim.devices"
+        elif assigned_object_type == "virtualization.vminterface":
+            interface_resource = "virtualization.interfaces"
+            parent_link_field = "virtual_machine"
+            current_parent_resource = "virtualization.virtual_machines"
+
+        if interface_resource and parent_link_field and current_assigned_id is not None:
+            try:
+                current_iface = _get_uncached(interface_resource, id=current_assigned_id)
+            except Exception:
+                logger.debug(
+                    "Failed to refresh %s id=%s before primary IP reassignment; falling back to target parent",
+                    interface_resource,
+                    current_assigned_id,
+                    exc_info=True,
+                )
+            else:
+                linked_parent = _obj_get(current_iface, parent_link_field)
+                linked_parent_id = extract_id(linked_parent)
+                if linked_parent_id is None:
+                    linked_parent_id = _obj_get(current_iface, f"{parent_link_field}_id")
+                if linked_parent_id is not None:
+                    current_parent_obj_id = linked_parent_id
+                    restore_after_success = (
+                        current_parent_resource == parent_resource
+                        and current_parent_obj_id == parent_obj_id
+                    )
+
+        try:
+            refreshed_parent = _get_uncached(current_parent_resource, id=current_parent_obj_id)
+        except Exception:
+            logger.debug(
+                "Failed to refresh %s id=%s before primary IP reassignment; falling back to existing parent object",
+                current_parent_resource,
+                current_parent_obj_id,
+                exc_info=True,
+            )
+        else:
+            if refreshed_parent:
+                current_parent = refreshed_parent
         current_primary_id = extract_id(_obj_get(current_parent, primary_field))
         if current_primary_id != existing_ip_id:
             return None
 
-        ctx.nb.update(parent_resource, parent_obj_id, {primary_field: None})
-        return primary_field, existing_ip_id
+        ctx.nb.update(current_parent_resource, current_parent_obj_id, {primary_field: None})
+        return PrimaryIpReassignmentState(
+            restore_resource=current_parent_resource,
+            restore_parent_id=current_parent_obj_id,
+            primary_field=primary_field,
+            previous_ip_id=existing_ip_id,
+            restore_after_success=restore_after_success,
+        )
 
     def _process_interfaces(
         self,
@@ -1518,24 +1715,45 @@ class Engine:
                             and parent_nb_obj is not None
                             and not ip_ctx.dry_run
                         ):
-                            primary_field, previous_ip_id = cleared_primary
-                            restored_ip_id = extract_id(nb_ip) or previous_ip_id
-                            parent_obj_id = extract_id(parent_nb_obj)
-                            if parent_obj_id is not None and restored_ip_id is not None:
+                            should_restore = (
+                                nb_ip is None or cleared_primary.restore_after_success
+                            )
+                            restored_ip_id = (
+                                extract_id(nb_ip) or cleared_primary.previous_ip_id
+                            )
+                            if (
+                                should_restore
+                                and cleared_primary.restore_parent_id is not None
+                                and restored_ip_id is not None
+                            ):
                                 try:
                                     ctx.nb.update(
-                                        obj_cfg.netbox_resource,
-                                        parent_obj_id,
-                                        {primary_field: restored_ip_id},
+                                        cleared_primary.restore_resource,
+                                        cleared_primary.restore_parent_id,
+                                        {
+                                            cleared_primary.primary_field: restored_ip_id
+                                        },
                                     )
-                                    if primary_field == "primary_ip4":
+                                    if (
+                                        cleared_primary.restore_resource
+                                        == obj_cfg.netbox_resource
+                                        and cleared_primary.restore_parent_id
+                                        == extract_id(parent_nb_obj)
+                                        and cleared_primary.primary_field == "primary_ip4"
+                                    ):
                                         first_primary_ip4_set = True
-                                    elif primary_field == "primary_ip6":
+                                    elif (
+                                        cleared_primary.restore_resource
+                                        == obj_cfg.netbox_resource
+                                        and cleared_primary.restore_parent_id
+                                        == extract_id(parent_nb_obj)
+                                        and cleared_primary.primary_field == "primary_ip6"
+                                    ):
                                         first_primary_ip6_set = True
                                 except Exception as exc:
                                     logger.debug(
                                         "Failed to restore %s after IP reassignment: %s",
-                                        primary_field,
+                                        cleared_primary.primary_field,
                                         exc,
                                     )
 
@@ -1777,6 +1995,17 @@ class Engine:
             # Update the siteless VLAN in-place; remove site so it stays siteless.
             update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
             update_payload.pop("site", None)
+            existing_name = getattr(siteless_vlan, "name", None)
+            if existing_name and update_payload.get("name") != existing_name:
+                logger.debug(
+                    "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
+                    "preserving existing name=%r over incoming name=%r",
+                    vid,
+                    update_payload.get("id"),
+                    existing_name,
+                    update_payload.get("name"),
+                )
+                update_payload["name"] = existing_name
             return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
         if site_vlan is not None:
@@ -1789,6 +2018,18 @@ class Engine:
             update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
             if site_id is not None:
                 update_payload["site"] = site_id
+            existing_name = getattr(site_vlan, "name", None)
+            if existing_name and update_payload.get("name") != existing_name:
+                logger.debug(
+                    "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
+                    "preserving existing name=%r over incoming name=%r",
+                    vid,
+                    update_payload.get("id"),
+                    site_id,
+                    existing_name,
+                    update_payload.get("name"),
+                )
+                update_payload["name"] = existing_name
             return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
         if site_id is None and existing_vlans:
