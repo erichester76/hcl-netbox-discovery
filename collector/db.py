@@ -95,6 +95,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('WEB_PORT', '5000', 'TCP port the web UI listens on (default: 5000)', 'Web UI'),
     ('WEB_HOST', '0.0.0.0', 'Bind address for the web UI (default: 0.0.0.0)', 'Web UI'),
     ('WEB_SECRET_KEY', 'change-me-in-production', 'Secret key for Flask sessions \u2013 change this in production!', 'Web UI'),
+    ('WEB_API_TOKEN', '', 'Optional API token for `/api/*`; supports `Authorization: Bearer` and `X-API-Key`', 'Web UI'),
     ('COLLECTOR_DB_PATH', '', 'Path for the SQLite job-tracking database (default: ./collector_jobs.sqlite3)', 'Web UI'),
     ('FLASK_DEBUG', 'false', 'Set to "true" to enable Flask debug mode (never use in production)', 'Web UI'),
     # --- NetBox ---

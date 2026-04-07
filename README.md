@@ -198,6 +198,13 @@ GET /api/jobs?after_id=<last_seen_id>&hcl_file=mappings/azure.hcl
 GET /api/jobs/<id>/artifact
 ```
 
+For token-authenticated API access, configure `WEB_API_TOKEN` in the Settings UI and send either:
+
+```text
+Authorization: Bearer <token>
+X-API-Key: <token>
+```
+
 ### Starting the web server
 
 ```bash
@@ -237,7 +244,7 @@ The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job hist
 | `COLLECTOR_DB_PATH` | `<project root>/collector_jobs.sqlite3` | Path to the SQLite job database |
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
 
-Web UI authentication settings are environment-only on purpose; they are not editable through the Settings page.
+Browser login settings remain environment-only. API token authentication is DB-backed through the `WEB_API_TOKEN` runtime setting and applies only to `/api/*` routes.
 
 ---
 

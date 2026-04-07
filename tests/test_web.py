@@ -13,6 +13,7 @@ from collector.db import (
     create_job,
     finish_job,
     init_db,
+    set_setting,
     start_job,
 )
 
@@ -102,6 +103,39 @@ def test_dashboard_redirects_to_login_when_auth_enabled(secured_app):
     location = resp.headers["Location"]
     parsed = urlparse(location)
     assert parsed.path == "/login"
+
+
+def test_api_redirect_becomes_401_when_auth_enabled(secured_app):
+    resp = secured_app.get("/api/running-jobs")
+    assert resp.status_code == 401
+    assert resp.get_json() == {"error": "authentication required"}
+
+
+def test_api_allows_bearer_token_from_db_setting(secured_app):
+    set_setting("WEB_API_TOKEN", "api-secret")
+    resp = secured_app.get("/api/running-jobs", headers={"Authorization": "Bearer api-secret"})
+    assert resp.status_code == 200
+    assert resp.get_json()["jobs"] == []
+
+
+def test_api_allows_x_api_key_from_db_setting(secured_app):
+    set_setting("WEB_API_TOKEN", "api-secret")
+    resp = secured_app.get("/api/running-jobs", headers={"X-API-Key": "api-secret"})
+    assert resp.status_code == 200
+    assert resp.get_json()["jobs"] == []
+
+
+def test_api_rejects_wrong_token(secured_app):
+    set_setting("WEB_API_TOKEN", "api-secret")
+    resp = secured_app.get("/api/running-jobs", headers={"Authorization": "Bearer wrong-token"})
+    assert resp.status_code == 401
+    assert resp.get_json() == {"error": "authentication required"}
+
+
+def test_api_allows_authenticated_session(secured_app):
+    _login(secured_app)
+    resp = secured_app.get("/api/running-jobs")
+    assert resp.status_code == 200
 
 
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
