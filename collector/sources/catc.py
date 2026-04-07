@@ -281,7 +281,7 @@ class CatalystCenterSource(DataSource):
             )
 
         extra = config.extra or {}
-        self._fetch_interfaces = str(extra.get("fetch_interfaces", "true")).lower() == "true"
+        self._fetch_interfaces = _coerce_bool(extra.get("fetch_interfaces", "true"), True)
         assignment_strategy = str(extra.get("site_assignment_strategy", "auto")).strip().lower()
         if assignment_strategy not in {"auto", "bulk", "membership"}:
             logger.warning(
