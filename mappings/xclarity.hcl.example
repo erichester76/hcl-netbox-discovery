@@ -183,7 +183,7 @@ object "node" {
   }
 
   field "status" {
-    value = "when(source('powerStatus') == 'on', 'active', 'offline')"
+    value = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
   }
 
   field "tags" {

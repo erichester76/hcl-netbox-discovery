@@ -828,6 +828,7 @@ class TestXClarityMappings:
     ]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
     CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
+    STATUS_EXPR = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_manufacturer_prereqs_canonicalize_lenovo(self, mapping_path):
@@ -848,6 +849,15 @@ class TestXClarityMappings:
             site_field = next((f for f in obj.fields if f.name == "site"), None)
             assert site_field is not None, f"object {name} missing site field"
             assert site_field.update_mode == "if_missing"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_node_status_normalizes_power_status(self, mapping_path):
+        cfg = load_config(mapping_path)
+        node = next((o for o in cfg.objects if o.name == "node"), None)
+        assert node is not None, f"missing object node in {mapping_path}"
+        status_field = next((f for f in node.fields if f.name == "status"), None)
+        assert status_field is not None, f"node missing status field in {mapping_path}"
+        assert status_field.value == self.STATUS_EXPR
 
 
 class TestCatcMappings:
