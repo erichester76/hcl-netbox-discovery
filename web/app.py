@@ -179,6 +179,20 @@ def create_app() -> Flask:
         jobs = get_running_jobs()
         return jsonify({"jobs": jobs, "count": len(jobs)})
 
+    @app.route("/api/jobs/<int:job_id>/artifact")
+    def api_job_artifact(job_id: int):
+        """Return the persisted structured artifact for a single job."""
+        job = get_job(job_id)
+        if job is None:
+            return jsonify({"error": "job not found"}), 404
+        return jsonify(
+            {
+                "job_id": job["id"],
+                "status": job["status"],
+                "artifact": job.get("artifact"),
+            }
+        )
+
     @app.route("/jobs/run", methods=["POST"])
     def run_job():
         hcl_file = request.form.get("hcl_file", "").strip()
