@@ -216,6 +216,41 @@ def require_text_arg(args: dict[str, Any], key: str, method_name: str) -> str:
     return str(value)
 
 
+def canonicalize_manufacturer_name(name: str) -> str:
+    """Return a stable display name for manufacturer strings.
+
+    Canonicalization is intentionally deterministic to prevent case-only
+    cross-source churn (for example ``"CISCO"`` vs ``"cisco"``).
+    """
+    normalized = " ".join(str(name).strip().split())
+    if not normalized:
+        return ""
+
+    # Preserve known brand casing and acronyms where title-casing would be wrong.
+    brand_overrides = {
+        "vmware": "VMware",
+        "hpe": "HPE",
+    }
+
+    normalized_key = normalized.lower()
+    if normalized_key in brand_overrides:
+        return brand_overrides[normalized_key]
+
+    # Keep mixed-case values exactly as provided (for example "VMware").
+    if not (normalized.islower() or normalized.isupper()):
+        return normalized
+
+    words = normalized.split(" ")
+    canonical_words = []
+    for word in words:
+        # Preserve short all-letter acronyms (for example "HPE").
+        if word.isalpha() and len(word) <= 3:
+            canonical_words.append(word.upper())
+        else:
+            canonical_words.append(word.lower().title())
+    return " ".join(canonical_words)
+
+
 # ---------------------------------------------------------------------------
 # PrerequisiteRunner
 # ---------------------------------------------------------------------------
@@ -371,11 +406,16 @@ class PrerequisiteRunner:
     # ------------------------------------------------------------------
 
     def _ensure_manufacturer(self, args: dict, dry_run: bool) -> int | None:
-        name = require_text_arg(args, "name", "ensure_manufacturer")
+        raw_name = require_text_arg(args, "name", "ensure_manufacturer")
+        name = canonicalize_manufacturer_name(raw_name)
         slug = slugify(name)
         if dry_run:
             logger.info("[DRY-RUN] ensure_manufacturer name=%s", name)
             return self._dry_run_placeholder_id("dcim.manufacturers", {"slug": slug})
+        existing = self.nb.get("dcim.manufacturers", slug=slug)
+        existing_id = extract_id(existing)
+        if isinstance(existing_id, int):
+            return existing_id
         obj = self.nb.upsert(
             "dcim.manufacturers",
             {"name": name, "slug": slug},
