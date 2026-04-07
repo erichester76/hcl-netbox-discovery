@@ -16,9 +16,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, TextIO
 from urllib.parse import urlparse
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT_ROOT = REPO_ROOT / "run-artifacts"
@@ -80,6 +78,14 @@ def _parse_args(argv=None):
         default="DONE",
         help="Filename written last to mark a bundle as complete and ready for pull.",
     )
+    parser.add_argument(
+        "--mirror-output",
+        action="store_true",
+        help=(
+            "Mirror collector stdout/stderr to the caller's terminal while also "
+            "capturing logs. By default output is only written to artifact log files."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -137,6 +143,7 @@ def main(argv=None):
         stdout_path,
         stderr_path,
         timeout_seconds=args.timeout_seconds,
+        mirror_output=args.mirror_output,
     )
 
     end_utc = datetime.now(timezone.utc)
@@ -222,9 +229,8 @@ def _ensure_service_running(compose_base, service):
     result = subprocess.run(
         compose_base + ["ps", "--services", "--status", "running"],
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
+        capture_output=True,
+        text=True,
     )
     running_services = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     if service not in running_services:
@@ -347,9 +353,8 @@ def _exec_python_json(
     result = subprocess.run(
         command,
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
+        capture_output=True,
+        text=True,
     )
     stdout = result.stdout.strip()
     if not stdout:
@@ -363,7 +368,7 @@ def _artifact_dir(artifact_root: Path, mapping_path: Path, start_utc: datetime) 
     return artifact_root / f"{timestamp}_{slug}"
 
 
-def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds):
+def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds, mirror_output=False):
     with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
         "w", encoding="utf-8"
     ) as stderr_file:
@@ -372,17 +377,19 @@ def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds):
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True,
+            text=True,
             bufsize=1,
         )
+        stdout_mirror = sys.stdout if mirror_output else None
+        stderr_mirror = sys.stderr if mirror_output else None
         stdout_thread = threading.Thread(
             target=_tee_stream,
-            args=(process.stdout, stdout_file, sys.stdout),
+            args=(process.stdout, stdout_file, stdout_mirror),
             daemon=True,
         )
         stderr_thread = threading.Thread(
             target=_tee_stream,
-            args=(process.stderr, stderr_file, sys.stderr),
+            args=(process.stderr, stderr_file, stderr_mirror),
             daemon=True,
         )
         stdout_thread.start()
@@ -401,14 +408,15 @@ def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds):
     return return_code
 
 
-def _tee_stream(stream, output_file, mirror):
+def _tee_stream(stream, output_file, mirror=None):
     if stream is None:
         return
     for line in stream:
         output_file.write(line)
         output_file.flush()
-        mirror.write(line)
-        mirror.flush()
+        if mirror is not None:
+            mirror.write(line)
+            mirror.flush()
     stream.close()
 
 
@@ -417,9 +425,8 @@ def _git_sha(project_directory):
         ["git", "rev-parse", "HEAD"],
         cwd=project_directory,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        universal_newlines=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         return None

@@ -270,6 +270,14 @@ host where real syncs execute:
 python src/capture_sync_job.py mappings/vmware.hcl --artifact-root /var/tmp/hcl-sync-artifacts
 ```
 
+By default the helper writes collector output only to the artifact bundle so it
+can be backgrounded cleanly. Use `--mirror-output` if you want live terminal
+streaming as well:
+
+```bash
+python src/capture_sync_job.py mappings/vmware.hcl --artifact-root /var/tmp/hcl-sync-artifacts --mirror-output
+```
+
 Each run writes a timestamped directory containing:
 
 - `manifest.json`
