@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 from .db import add_log
 
