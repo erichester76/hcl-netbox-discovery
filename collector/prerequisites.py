@@ -73,6 +73,8 @@ def load_current_field(
     object_id: int | None,
     obj: Any,
     field: str,
+    *,
+    force_refresh: bool = False,
 ) -> Any:
     """Return *field* from *obj* or a freshly fetched record when needed.
 
@@ -82,7 +84,7 @@ def load_current_field(
     actually needed.
     """
     value = extract_field(obj, field)
-    if value is not None or object_id is None:
+    if (value is not None and not force_refresh) or object_id is None:
         return value
     nb_get = getattr(nb, "get", None)
     if nb_get is None:
@@ -657,6 +659,7 @@ class PrerequisiteRunner:
                 profile_id,
                 obj,
                 "schema",
+                force_refresh=True,
             )
             if existing_schema == schema:
                 return profile_id
@@ -719,6 +722,7 @@ class PrerequisiteRunner:
                     module_type_id,
                     obj,
                     "attributes",
+                    force_refresh=True,
                 )
                 if existing_attrs == clean_attrs:
                     return module_type_id

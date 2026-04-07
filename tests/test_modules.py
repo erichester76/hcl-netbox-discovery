@@ -675,6 +675,10 @@ class TestEnsureModuleType:
             {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
             {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
         ]
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
         runner = self._make_runner(nb)
         result = runner._ensure_module_type(
             {
@@ -686,7 +690,10 @@ class TestEnsureModuleType:
         )
         assert result == 50
         nb.update.assert_not_called()
-        nb.get.assert_not_called()
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
 
     def test_attributes_patch_skipped_when_refreshed_record_matches(self):
         nb = MagicMock()
@@ -694,7 +701,10 @@ class TestEnsureModuleType:
             {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
             {"id": 50},
         ]
-        nb.get.return_value = {"id": 50, "attributes": {"cores": 16, "speed": 2.5}}
+        nb.get.side_effect = [
+            {"id": 99, "schema": {"type": "object", "properties": {"cores": {}, "speed": {}}}},
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
         runner = self._make_runner(nb)
         result = runner._ensure_module_type(
             {
@@ -709,7 +719,10 @@ class TestEnsureModuleType:
             call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
         ]
         assert module_type_updates == []
-        nb.get.assert_called_once_with("dcim.module_types", id=50)
+        assert nb.get.call_args_list == [
+            (("dcim.module_type_profiles",), {"id": 99}),
+            (("dcim.module_types",), {"id": 50}),
+        ]
 
     def test_load_current_field_bypasses_cache_when_supported(self):
         calls: list[tuple[str, bool, int]] = []
@@ -830,6 +843,7 @@ class TestEnsureModuleTypeProfileSchema:
         nb.update.return_value = MagicMock(id=10)
         runner = self._make_runner(nb)
         schema = {"type": "object", "properties": {"cores": {}}}
+        nb.get.return_value = {"id": 10}
         runner._ensure_module_type_profile(
             {"name": "CPU", "schema": schema},
             dry_run=False,
@@ -844,6 +858,7 @@ class TestEnsureModuleTypeProfileSchema:
         nb = MagicMock()
         schema = {"type": "object", "properties": {"cores": {}}}
         nb.upsert.return_value = {"id": 10, "schema": schema}
+        nb.get.return_value = {"id": 10, "schema": schema}
         runner = self._make_runner(nb)
         result = runner._ensure_module_type_profile(
             {"name": "CPU", "schema": schema},
@@ -851,7 +866,7 @@ class TestEnsureModuleTypeProfileSchema:
         )
         assert result == 10
         nb.update.assert_not_called()
-        nb.get.assert_not_called()
+        nb.get.assert_called_once_with("dcim.module_type_profiles", id=10)
 
     def test_schema_update_skipped_when_refreshed_record_matches(self):
         nb = MagicMock()
