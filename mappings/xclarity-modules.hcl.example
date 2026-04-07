@@ -300,7 +300,7 @@ object "node" {
     }
 
     attribute "speed" {
-      value = "int(float(source('speed')) * 1000) if source('speed') != None else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None else None)"
+      value = "int(float(source('speed')) * 1000) if source('speed') != None and float(source('speed')) > 0 else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None and float(source('maxSpeedMHZ')) > 0 else None)"
     }
 
     attribute "architecture" {
@@ -335,7 +335,7 @@ object "node" {
     }
 
     attribute "size" {
-      value = "int(coalesce('capacity', 'size')) if coalesce('capacity', 'size') != None else None"
+      value = "int(coalesce('capacity', 'size')) if int(coalesce('capacity', 'size')) > 0 else None"
     }
 
     attribute "class" {
@@ -343,7 +343,7 @@ object "node" {
     }
 
     attribute "data_rate" {
-      value = "int(source('speed')) if source('speed') != None else None"
+      value = "int(source('speed')) if int(source('speed')) > 0 else None"
     }
 
     attribute "ecc" {
@@ -383,11 +383,11 @@ object "node" {
     }
 
     attribute "size" {
-      value = "to_gb(int(source('capacity'))) if source('capacity') != None else None"
+      value = "to_gb(int(source('capacity'))) if source('capacity') != None and int(source('capacity')) > 0 else None"
     }
 
     attribute "speed" {
-      value = "int(source('rpm')) if source('rpm') != None else None"
+      value = "int(source('rpm')) if source('rpm') != None and int(source('rpm')) > 0 else None"
     }
 
     attribute "type" {
