@@ -388,6 +388,27 @@ class TestResolverRegexFile:
         result = r.evaluate("regex_file(source('name'), 'vm_to_role')")
         assert result == "Web Server"
 
+    def test_xclarity_site_example_mappings_match_prod(self, tmp_path):
+        regex_file = tmp_path / "xclarity_location_to_site"
+        regex_file.write_text(
+            "ITC,Clemson University Information Technology Center (ITC)\n"
+            "Poole,Poole Agricultural Center\n"
+            "UCSD,University of California San Deigo (UCSD)\n"
+            "P\\&amp\\;A,Poole Agricultural Center\n"
+        )
+
+        cases = {
+            "ITC": "Clemson University Information Technology Center (ITC)",
+            "Poole": "Poole Agricultural Center",
+            "UCSD": "University of California San Deigo (UCSD)",
+            "P&amp;A": "Poole Agricultural Center",
+        }
+
+        for source_value, expected in cases.items():
+            resolver = _make_resolver({"location": source_value}, regex_dir=str(tmp_path))
+            result = resolver.evaluate("regex_file(source('location'), 'xclarity_location_to_site')")
+            assert result == expected
+
 
 # ---------------------------------------------------------------------------
 # Resolver – error handling
