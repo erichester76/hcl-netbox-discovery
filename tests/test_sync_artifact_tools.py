@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
@@ -186,3 +187,99 @@ class TestCaptureTeeStream:
 
         assert output_path.read_text(encoding="utf-8") == "line 1\nline 2\n"
         assert mirror.getvalue() == "line 1\nline 2\n"
+
+
+class TestCaptureSubprocessStdin:
+    def test_ensure_service_running_uses_devnull_stdin(self, monkeypatch):
+        captured = {}
+
+        class FakeCompletedProcess:
+            stdout = "collector\n"
+            stderr = ""
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            return FakeCompletedProcess()
+
+        monkeypatch.setattr(capture_sync_job.subprocess, "run", fake_run)
+
+        capture_sync_job._ensure_service_running(["docker", "compose"], "collector")
+
+        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+
+    def test_exec_python_json_uses_devnull_stdin(self, monkeypatch):
+        captured = {}
+
+        class FakeCompletedProcess:
+            stdout = '{"ok": true}\n'
+            stderr = ""
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            return FakeCompletedProcess()
+
+        monkeypatch.setattr(capture_sync_job.subprocess, "run", fake_run)
+
+        payload = capture_sync_job._exec_python_json(
+            ["docker", "compose"],
+            "collector",
+            "print('ignored')",
+        )
+
+        assert payload == {"ok": True}
+        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+
+    def test_git_sha_uses_devnull_stdin(self, monkeypatch, tmp_path):
+        captured = {}
+
+        class FakeCompletedProcess:
+            returncode = 0
+            stdout = "abc123\n"
+            stderr = ""
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            return FakeCompletedProcess()
+
+        monkeypatch.setattr(capture_sync_job.subprocess, "run", fake_run)
+
+        git_sha = capture_sync_job._git_sha(tmp_path)
+
+        assert git_sha == "abc123"
+        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+
+    def test_run_and_tee_uses_devnull_stdin(self, monkeypatch, tmp_path):
+        captured = {}
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdout = io.StringIO("stdout line\n")
+                self.stderr = io.StringIO("stderr line\n")
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(command, **kwargs):
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+            return FakeProcess()
+
+        monkeypatch.setattr(capture_sync_job.subprocess, "Popen", fake_popen)
+
+        stdout_path = tmp_path / "stdout.log"
+        stderr_path = tmp_path / "stderr.log"
+        exit_code = capture_sync_job._run_and_tee(
+            ["python", "main.py"],
+            tmp_path,
+            stdout_path,
+            stderr_path,
+            timeout_seconds=60,
+        )
+
+        assert exit_code == 0
+        assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+        assert stdout_path.read_text(encoding="utf-8") == "stdout line\n"
+        assert stderr_path.read_text(encoding="utf-8") == "stderr line\n"

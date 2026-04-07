@@ -230,6 +230,7 @@ def _ensure_service_running(compose_base, service):
     result = subprocess.run(
         compose_base + ["ps", "--services", "--status", "running"],
         check=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
@@ -355,6 +356,7 @@ def _exec_python_json(
     result = subprocess.run(
         command,
         check=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
@@ -378,6 +380,7 @@ def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds, mirror
         process = subprocess.Popen(
             command,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
@@ -428,6 +431,7 @@ def _git_sha(project_directory):
         ["git", "rev-parse", "HEAD"],
         cwd=project_directory,
         check=False,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
