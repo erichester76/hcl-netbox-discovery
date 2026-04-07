@@ -13,7 +13,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from collector.prerequisites import PrerequisiteArgumentError, PrerequisiteRunner
+from collector.prerequisites import (
+    PrerequisiteArgumentError,
+    PrerequisiteRunner,
+    canonicalize_manufacturer_name,
+)
 
 
 class TestEnsurePlatformRaceCondition:
@@ -128,6 +132,36 @@ class TestEnsureManufacturerCanonicalization:
         assert result == 55
         nb.get.assert_called_once_with("dcim.manufacturers", slug="cisco")
         nb.upsert.assert_not_called()
+
+    def test_preserves_vmware_brand_case(self):
+        nb = MagicMock()
+        nb.get.return_value = None
+        nb.upsert.return_value = MagicMock(id=88)
+
+        runner = self._make_runner(nb)
+        result = runner._ensure_manufacturer({"name": "VMware"}, dry_run=False)
+
+        assert result == 88
+        payload = nb.upsert.call_args[0][1]
+        assert payload["name"] == "VMware"
+        assert payload["slug"] == "vmware"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("NVIDIA", "Nvidia"),
+            ("nvidia", "Nvidia"),
+            ("HPE", "HPE"),
+            ("hpe", "HPE"),
+            ("VMware", "VMware"),
+        ],
+    )
+    def test_canonicalize_manufacturer_name_brand_and_acronym_cases(
+        self,
+        raw: str,
+        expected: str,
+    ):
+        assert canonicalize_manufacturer_name(raw) == expected
 
     def test_passes_manufacturer_id_to_upsert(self):
         nb = MagicMock()

@@ -223,7 +223,32 @@ def canonicalize_manufacturer_name(name: str) -> str:
     cross-source churn (for example ``"CISCO"`` vs ``"cisco"``).
     """
     normalized = " ".join(str(name).strip().split())
-    return normalized.lower().title()
+    if not normalized:
+        return ""
+
+    # Preserve known brand casing and acronyms where title-casing would be wrong.
+    brand_overrides = {
+        "vmware": "VMware",
+        "hpe": "HPE",
+    }
+
+    normalized_key = normalized.lower()
+    if normalized_key in brand_overrides:
+        return brand_overrides[normalized_key]
+
+    # Keep mixed-case values exactly as provided (for example "VMware").
+    if not (normalized.islower() or normalized.isupper()):
+        return normalized
+
+    words = normalized.split(" ")
+    canonical_words = []
+    for word in words:
+        # Preserve short all-letter acronyms (for example "HPE").
+        if word.isalpha() and len(word) <= 3:
+            canonical_words.append(word.upper())
+        else:
+            canonical_words.append(word.lower().title())
+    return " ".join(canonical_words)
 
 
 # ---------------------------------------------------------------------------
