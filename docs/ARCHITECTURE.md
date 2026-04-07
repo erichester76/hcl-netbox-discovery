@@ -130,13 +130,15 @@ Tracks every sync execution, whether started from the CLI or the web UI.
 CREATE TABLE jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     hcl_file    TEXT    NOT NULL,
+    run_token   TEXT,
     status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | partial | failed
     dry_run     INTEGER NOT NULL DEFAULT 0,
     debug_mode  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL,   -- ISO-8601 UTC timestamp
     started_at  TEXT,               -- set by start_job()
     finished_at TEXT,               -- set by finish_job()
-    summary     TEXT                -- JSON blob: {object_name: {processed, created, ...}}
+    summary     TEXT,               -- JSON blob: {object_name: {processed, created, ...}}
+    artifact_json TEXT              -- Structured per-job artifact metadata
 );
 ```
 
@@ -209,7 +211,7 @@ CREATE TABLE config_settings (
 | `init_db()` | Create tables (idempotent — safe to call on every startup) |
 | `create_job(hcl_file, dry_run=False, debug_mode=False)` → `int` | Insert a new queued job; return its id |
 | `start_job(job_id)` | Mark job as running; set `started_at` |
-| `finish_job(job_id, success, summary, has_errors=False)` | Mark job as success/partial/failed; store JSON summary |
+| `finish_job(job_id, success, summary, has_errors=False, artifact=None)` | Mark job as success/partial/failed; store JSON summary and structured artifact |
 | `get_job(job_id)` → `dict\|None` | Fetch a single job record |
 | `get_jobs(limit)` → `list` | Most-recent jobs, newest first |
 | `get_running_jobs()` → `list` | All queued/running jobs (no limit) |
@@ -651,7 +653,7 @@ main.py (--mapping or --run-scheduler)
    │               └── For each nested collection (interfaces, inventory_items, disks, modules):
    │                       └── same inner loop, parent_id injected automatically
    │
-   └── finish_job(success, summary)     ← write final status + JSON summary to SQLite
+   └── finish_job(success, summary, artifact)     ← write final status + JSON summary/artifact to SQLite
 ```
 
 ### Web UI request flow

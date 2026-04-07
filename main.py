@@ -208,6 +208,33 @@ def _summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
     return summary, has_errors
 
 
+def _build_job_artifact(
+    *,
+    job_id: int,
+    hcl_file: str,
+    dry_run: bool,
+    debug_mode: bool,
+    success: bool,
+    has_errors: bool,
+    summary: dict[str, Any] | None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    status = "failed"
+    if success:
+        status = "partial" if has_errors else "success"
+    return {
+        "job_id": job_id,
+        "hcl_file": hcl_file,
+        "dry_run": dry_run,
+        "debug_mode": debug_mode,
+        "success": success,
+        "status": status,
+        "has_errors": has_errors,
+        "summary": summary or {},
+        "error": error,
+    }
+
+
 def _execute_job(
     job_id: int,
     hcl_file: str,
@@ -230,7 +257,20 @@ def _execute_job(
     if not os.path.isfile(hcl_file):
         logging.error("Mapping file not found: %s", hcl_file)
         add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
-        finish_job(job_id, success=False)
+        finish_job(
+            job_id,
+            success=False,
+            artifact=_build_job_artifact(
+                job_id=job_id,
+                hcl_file=hcl_file,
+                dry_run=dry_run,
+                debug_mode=debug_mode,
+                success=False,
+                has_errors=False,
+                summary=None,
+                error=f"Mapping file not found: {hcl_file}",
+            ),
+        )
         return False
 
     root_logger = logging.getLogger()
@@ -250,6 +290,7 @@ def _execute_job(
     summary: dict[str, Any] = {}
     success = False
     has_errors = False
+    error_message: str | None = None
     try:
         from collector.engine import Engine  # noqa: PLC0415
 
@@ -259,6 +300,7 @@ def _execute_job(
         summary, has_errors = _summary_from_stats(all_stats)
         success = True
     except Exception as exc:
+        error_message = str(exc)
         logging.exception("Job %d failed for %s: %s", job_id, hcl_file, exc)
     finally:
         root_logger.removeHandler(handler)
@@ -268,6 +310,16 @@ def _execute_job(
             success=success,
             summary=summary if summary else None,
             has_errors=has_errors,
+            artifact=_build_job_artifact(
+                job_id=job_id,
+                hcl_file=hcl_file,
+                dry_run=dry_run,
+                debug_mode=debug_mode,
+                success=success,
+                has_errors=has_errors,
+                summary=summary if summary else None,
+                error=error_message,
+            ),
         )
 
     return success

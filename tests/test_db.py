@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 import collector.db as db_module
@@ -60,6 +62,7 @@ def test_get_job_initial_status():
     assert job["started_at"] is None
     assert job["finished_at"] is None
     assert job["summary"] is None
+    assert job["artifact"] is None
 
 
 def test_create_job_persists_run_token():
@@ -88,6 +91,26 @@ def test_finish_job_success():
     assert job["status"] == "success"
     assert job["finished_at"] is not None
     assert job["summary"] == summary
+
+
+def test_finish_job_persists_artifact():
+    job_id = create_job("mappings/test.hcl", dry_run=True, debug_mode=True, run_token="run-123")
+    start_job(job_id)
+    artifact = {
+        "job_id": job_id,
+        "hcl_file": "mappings/test.hcl",
+        "dry_run": True,
+        "debug_mode": True,
+        "success": True,
+        "status": "success",
+        "has_errors": False,
+        "summary": {"devices": {"processed": 1}},
+        "error": None,
+    }
+    finish_job(job_id, success=True, artifact=artifact)
+    job = get_job(job_id)
+    assert job is not None
+    assert job["artifact"] == artifact
 
 
 def test_finish_job_failed():
@@ -222,6 +245,43 @@ def test_init_db_idempotent():
     job = get_job(job_id)
     assert job is not None
     assert job["hcl_file"] == "mappings/stable.hcl"
+
+
+def test_init_db_migrates_jobs_table_to_add_artifact_json(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "legacy_jobs.sqlite3")
+    monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setattr(db_module, "_lock", __import__("threading").Lock())
+
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        CREATE TABLE jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hcl_file TEXT NOT NULL,
+            run_token TEXT,
+            status TEXT NOT NULL DEFAULT 'queued',
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            debug_mode INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            summary TEXT
+        )
+        """
+    )
+    con.commit()
+    con.close()
+
+    init_db()
+
+    con = sqlite3.connect(db_path)
+    columns = {
+        row[1]
+        for row in con.execute("PRAGMA table_info(jobs)").fetchall()
+    }
+    con.close()
+
+    assert "artifact_json" in columns
 
 
 def test_runtime_config_defaults_do_not_require_env(monkeypatch):

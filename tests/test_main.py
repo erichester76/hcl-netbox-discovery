@@ -150,6 +150,9 @@ def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     assert job["hcl_file"] == str(hcl)
     assert job["summary"] is not None
     assert job["summary"]["devices"]["created"] == 1
+    assert job["artifact"] is not None
+    assert job["artifact"]["status"] == "success"
+    assert job["artifact"]["summary"]["devices"]["created"] == 1
 
 
 def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
@@ -203,6 +206,9 @@ def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):
     jobs = get_jobs()
     assert len(jobs) == 1
     assert jobs[0]["status"] == "failed"
+    assert jobs[0]["artifact"] is not None
+    assert jobs[0]["artifact"]["status"] == "failed"
+    assert jobs[0]["artifact"]["error"] == "boom"
 
 
 def test_main_missing_mapping_persists_failed_job(tmp_db):
@@ -214,6 +220,9 @@ def test_main_missing_mapping_persists_failed_job(tmp_db):
     assert len(jobs) == 1
     assert jobs[0]["status"] == "failed"
     assert jobs[0]["hcl_file"] == "/nonexistent/path.hcl"
+    assert jobs[0]["artifact"] is not None
+    assert jobs[0]["artifact"]["status"] == "failed"
+    assert "Mapping file not found" in jobs[0]["artifact"]["error"]
 
 
 def test_main_no_args_returns_error(tmp_db):
