@@ -859,6 +859,16 @@ class TestXClarityMappings:
         assert status_field is not None, f"node missing status field in {mapping_path}"
         assert status_field.value == self.STATUS_EXPR
 
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_top_level_device_types_do_not_write_part_number(self, mapping_path):
+        cfg = load_config(mapping_path)
+        for name in self.OBJECT_NAMES:
+            obj = next((o for o in cfg.objects if o.name == name), None)
+            assert obj is not None, f"missing object {name} in {mapping_path}"
+            prereq = next((p for p in obj.prerequisites if p.name == "device_type"), None)
+            assert prereq is not None, f"object {name} lacks device_type prerequisite"
+            assert "part_number" not in prereq.args
+
 
 class TestCatcMappings:
     PATHS = [

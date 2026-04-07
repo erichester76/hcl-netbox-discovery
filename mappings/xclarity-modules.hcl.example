@@ -107,7 +107,6 @@ object "node" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -509,7 +508,6 @@ object "chassis" {
     args     = {
       model        = "coalesce('productName', 'machineType')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -610,7 +608,6 @@ object "switch" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
@@ -728,7 +725,6 @@ object "storage" {
     args     = {
       model        = "coalesce('productName', 'machineType', 'model')"
       manufacturer = "prereq('manufacturer')"
-      part_number  = "source('partNumber')"
     }
     optional = false
   }
