@@ -164,6 +164,43 @@ def load_current_field(
     return extract_field(current, field)
 
 
+def load_current_field_with_status(
+    nb: Any,
+    resource: str,
+    object_id: int | None,
+    obj: Any,
+    field: str,
+    *,
+    force_refresh: bool = False,
+) -> tuple[Any, bool]:
+    """Return ``(value, refreshed_ok)`` for follow-up field comparisons."""
+    value = extract_field(obj, field)
+    if (value is not None and not force_refresh) or object_id is None:
+        return value, False
+    nb_get = getattr(nb, "get", None)
+    if nb_get is None:
+        return value, False
+    try:
+        supports_use_cache = "use_cache" in inspect.signature(nb_get).parameters
+    except (TypeError, ValueError):
+        supports_use_cache = False
+    try:
+        get_kwargs: dict[str, Any] = {"id": object_id}
+        if supports_use_cache:
+            get_kwargs["use_cache"] = False
+        current = nb_get(resource, **get_kwargs)
+    except Exception as exc:
+        logger.debug(
+            "Could not refresh %s id=%s for field %r comparison: %s",
+            resource,
+            object_id,
+            field,
+            exc,
+        )
+        return value, False
+    return extract_field(current, field), True
+
+
 class PrerequisiteArgumentError(ValueError):
     """Raised when a prerequisite method receives invalid required input."""
 
@@ -228,21 +265,27 @@ class PrerequisiteRunner:
         cache_key = (resource, object_id, field)
         with self._live_field_cache_lock:
             cached = self._live_field_cache.get(cache_key, _MISSING)
-            if cached is not _MISSING:
-                return cached
+        if cached is not _MISSING:
+            return cached
 
-            current = normalize_compare_value(
-                load_current_field(
-                    self.nb,
-                    resource,
-                    object_id,
-                    obj,
-                    field,
-                    force_refresh=True,
-                )
-            )
-            self._live_field_cache[cache_key] = current
-            return current
+        current, refreshed_ok = load_current_field_with_status(
+            self.nb,
+            resource,
+            object_id,
+            obj,
+            field,
+            force_refresh=True,
+        )
+        normalized = normalize_compare_value(current)
+
+        if refreshed_ok:
+            with self._live_field_cache_lock:
+                cached = self._live_field_cache.get(cache_key, _MISSING)
+                if cached is not _MISSING:
+                    return cached
+                self._live_field_cache[cache_key] = normalized
+
+        return normalized
 
     def _store_live_field(
         self,

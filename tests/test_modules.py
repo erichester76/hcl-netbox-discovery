@@ -786,6 +786,31 @@ class TestEnsureModuleType:
         ]
         nb.update.assert_not_called()
 
+    def test_failed_refresh_fallback_is_not_cached(self):
+        nb = MagicMock()
+        nb.get.side_effect = [
+            Exception("temporary refresh failure"),
+            {"id": 50, "attributes": {"cores": 16, "speed": 2.5}},
+        ]
+        runner = self._make_runner(nb)
+
+        first = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+        second = runner._load_live_field(
+            "dcim.module_types",
+            50,
+            {"id": 50},
+            "attributes",
+        )
+
+        assert first is None
+        assert second == {"cores": 16, "speed": 2.5}
+        assert nb.get.call_count == 2
+
     def test_load_current_field_bypasses_cache_when_supported(self):
         calls: list[tuple[str, bool, int]] = []
 
