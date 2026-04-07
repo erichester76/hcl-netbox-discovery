@@ -242,6 +242,7 @@ CREATE TABLE config_settings (
 | `GET` | `/jobs/<id>` | Job detail page with live-streaming log viewer (polls `/jobs/<id>/logs`) |
 | `GET` | `/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status |
 | `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling) |
+| `GET` | `/api/jobs` | JSON: recent jobs with optional `after_id`, `status`, `hcl_file`, and `limit` filters |
 | `GET` | `/api/jobs/<id>/artifact` | JSON: persisted structured artifact payload for a single job |
 | `POST` | `/jobs/run` | Trigger an on-demand job from the dashboard form |
 | `GET` | `/schedules` | Scheduler management page: list all schedules + add-schedule form |
