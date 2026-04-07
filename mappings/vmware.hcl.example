@@ -369,7 +369,7 @@ object "vm" {
 
     # description: "<vmdk-path> (Thin|Thick Provisioned <diskMode>)" – max 200 chars
     field "description" {
-      value = "truncate((source('backing.fileName') or '') + ' (' + when(source('backing.thinProvisioned'), 'Thin Provisioned', 'Thick Provisioned') + ' ' + (source('backing.diskMode') or '') + ')', 200)"
+      value = "truncate(regex_replace((source('backing.fileName') or ''), r'([^/\\\\]+)-\\d{6}(\\.vmdk)$', r'\\1\\2') + ' (' + when(source('backing.thinProvisioned'), 'Thin Provisioned', 'Thick Provisioned') + ' ' + (source('backing.diskMode') or '') + ')', 200)"
     }
   }
 }

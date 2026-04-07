@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextvars
 import ipaddress
 import logging
+import re as _re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -44,6 +45,7 @@ logger = logging.getLogger(__name__)
 # does not specify a type expression or when the expression evaluates to a
 # falsy value.
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
+_VMWARE_SNAPSHOT_VMDK_RE = _re.compile(r"(?P<stem>[^/\\]+)-\d{6}(?P<ext>\.vmdk)\b")
 
 
 def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
@@ -51,6 +53,12 @@ def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
         resource == "ipam.ip_addresses"
         and "Duplicate IP address found in global table" in str(exc)
     )
+
+
+def _normalize_vmware_virtual_disk_description(value: Any) -> Any:
+    if not isinstance(value, str) or not value:
+        return value
+    return _VMWARE_SNAPSHOT_VMDK_RE.sub(r"\g<stem>\g<ext>", value)
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +514,19 @@ class Engine:
                 effective_payload.pop(field_cfg.name, None)
         return effective_payload
 
+    @classmethod
+    def _normalize_payload_for_resource(
+        cls,
+        resource: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized_payload = dict(payload)
+        if resource == "virtualization.virtual_disks" and "description" in normalized_payload:
+            normalized_payload["description"] = _normalize_vmware_virtual_disk_description(
+                normalized_payload.get("description")
+            )
+        return normalized_payload
+
     def _next_dry_run_id(self) -> int:
         with self._dry_run_id_lock:
             return next(self._dry_run_id_counter)
@@ -569,6 +590,7 @@ class Engine:
         lookup_fields: list[str],
         field_configs: list[FieldConfig] | None = None,
     ) -> tuple[str, dict[str, Any], Any, dict[str, Any]]:
+        payload = self._normalize_payload_for_resource(resource, payload)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
@@ -1219,6 +1241,7 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
+            payload = self._normalize_payload_for_resource(resource, payload)
             filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
             if filters and field_configs:
                 existing = ctx.nb.get(resource, **filters)

@@ -442,7 +442,7 @@ class TestResolverErrorHandling:
 
 _DISK_DESC_EXPR = (
     "truncate("
-    "(source('backing.fileName') or '') + ' (' +"
+    "regex_replace((source('backing.fileName') or ''), r'([^/\\\\]+)-\\d{6}(\\.vmdk)$', r'\\1\\2') + ' (' +"
     " when(source('backing.thinProvisioned'), 'Thin Provisioned', 'Thick Provisioned')"
     " + ' ' + (source('backing.diskMode') or '') + ')',"
     " 200)"
@@ -482,6 +482,19 @@ class TestVMwareDiskDescription:
         r = _make_resolver(disk)
         result = r.evaluate(_DISK_DESC_EXPR)
         assert result == "[datastore2] vm-02/vm-02.vmdk (Thick Provisioned persistent)"
+
+    def test_snapshot_suffix_is_removed_from_vmdk_filename(self):
+        disk = self._disk_obj(
+            file_name="[CU-Core-VSAN] 2a317765-74e4-4749-6815-3868dd772bb0/4gk-swd-p-pol72-000001.vmdk",
+            thin=True,
+            disk_mode="persistent",
+        )
+        r = _make_resolver(disk)
+        result = r.evaluate(_DISK_DESC_EXPR)
+        assert (
+            result
+            == "[CU-Core-VSAN] 2a317765-74e4-4749-6815-3868dd772bb0/4gk-swd-p-pol72.vmdk (Thin Provisioned persistent)"
+        )
 
     def test_missing_thin_provisioned_defaults_to_thick(self):
         """When thinProvisioned is None (attribute absent), default to Thick Provisioned."""
