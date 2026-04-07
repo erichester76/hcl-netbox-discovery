@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: UP021,UP022
 """
 File: src/capture_sync_job.py
 Purpose: Run a collector sync on the Docker host and export a pullable artifact bundle.
@@ -229,8 +230,9 @@ def _ensure_service_running(compose_base, service):
     result = subprocess.run(
         compose_base + ["ps", "--services", "--status", "running"],
         check=True,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     running_services = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     if service not in running_services:
@@ -353,8 +355,9 @@ def _exec_python_json(
     result = subprocess.run(
         command,
         check=True,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     stdout = result.stdout.strip()
     if not stdout:
@@ -377,7 +380,7 @@ def _run_and_tee(command, cwd, stdout_path, stderr_path, timeout_seconds, mirror
             cwd=cwd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            universal_newlines=True,
             bufsize=1,
         )
         stdout_mirror = sys.stdout if mirror_output else None
@@ -425,8 +428,9 @@ def _git_sha(project_directory):
         ["git", "rev-parse", "HEAD"],
         cwd=project_directory,
         check=False,
-        capture_output=True,
-        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
     )
     if result.returncode != 0:
         return None
