@@ -98,7 +98,7 @@ object "node" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -486,6 +486,10 @@ object "node" {
     field "manufacturer" {
       value = "source('manufacturer') or 'Lenovo'"
     }
+
+    attribute "rpm" {
+      value = "int(coalesce('speed', 'rpm')) if coalesce('speed', 'rpm') != None else None"
+    }
   }
 }
 
@@ -500,7 +504,7 @@ object "chassis" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -601,7 +605,7 @@ object "switch" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 
@@ -719,7 +723,7 @@ object "storage" {
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
-    args     = { name = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
+    args     = { name = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')" }
     optional = false
   }
 

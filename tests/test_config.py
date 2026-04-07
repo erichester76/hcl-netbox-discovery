@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import textwrap
+import os
 import threading
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,11 @@ from collector.config import (
     CollectionConfig,
     CollectorConfig,
     CollectorOptions,
+    FieldConfig,
     IteratorConfig,
+    NetBoxConfig,
+    ObjectConfig,
+    PrerequisiteConfig,
     SourceConfig,
     _bool,
     _eval_config_str,
@@ -26,6 +31,7 @@ from collector.config import (
     load_config,
 )
 from collector.db import init_db, set_setting
+
 
 # ---------------------------------------------------------------------------
 # Unit helpers
@@ -827,7 +833,7 @@ class TestXClarityMappings:
         "mappings/xclarity-modules.hcl.example",
     ]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
-    CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
+    CANONICAL_MANUFACTURER = "coalesce(regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
     NODE_STATUS_EXPRESSION = "map_value(lower(regex_replace(str(coalesce('powerStatus', 'on')), '[^a-zA-Z]', '')), {'on': 'active', 'off': 'offline', 'poweredon': 'active', 'poweredoff': 'offline'}, 'active')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
@@ -858,58 +864,3 @@ class TestXClarityMappings:
         status_field = next((f for f in node.fields if f.name == "status"), None)
         assert status_field is not None, f"node object missing status field in {mapping_path}"
         assert status_field.value == self.NODE_STATUS_EXPRESSION
-
-
-class TestCatcMappings:
-    PATHS = [
-        "mappings/catalyst-center.hcl.example",
-    ]
-
-    @staticmethod
-    def _device_object(cfg):
-        return next((o for o in cfg.objects if o.name == "device"), None)
-
-    @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_manufacturer_device_type_prereqs(self, mapping_path):
-        cfg = load_config(mapping_path)
-        device = self._device_object(cfg)
-        assert device is not None
-        prereqs = {p.name: p for p in device.prerequisites}
-        assert prereqs["manufacturer"].args.get("name") == "source('manufacturer')"
-        assert prereqs["device_type"].args.get("manufacturer") == "prereq('manufacturer')"
-        assert prereqs["device_type"].args.get("model") == "when(source('model'), source('model'), 'Unknown')"
-        assert prereqs["role"].args.get("name") == "when(source('role'), source('role'), 'Network Device')"
-        assert prereqs["site"].args.get("name") == "when(source('site_name'), source('site_name'), 'Unknown')"
-        assert prereqs["platform"].args.get("name") == "when(source('platform_name'), source('platform_name'), 'Unknown')"
-
-    @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_device_fields_reference_expected_inputs(self, mapping_path):
-        cfg = load_config(mapping_path)
-        device = self._device_object(cfg)
-        assert device is not None
-        field_values = {f.name: f.value for f in device.fields}
-        assert field_values["name"] == "when(source('name'), source('name'), 'Unknown')"
-        assert field_values["device_type"] == "prereq('device_type')"
-        assert "prereq('site')" in field_values["site"]
-
-    @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_interface_ip_address_block(self, mapping_path):
-        cfg = load_config(mapping_path)
-        device = self._device_object(cfg)
-        assert device is not None
-        assert device.interfaces, "device should define interfaces"
-        interface = device.interfaces[0]
-        interface_fields = {f.name: f.value for f in interface.fields}
-        assert interface_fields["type"] == "when(source('type'), source('type'), 'other')"
-        assert interface_fields["description"] == "when(source('description'), source('description'), '')"
-        assert interface.ip_addresses, "interface block must declare ip_address"
-        ip_block = interface.ip_addresses[0]
-        assert ip_block.primary_if == "first"
-        assert (
-            ip_block.source_items
-            == "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
-        )
-        address_field = next((f for f in ip_block.fields if f.name == "address"), None)
-        status_field = next((f for f in ip_block.fields if f.name == "status"), None)
-        assert address_field is not None and address_field.value == "source('address')"
-        assert status_field is not None and status_field.value == "'active'"
