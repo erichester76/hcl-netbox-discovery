@@ -80,12 +80,13 @@ class TestEnsurePlatformRaceCondition:
         with pytest.raises(Exception, match="400"):
             runner._ensure_platform({"name": "VMware ESXi 7.0"}, dry_run=False)
 
-    def test_dry_run_returns_none_without_network_calls(self):
+    def test_dry_run_returns_placeholder_without_network_calls(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
         result = runner._ensure_platform({"name": "VMware ESXi 7.0"}, dry_run=True)
 
-        assert result is None
+        assert isinstance(result, int)
+        assert result < 0
         nb.upsert.assert_not_called()
         nb.get.assert_not_called()
 
@@ -158,7 +159,8 @@ class TestEnsurePlatformManufacturerName:
             {"name": "VMware ESXi 7.0", "manufacturer_name": "VMware"},
             dry_run=True,
         )
-        assert result is None
+        assert isinstance(result, int)
+        assert result < 0
         nb.upsert.assert_not_called()
 
     def test_empty_manufacturer_name_skips_manufacturer_ensure(self):
@@ -655,11 +657,12 @@ class TestEnsureCluster:
             lookup_fields=["name"],
         )
 
-    def test_dry_run_returns_none_without_upsert(self):
+    def test_dry_run_returns_placeholder_without_upsert(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
         result = runner._ensure_cluster({"name": "Azure eastus2", "type": 34}, dry_run=True)
-        assert result is None
+        assert isinstance(result, int)
+        assert result < 0
         nb.upsert.assert_not_called()
 
     def test_group_and_site_are_forwarded_into_payload(self):
@@ -719,4 +722,51 @@ class TestRequiredIdentityValidation:
         with pytest.raises(ValueError, match="ensure_site"):
             runner._ensure_site({"name": "   "}, dry_run=True)
 
+        nb.upsert.assert_not_called()
+
+
+class TestDryRunPlaceholderIdentity:
+    """Dry-run prerequisite methods should preserve stable lookup identities."""
+
+    @pytest.mark.parametrize(
+        ("method_name", "args"),
+        [
+            ("_ensure_manufacturer", {"name": "Cisco"}),
+            ("_ensure_device_type", {"model": "N9K-C93180YC-EX", "manufacturer": 100}),
+            ("_ensure_device_role", {"name": "Switch"}),
+            ("_ensure_platform", {"name": "NX-OS"}),
+            ("_ensure_cluster_type", {"name": "VMware"}),
+            ("_ensure_cluster_group", {"name": "Prod"}),
+            ("_ensure_cluster", {"name": "vcf-a", "type": 7}),
+            ("_ensure_inventory_item_role", {"name": "Transceiver"}),
+        ],
+    )
+    def test_methods_return_stable_placeholder_ids_in_dry_run(self, method_name, args):
+        nb = MagicMock()
+        runner = PrerequisiteRunner(nb)
+
+        first = getattr(runner, method_name)(args, dry_run=True)
+        second = getattr(runner, method_name)(args, dry_run=True)
+
+        assert isinstance(first, int)
+        assert first < 0
+        assert second == first
+        nb.upsert.assert_not_called()
+
+    def test_device_type_placeholder_changes_when_manufacturer_changes(self):
+        nb = MagicMock()
+        runner = PrerequisiteRunner(nb)
+
+        first = runner._ensure_device_type(
+            {"model": "N9K-C93180YC-EX", "manufacturer": 100},
+            dry_run=True,
+        )
+        second = runner._ensure_device_type(
+            {"model": "N9K-C93180YC-EX", "manufacturer": 101},
+            dry_run=True,
+        )
+
+        assert isinstance(first, int)
+        assert isinstance(second, int)
+        assert first != second
         nb.upsert.assert_not_called()
