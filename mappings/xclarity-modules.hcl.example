@@ -357,7 +357,10 @@ object "node" {
     source_items = "raidSettings[*].diskDrives"
     profile      = "Hard disk"
     enabled_if   = "collector.sync_modules"
-    dedupe_by    = "source('serialNumber')"
+    # Module writes are keyed by device + bay_name, so dedupe on the same
+    # stable bay identity to avoid conflicting serial/model payloads fighting
+    # over one NetBox module row within the same run.
+    dedupe_by    = "str(coalesce('name', 'description'))"
 
     field "bay_name" {
       value = "str(coalesce('name', 'description'))"

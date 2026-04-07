@@ -302,6 +302,12 @@ class TestXclarityModulesHcl:
         assert "Hard disk" in profiles
         assert "Power supply" in profiles
 
+    def test_hard_disk_dedupe_aligns_with_bay_identity(self):
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        hd_mod = next(m for m in node.modules if m.profile == "Hard disk")
+        assert hd_mod.dedupe_by == "str(coalesce('name', 'description'))"
+
     def test_sync_modules_flag_in_collector(self):
         cfg = load_config(self.HCL_PATH)
         # sync_modules should be present as an extra_flag
