@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at  TEXT    NOT NULL,
     started_at  TEXT,
     finished_at TEXT,
-    summary     TEXT
+    summary     TEXT,
+    artifact_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS job_logs (
@@ -268,6 +269,11 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN run_token TEXT")
         except Exception:
             pass  # column already exists
+        # Migration: add artifact_json column for structured per-job artifacts
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN artifact_json TEXT")
+        except Exception:
+            pass  # column already exists
 
         # Bootstrap settings remain environment-only and should not appear in
         # the DB-backed runtime settings table or Settings UI.
@@ -341,6 +347,7 @@ def finish_job(
     success: bool,
     summary: dict | None = None,
     has_errors: bool = False,
+    artifact: dict | None = None,
 ) -> None:
     """Mark job as success/partial/failed and store optional summary dict.
 
@@ -351,6 +358,7 @@ def finish_job(
         has_errors: Set to True when the run completed without a fatal exception
             but at least one item-level error was recorded in RunStats. Causes
             the status to be *partial* instead of *success*.
+        artifact: Optional structured artifact dict persisted as JSON.
     """
     if not success:
         status = "failed"
@@ -359,10 +367,11 @@ def finish_job(
     else:
         status = "success"
     summary_json = json.dumps(summary) if summary else None
+    artifact_json = json.dumps(artifact) if artifact else None
     with _conn() as con:
         con.execute(
-            "UPDATE jobs SET status=?, finished_at=?, summary=? WHERE id=?",
-            (status, _now(), summary_json, job_id),
+            "UPDATE jobs SET status=?, finished_at=?, summary=?, artifact_json=? WHERE id=?",
+            (status, _now(), summary_json, artifact_json, job_id),
         )
 
 
@@ -379,7 +388,7 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     """Return the *limit* most-recent jobs, newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -390,7 +399,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -400,7 +409,7 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
         row = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -451,12 +460,18 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
         "summary": None,
         "dry_run": bool(row[8]) if len(row) > 8 else False,
         "debug_mode": bool(row[9]) if len(row) > 9 else False,
+        "artifact": None,
     }
     if row[7]:
         try:
             job["summary"] = json.loads(row[7])
         except (json.JSONDecodeError, TypeError):
             job["summary"] = row[7]
+    if len(row) > 10 and row[10]:
+        try:
+            job["artifact"] = json.loads(row[10])
+        except (json.JSONDecodeError, TypeError):
+            job["artifact"] = row[10]
     return job
 
 
@@ -464,7 +479,7 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     """Return all jobs with status='queued', oldest first (FIFO execution order)."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE status='queued' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -499,7 +514,7 @@ def claim_next_queued_job() -> dict[str, Any] | None:
             return None
 
         claimed = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -662,7 +677,7 @@ def dispatch_next_due_schedule() -> dict[str, Any] | None:
         job_id = int(cur.lastrowid)
 
         job_row = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode "
+            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
