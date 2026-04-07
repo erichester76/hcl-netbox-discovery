@@ -35,6 +35,19 @@
 #   location.room          → NetBox location (area within site)
 #   location.rack          → NetBox rack
 #   location.lowestRackUnit → rack position (front face, U number)
+#
+# Multiple XClarity support (iterator):
+#   To collect from more than one XClarity instance, add an iterator {} block
+#   inside the collector {} block. Keep XCLARITY_USER and XCLARITY_PASS in the
+#   source block when credentials are shared and iterate only XCLARITY_HOST.
+#   Example:
+#
+#     collector {
+#       iterator {
+#         max_workers   = 2
+#         XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
+#       }
+#     }
 
 source "xclarity" {
   api_type   = "rest"
@@ -84,6 +97,12 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
+
+  # Uncomment and populate to collect from multiple XClarity instances in one run:
+  # iterator {
+  #   max_workers   = 2
+  #   XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
+  # }
 }
 
 # ---------------------------------------------------------------------------

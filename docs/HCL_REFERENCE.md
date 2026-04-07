@@ -314,8 +314,6 @@ collector {
   iterator {
     max_workers = 2
     VCENTER_URL = ["vc1.example.com", "vc2.example.com"]
-    VCENTER_USER = ["admin", "admin"]
-    VCENTER_PASS = ["secret1", "secret2"]
   }
 }
 ```
@@ -342,6 +340,13 @@ Each `iterator {}` block defines one group of source-connection overrides. The e
 | any other key | yes | A scalar or list of values used as `env()` overrides when rebuilding the source config |
 
 When multiple override keys are lists, iteration is zip-style: the shortest list length determines the number of passes.
+
+For sources where every endpoint shares the same credentials, keep the shared
+username/password in the `source {}` block and iterate only the URL/host
+variable. For example, VMware can iterate `VCENTER_URL` while keeping
+`VCENTER_USER` and `VCENTER_PASS` in the `source {}` block, and XClarity
+can iterate `XCLARITY_HOST` while keeping `XCLARITY_USER` and
+`XCLARITY_PASS` in the `source {}` block.
 
 ---
 
