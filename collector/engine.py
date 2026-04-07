@@ -1977,6 +1977,17 @@ class Engine:
             # Update the siteless VLAN in-place; remove site so it stays siteless.
             update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
             update_payload.pop("site", None)
+            existing_name = getattr(siteless_vlan, "name", None)
+            if existing_name and update_payload.get("name") != existing_name:
+                logger.debug(
+                    "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
+                    "preserving existing name=%r over incoming name=%r",
+                    vid,
+                    update_payload.get("id"),
+                    existing_name,
+                    update_payload.get("name"),
+                )
+                update_payload["name"] = existing_name
             return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
         if site_vlan is not None:
@@ -1989,6 +2000,18 @@ class Engine:
             update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
             if site_id is not None:
                 update_payload["site"] = site_id
+            existing_name = getattr(site_vlan, "name", None)
+            if existing_name and update_payload.get("name") != existing_name:
+                logger.debug(
+                    "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
+                    "preserving existing name=%r over incoming name=%r",
+                    vid,
+                    update_payload.get("id"),
+                    site_id,
+                    existing_name,
+                    update_payload.get("name"),
+                )
+                update_payload["name"] = existing_name
             return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
         if site_id is None and existing_vlans:
