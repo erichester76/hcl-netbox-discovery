@@ -167,7 +167,6 @@ def _run_queued_job(job: dict[str, Any]) -> None:
         debug_mode=bool(job.get("debug_mode", False)),
         job_already_started=True,
     )
-
 def _execute_job(
     job_id: int,
     hcl_file: str,
