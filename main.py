@@ -130,6 +130,15 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_scheduler(poll_interval: int = 60) -> int:
     """Run the scheduler loop indefinitely, checking for due jobs every *poll_interval* seconds."""
+    from collector.db import reconcile_stale_running_jobs  # noqa: PLC0415
+
+    reconciled = reconcile_stale_running_jobs()
+    if reconciled:
+        logging.warning(
+            "Reconciled %d stale running job(s) after worker startup: %s",
+            len(reconciled),
+            ", ".join(str(job_id) for job_id in reconciled),
+        )
     logging.info("Scheduler started.  Polling for due jobs every %d s.", poll_interval)
     while True:
         try:

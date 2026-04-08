@@ -426,6 +426,27 @@ def test_due_schedule_missing_file_persists_failed_job(tmp_db):
     assert jobs[0]["status"] == "failed"
 
 
+def test_run_scheduler_reconciles_stale_running_jobs_before_poll_loop(tmp_db):
+    import collector.db as db_module  # noqa: PLC0415
+
+    stale_job_id = db_module.create_job("mappings/stale.hcl")
+    db_module.start_job(stale_job_id)
+
+    from main import _run_scheduler  # noqa: PLC0415
+
+    with (
+        patch("main._check_and_fire_due_schedules"),
+        patch("main._check_and_run_queued_jobs"),
+        patch("main.time.sleep", side_effect=KeyboardInterrupt),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            _run_scheduler(poll_interval=1)
+
+    stale_job = db_module.get_job(stale_job_id)
+    assert stale_job is not None
+    assert stale_job["status"] == "failed"
+
+
 def test_run_queued_job_debug_mode_captures_debug_logs(tmp_path, tmp_db):
     """When debug_mode=True, _run_queued_job must persist DEBUG-level records.
 

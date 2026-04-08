@@ -24,6 +24,7 @@ from collector.db import (
     get_settings_by_group,
     init_db,
     job_stop_requested,
+    reconcile_stale_running_jobs,
     request_job_stop,
     reset_setting,
     set_setting,
@@ -267,6 +268,39 @@ def test_request_job_stop_does_not_duplicate_running_log_message():
         if log["message"] == "Stop requested by operator."
     ]
     assert len(operator_logs) == 1
+
+
+def test_reconcile_stale_running_jobs_marks_running_jobs_failed():
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+
+    reconciled = reconcile_stale_running_jobs()
+
+    job = get_job(job_id)
+    logs = get_job_logs(job_id)
+    assert reconciled == [job_id]
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["finished_at"] is not None
+    assert logs[-1]["level"] == "WARNING"
+    assert "marked failed during startup reconciliation" in logs[-1]["message"]
+
+
+def test_reconcile_stale_running_jobs_marks_stop_requested_jobs_stopped():
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+    request_job_stop(job_id)
+
+    reconciled = reconcile_stale_running_jobs()
+
+    job = get_job(job_id)
+    logs = get_job_logs(job_id)
+    assert reconciled == [job_id]
+    assert job is not None
+    assert job["status"] == "stopped"
+    assert job["finished_at"] is not None
+    assert logs[-1]["level"] == "WARNING"
+    assert "marked stopped during startup reconciliation" in logs[-1]["message"]
 
 
 def test_get_running_jobs_no_limit():
