@@ -272,7 +272,7 @@ object "vm" {
 
   prerequisite "platform" {
     method   = "ensure_platform"
-    args     = { name = "coalesce(source('guest.guestFullName'), 'Unknown')" }
+    args     = { name = "source('guest.guestFullName') or 'Unknown'" }
     optional = true
   }
 
@@ -294,15 +294,6 @@ object "vm" {
 
   field "memory" {
     value = "source('config.hardware.memoryMB')"
-  }
-
-  prerequisite "platform" {
-    method   = "ensure_platform"
-    args     = {
-       name              = "source('config.product.fullName') or 'Unknown'"
-       manufacturer_name = "split(source('config.product.fullName') or 'Unknown')[0]"
-    }
-    optional = true
   }
 
   field "tags" {
