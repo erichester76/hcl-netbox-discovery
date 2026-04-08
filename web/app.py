@@ -1,24 +1,16 @@
-"""
-File: web/app.py
-Purpose: Flask web application for monitoring and triggering HCL sync jobs.
-Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #debug-mode
-"""
+"""Flask web application for monitoring and triggering HCL sync jobs."""
 
 from __future__ import annotations
 
 import glob
-import hmac
 import logging
 import os
-import secrets
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
-from werkzeug.security import check_password_hash
 
 # Ensure the project root is on sys.path so that local packages are importable.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,14 +36,23 @@ from collector.db import (  # noqa: E402
     set_setting,
     update_schedule,
 )
+from web.auth import (  # noqa: E402
+    api_token_matches_request,
+    auth_configuration_error,
+    auth_enabled,
+    configured_username,
+    credentials_match,
+    csrf_token,
+    is_auth_exempt,
+    is_authenticated,
+    safe_next_target,
+    validate_csrf,
+)
+from web.serializers import job_artifact_payload, job_logs_payload, jobs_payload  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# App factory
-# ---------------------------------------------------------------------------
-
-
 def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates")
     app.config["SECRET_KEY"] = get_config("WEB_SECRET_KEY", "dev-change-me")
@@ -68,7 +69,7 @@ def create_app() -> Flask:
     with app.app_context():
         init_db()
 
-    auth_error = _auth_configuration_error()
+    auth_error = auth_configuration_error()
     if auth_error:
         raise RuntimeError(auth_error)
 
@@ -83,25 +84,25 @@ def create_app() -> Flask:
     @app.context_processor
     def inject_security_helpers() -> dict[str, Any]:
         return {
-            "csrf_token": _csrf_token,
-            "web_auth_enabled": _auth_enabled(),
-            "web_authenticated": _is_authenticated(),
-            "web_username": session.get("username", _configured_username()),
+            "csrf_token": csrf_token,
+            "web_auth_enabled": auth_enabled(),
+            "web_authenticated": is_authenticated(),
+            "web_username": session.get("username", configured_username()),
         }
 
     @app.before_request
     def require_web_auth() -> Any | None:
-        if not _auth_enabled():
+        if not auth_enabled():
             return None
-        if _is_api_request() and _api_token_matches_request():
+        if _is_api_request() and api_token_matches_request():
             return None
-        is_auth_exempt = _is_auth_exempt(request.endpoint)
-        if not is_auth_exempt and not _is_authenticated():
+        is_route_auth_exempt = is_auth_exempt(request.endpoint)
+        if not is_route_auth_exempt and not is_authenticated():
             if _is_api_request():
                 return jsonify({"error": "authentication required"}), 401
-            return redirect(url_for("login", next=_safe_next_target(request.full_path)))
+            return redirect(url_for("login", next=safe_next_target(request.full_path)))
         if request.method == "POST":
-            _validate_csrf()
+            validate_csrf()
         return None
 
     # ------------------------------------------------------------------
@@ -110,20 +111,20 @@ def create_app() -> Flask:
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
-        if not _auth_enabled():
+        if not auth_enabled():
             return redirect(url_for("index"))
 
-        next_target = _safe_next_target(request.values.get("next", ""))
-        if _is_authenticated():
+        next_target = safe_next_target(request.values.get("next", ""))
+        if is_authenticated():
             return redirect(next_target or url_for("index"))
         if request.method == "POST":
             username = request.form.get("username", "")
             password = request.form.get("password", "")
-            if _credentials_match(username, password):
+            if credentials_match(username, password):
                 session.clear()
                 session["authenticated"] = True
                 session["username"] = username
-                _csrf_token()
+                csrf_token()
                 return redirect(next_target or url_for("index"))
             return render_template(
                 "login.html",
@@ -172,17 +173,14 @@ def create_app() -> Flask:
         new_logs = get_job_logs(job_id, after_id=after_id)
         job = get_job(job_id)
         return jsonify(
-            {
-                "logs": new_logs,
-                "status": job["status"] if job else "unknown",
-            }
+            job_logs_payload(job or {"status": "unknown"}, new_logs)
         )
 
     @app.route("/api/running-jobs")
     def api_running_jobs():
         """Return currently queued/running jobs as JSON (used for dashboard polling)."""
         jobs = get_running_jobs()
-        return jsonify({"jobs": jobs, "count": len(jobs)})
+        return jsonify(jobs_payload(jobs))
 
     @app.route("/api/jobs")
     def api_jobs():
@@ -200,7 +198,7 @@ def create_app() -> Flask:
             status=status,
             hcl_file=hcl_file,
         )
-        return jsonify({"jobs": jobs, "count": len(jobs)})
+        return jsonify(jobs_payload(jobs))
 
     @app.route("/api/jobs/<int:job_id>/artifact")
     def api_job_artifact(job_id: int):
@@ -208,13 +206,7 @@ def create_app() -> Flask:
         job = get_job(job_id)
         if job is None:
             return jsonify({"error": "job not found"}), 404
-        return jsonify(
-            {
-                "job_id": job["id"],
-                "status": job["status"],
-                "artifact": job.get("artifact"),
-            }
-        )
+        return jsonify(job_artifact_payload(job))
 
     @app.route("/api/jobs/<int:job_id>/logs")
     def api_job_logs(job_id: int):
@@ -224,12 +216,7 @@ def create_app() -> Flask:
         if job is None:
             return jsonify({"error": "job not found"}), 404
         new_logs = get_job_logs(job_id, after_id=after_id)
-        return jsonify(
-            {
-                "status": job["status"],
-                "logs": new_logs,
-            }
-        )
+        return jsonify(job_logs_payload(job, new_logs))
 
     @app.route("/jobs/run", methods=["POST"])
     def run_job():
@@ -391,11 +378,6 @@ def create_app() -> Flask:
     return app
 
 
-# ---------------------------------------------------------------------------
-# Job dispatcher – creates a queued DB record for the collector to pick up
-# ---------------------------------------------------------------------------
-
-
 def _dispatch_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False) -> int:
     """Resolve *hcl_file*, create a 'queued' DB job record, and return its ID.
 
@@ -408,104 +390,8 @@ def _dispatch_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False
 
     return create_job(hcl_file, dry_run=dry_run, debug_mode=debug_mode)
 
-
-def _auth_enabled() -> bool:
-    return os.environ.get("WEB_AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _configured_username() -> str:
-    return os.environ.get("WEB_USERNAME", "admin").strip() or "admin"
-
-
-def _configured_password() -> str:
-    return os.environ.get("WEB_PASSWORD", "")
-
-
-def _configured_password_hash() -> str:
-    return os.environ.get("WEB_PASSWORD_HASH", "").strip()
-
-
-def _configured_api_token() -> str:
-    return get_config("WEB_API_TOKEN", "").strip()
-
-
-def _auth_configuration_error() -> str | None:
-    if not _auth_enabled():
-        return None
-    if _configured_password_hash():
-        return None
-    password = _configured_password()
-    if not password:
-        return "WEB auth is enabled but no credentials are configured. Set WEB_PASSWORD or WEB_PASSWORD_HASH."
-    if password == "change-me-in-production":
-        return "WEB_PASSWORD must be changed from the default placeholder before starting the web UI."
-    return None
-
-
-def _credentials_match(username: str, password: str) -> bool:
-    expected_username = _configured_username()
-    if not hmac.compare_digest(username, expected_username):
-        return False
-
-    password_hash = _configured_password_hash()
-    if password_hash:
-        return check_password_hash(password_hash, password)
-
-    expected_password = _configured_password()
-    return bool(expected_password) and hmac.compare_digest(password, expected_password)
-
-
-def _is_authenticated() -> bool:
-    return bool(session.get("authenticated"))
-
-
 def _is_api_request() -> bool:
     return request.path.startswith("/api/")
-
-
-def _is_auth_exempt(endpoint: str | None) -> bool:
-    return endpoint in {"login", "static"}
-
-
-def _request_api_token() -> str:
-    auth_header = request.headers.get("Authorization", "").strip()
-    if auth_header.lower().startswith("bearer "):
-        return auth_header[7:].strip()
-    return request.headers.get("X-API-Key", "").strip()
-
-
-def _api_token_matches_request() -> bool:
-    expected_token = _configured_api_token()
-    supplied_token = _request_api_token()
-    return bool(expected_token and supplied_token) and hmac.compare_digest(supplied_token, expected_token)
-
-
-def _safe_next_target(target: str) -> str:
-    cleaned = (target or "").strip()
-    if not cleaned:
-        return ""
-    if cleaned.startswith("http://") or cleaned.startswith("https://") or cleaned.startswith("//"):
-        return ""
-    if not cleaned.startswith("/"):
-        return ""
-    if cleaned.endswith("?"):
-        cleaned = cleaned[:-1]
-    return cleaned or ""
-
-
-def _csrf_token() -> str:
-    token = session.get("csrf_token")
-    if not token:
-        token = secrets.token_urlsafe(32)
-        session["csrf_token"] = token
-    return token
-
-
-def _validate_csrf() -> None:
-    supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
-    expected = _csrf_token()
-    if not supplied or not hmac.compare_digest(supplied, expected):
-        abort(400, description="Invalid CSRF token")
 
 
 # ---------------------------------------------------------------------------
