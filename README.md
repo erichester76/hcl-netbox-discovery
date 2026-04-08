@@ -547,3 +547,22 @@ release tags only from a clean checkout of current `origin/main`.
 Current release branch:
 
 - `release/1.0.0`
+
+## Versioning Policy
+
+This repository uses semantic versioning once `1.0.0` is established:
+
+- `MAJOR`
+  - breaking changes only
+  - examples: incompatible HCL behavior changes, removed settings, removed API
+    fields/routes, schema changes requiring operator intervention
+- `MINOR`
+  - backward-compatible features
+  - examples: new adapters, new HCL options, new UI or API endpoints that do
+    not break existing usage
+- `PATCH`
+  - backward-compatible fixes only
+  - examples: bug fixes, documentation corrections, internal refactors with no
+    contract change
+
+Breaking changes must only be released in a major version.

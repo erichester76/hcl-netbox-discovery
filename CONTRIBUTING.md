@@ -139,6 +139,25 @@ Hotfix rule:
 - merge the fix into `main`
 - immediately back-merge or cherry-pick it into the active `release/<version>` branch and `dev` so the branches do not drift
 
+## Versioning Rules
+
+Version tags follow semantic versioning:
+
+- `MAJOR`
+  - breaking changes only
+  - examples: incompatible HCL semantics, removed settings, removed or changed
+    API contracts, schema changes requiring operator action
+- `MINOR`
+  - backward-compatible features
+- `PATCH`
+  - backward-compatible fixes only
+
+Before creating a release tag, explicitly classify the change set:
+
+- if it contains any breaking change, bump `MAJOR`
+- if it adds features without breaking compatibility, bump `MINOR`
+- if it only fixes bugs or docs without breaking compatibility, bump `PATCH`
+
 ## Choosing Tests
 
 You do not always need the full suite while iterating.

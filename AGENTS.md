@@ -237,6 +237,10 @@ Follow this workflow by default unless the user explicitly overrides it:
    - Promote vetted batches from `dev` to the active `release/<version>` branch.
    - Promote `release/<version>` to `main` for production.
    - Create version tags only from a clean checkout of current `origin/main`.
+   - Use semantic versioning for tags:
+     - `MAJOR` for breaking changes only
+     - `MINOR` for backward-compatible features
+     - `PATCH` for backward-compatible fixes only
    - If a hotfix lands in `main`, ensure it is merged or cherry-picked back
      into the active `release/<version>` branch and `dev`.
 

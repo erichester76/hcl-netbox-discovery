@@ -85,6 +85,21 @@ Normal workflow:
 Only branch directly from `origin/main` for true production hotfixes, and back-port
 those fixes to the active `release/<version>` branch and `dev` immediately after merge.
 
+## 3b. Versioning
+
+Releases follow semantic versioning from `1.0.0` onward:
+
+- `MAJOR`: breaking changes only
+- `MINOR`: backward-compatible features
+- `PATCH`: backward-compatible fixes only
+
+In this repository, treat these as breaking by default:
+
+- incompatible HCL syntax or semantics
+- removed settings or changed setting meaning
+- removed API fields/routes or changed API response contracts
+- schema changes that require operator action or migration awareness
+
 ## 4. Where Things Live
 
 ### Core runtime
