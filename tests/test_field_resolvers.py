@@ -450,10 +450,10 @@ _DISK_DESC_EXPR = (
 
 _JNSU_DESC_EXPR = (
     "truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), "
-    "'[\\\\r\\\\n ]{2,}|[\\\\r\\\\n]', ' '), 64) if source('DirXMLjnsuStaticAddrs') else "
+    "'\\\\s+', ' '), 64) if source('DirXMLjnsuStaticAddrs') else "
     "truncate(regex_replace(upper(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1') "
     "or source('DirXMLjnsuUserDN') or 'UNKNOWN') + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + "
-    "(source('DirXMLjnsuDescription') or ''), '[\\\\r\\\\n ]{2,}|[\\\\r\\\\n]', ' '), 64)"
+    "(source('DirXMLjnsuDescription') or ''), '\\\\s+', ' '), 64)"
 )
 
 
