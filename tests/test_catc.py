@@ -260,7 +260,7 @@ class TestCatalystGetObjects:
         assert d["status"] == "active"
         assert d["site_name"] == "Southeast"
 
-    def test_get_devices_preserves_floor_as_location(self):
+    def test_get_devices_maps_building_segment_to_location(self):
         src = self._connected_source()
 
         site = SimpleNamespace(
