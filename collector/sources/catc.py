@@ -20,8 +20,8 @@ Normalised fields
   platform_name     ``"{softwareType} {softwareVersion}"``
   serial            Uppercase serial number
   ip_address        Management IP address (empty string if absent)
-  site_name         Site name extracted from ``siteNameHierarchy`` (level 3)
-  location_name     Building/location from hierarchy (level 4; empty string if absent)
+  site_name         Site name extracted from ``siteNameHierarchy`` (level 2)
+  location_name     Building/location from hierarchy (level 3; empty string if absent)
   status            ``"active"`` if Reachable, otherwise ``"offline"``
   interfaces        List of normalised interface dicts (when fetch_interfaces enabled)
 
@@ -135,8 +135,8 @@ def _mask_to_prefix(mask: str) -> int | None:
 def _hierarchy_part(hierarchy: str, level: int) -> str:
     """Return the segment at *level* from a ``/``-separated site hierarchy.
 
-    Level 0 is the root (Global), 1 is the country/area, 2 is the region,
-    3 is the site, 4 is the building/location.
+    Level 0 is the root (Global), 1 is the country/area, 2 is the site,
+    3 is the building/location.
     """
     if not hierarchy:
         return ""
@@ -748,10 +748,8 @@ class CatalystCenterSource(DataSource):
 
         name = (hostname.split(".")[0] if hostname else "")[:64] or "Unknown"
 
-        site_name = _normalize_hierarchy_label(
-            _hierarchy_part(site_hierarchy, 3) or _hierarchy_part(site_hierarchy, 2)
-        )
-        location_name = _normalize_hierarchy_label(_hierarchy_part(site_hierarchy, 4))
+        site_name = _normalize_hierarchy_label(_hierarchy_part(site_hierarchy, 2))
+        location_name = _normalize_hierarchy_label(_hierarchy_part(site_hierarchy, 3))
 
         return {
             # --- normalised convenience fields ---
