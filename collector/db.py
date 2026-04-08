@@ -135,6 +135,8 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ('CATC_USER', 'admin', '', 'Cisco Catalyst Center'),
     ('CATC_PASS', 'changeme', '', 'Cisco Catalyst Center'),
     ('CATC_VERIFY_SSL', 'true', '', 'Cisco Catalyst Center'),
+    ('CATC_FETCH_INTERFACES', 'true', 'Set to "true" to fetch per-device interface inventories and embed them in the source payload', 'Cisco Catalyst Center'),
+    ('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto', 'Site assignment strategy for Catalyst Center hierarchy mapping (default: auto)', 'Cisco Catalyst Center'),
     ('CATC_WAIT_ON_RATE_LIMIT', 'true', 'Let dnacentersdk honor Catalyst Center Retry-After rate-limit responses automatically (default: true)', 'Cisco Catalyst Center'),
     ('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3', 'Additional adapter-level retry attempts when Catalyst Center still raises 429 responses (default: 3)', 'Cisco Catalyst Center'),
     ('CATC_RATE_LIMIT_RETRY_INITIAL_DELAY', '1.0', 'Initial fallback delay in seconds before retrying raised Catalyst Center 429 responses (default: 1.0)', 'Cisco Catalyst Center'),

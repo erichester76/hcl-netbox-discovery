@@ -21,6 +21,7 @@ from collector.db import (
     get_running_jobs,
     get_schedule,
     get_schedules,
+    get_settings_by_group,
     init_db,
     job_stop_requested,
     request_job_stop,
@@ -352,6 +353,13 @@ def test_runtime_config_db_override_wins():
     assert get_config("NETBOX_URL", "") == "https://db.example.com"
     reset_setting("NETBOX_URL")
     assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
+
+
+def test_catc_runtime_settings_are_seeded():
+    settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
+
+    assert settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
+    assert settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
 
 
 def test_startup_config_stays_env_only(monkeypatch):

@@ -724,6 +724,27 @@ class TestBuildSourceConfig:
         cfg = build_source_config(body, "vmware")
         assert cfg.api_type == "vmware"
 
+    def test_builds_catc_source_config_from_db_backed_settings(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(
+            tmp_path,
+            monkeypatch,
+            CATC_HOST="https://catc.prod.example.com",
+            CATC_FETCH_INTERFACES="false",
+            CATC_SITE_ASSIGNMENT_STRATEGY="building",
+        )
+        body = {
+            "api_type": "catc",
+            "url": "env('CATC_HOST')",
+            "fetch_interfaces": "env('CATC_FETCH_INTERFACES', 'true')",
+            "site_assignment_strategy": "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')",
+        }
+
+        cfg = build_source_config(body, "catc")
+
+        assert cfg.url == "https://catc.prod.example.com"
+        assert cfg.extra["fetch_interfaces"] == "false"
+        assert cfg.extra["site_assignment_strategy"] == "building"
+
 
 # ---------------------------------------------------------------------------
 # load_config() iterator parsing
