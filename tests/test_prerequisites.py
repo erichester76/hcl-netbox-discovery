@@ -836,3 +836,48 @@ class TestDryRunPlaceholderIdentity:
         assert isinstance(second, int)
         assert first != second
         nb.upsert.assert_not_called()
+
+
+class TestEnsureDeviceTypePayload:
+    def test_includes_extended_fields_when_present(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=21)
+        runner = PrerequisiteRunner(nb)
+
+        result = runner._ensure_device_type(
+            {
+                "model": "ThinkSystem SR650 V2",
+                "manufacturer": 7,
+                "part_number": "7Z73A00XNA",
+                "u_height": 2,
+                "description": "2U rack server",
+            },
+            dry_run=False,
+        )
+
+        assert result == 21
+        nb.upsert.assert_called_once()
+        payload = nb.upsert.call_args[0][1]
+        assert payload["manufacturer"] == 7
+        assert payload["part_number"] == "7Z73A00XNA"
+        assert payload["u_height"] == 2
+        assert payload["description"] == "2U rack server"
+
+    def test_includes_blank_fields_to_clear_existing_metadata(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=22)
+        runner = PrerequisiteRunner(nb)
+
+        runner._ensure_device_type(
+            {
+                "model": "ThinkSystem SR650 V2",
+                "manufacturer": 7,
+                "part_number": "",
+                "description": "   ",
+            },
+            dry_run=False,
+        )
+
+        payload = nb.upsert.call_args[0][1]
+        assert payload["part_number"] == ""
+        assert payload["description"] == ""

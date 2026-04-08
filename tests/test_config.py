@@ -928,3 +928,26 @@ class TestCatcMappings:
         status_field = next((f for f in ip_block.fields if f.name == "status"), None)
         assert address_field is not None and address_field.value == "source('address')"
         assert status_field is not None and status_field.value == "'active'"
+
+
+class TestNetboxToNetboxDeviceMapping:
+    MAPPING_PATH = "mappings/netbox-to-netbox.hcl.example"
+
+    def _device_object(self):
+        cfg = load_config(self.MAPPING_PATH)
+        device = next((o for o in cfg.objects if o.name == "device"), None)
+        assert device is not None, "missing device object in netbox-to-netbox mapping"
+        return device
+
+    def test_device_type_prerequisite_passes_extended_fields(self):
+        device = self._device_object()
+        prereq = next((p for p in device.prerequisites if p.name == "device_type"), None)
+        assert prereq is not None
+        assert prereq.args["part_number"] == "source('device_type.part_number') or ''"
+        assert prereq.args["u_height"] == "source('device_type.u_height')"
+        assert prereq.args["description"] == "source('device_type.description') or ''"
+
+    def test_device_maps_description_field(self):
+        device = self._device_object()
+        fields = {field.name: field.value for field in device.fields}
+        assert fields["description"] == "source('description') or ''"
