@@ -113,6 +113,24 @@ def _fake_stat():
     return s
 
 
+def test_summary_from_stats_builds_expected_payload():
+    from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
+
+    summary, has_errors = summary_from_stats([_fake_stat()])
+
+    assert has_errors is False
+    assert summary == {
+        "devices": {
+            "processed": 5,
+            "created": 1,
+            "updated": 3,
+            "skipped": 1,
+            "errored": 0,
+            "nested_skipped": {},
+        }
+    }
+
+
 def _wait_for_job_completion(job_id: int, db_module_ref, timeout: float = 5.0) -> None:
     import time as _time  # noqa: PLC0415
 
@@ -195,7 +213,7 @@ def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
 
 
 def test_summary_from_stats_includes_nested_skips():
-    from main import _summary_from_stats  # noqa: PLC0415
+    from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
 
     stat = _fake_stat()
     stat.nested_skipped = {
@@ -203,7 +221,7 @@ def test_summary_from_stats_includes_nested_skips():
         "virtualization.virtual_disks:virtual_machine": 7,
     }
 
-    summary, has_errors = _summary_from_stats([stat])
+    summary, has_errors = summary_from_stats([stat])
 
     assert has_errors is False
     assert summary["devices"]["nested_skipped"] == {

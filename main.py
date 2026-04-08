@@ -169,49 +169,6 @@ def _run_queued_job(job: dict[str, Any]) -> None:
     )
 
 
-def _summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
-    summary = {
-        s.object_name: {
-            "processed": s.processed,
-            "created": s.created,
-            "updated": s.updated,
-            "skipped": s.skipped,
-            "errored": s.errored,
-            "nested_skipped": dict(sorted(s.nested_skipped.items())),
-        }
-        for s in all_stats
-    }
-    has_errors = any(s.errored > 0 for s in all_stats)
-    return summary, has_errors
-
-
-def _build_job_artifact(
-    *,
-    job_id: int,
-    hcl_file: str,
-    dry_run: bool,
-    debug_mode: bool,
-    success: bool,
-    has_errors: bool,
-    summary: dict[str, Any] | None,
-    error: str | None = None,
-) -> dict[str, Any]:
-    status = "failed"
-    if success:
-        status = "partial" if has_errors else "success"
-    return {
-        "job_id": job_id,
-        "hcl_file": hcl_file,
-        "dry_run": dry_run,
-        "debug_mode": debug_mode,
-        "success": success,
-        "status": status,
-        "has_errors": has_errors,
-        "summary": summary or {},
-        "error": error,
-    }
-
-
 def _execute_job(
     job_id: int,
     hcl_file: str,
@@ -225,8 +182,13 @@ def _execute_job(
     Returns True when the run completed without a top-level fatal error.
     Item-level errors still return True and are persisted as ``partial``.
     """
-    from collector.db import add_log, finish_job, job_stop_requested, start_job  # noqa: PLC0415
-    from collector.job_log_handler import JobLogHandler, job_context  # noqa: PLC0415
+    from collector.db import add_log, job_stop_requested, start_job  # noqa: PLC0415
+    from collector.job_lifecycle import (  # noqa: PLC0415
+        build_job_artifact,
+        captured_job_logging,
+        persist_job_result,
+        summary_from_stats,
+    )
 
     if not job_already_started:
         start_job(job_id)
@@ -234,10 +196,12 @@ def _execute_job(
     if not os.path.isfile(hcl_file):
         logging.error("Mapping file not found: %s", hcl_file)
         add_log(job_id, "ERROR", __name__, f"Mapping file not found: {hcl_file}")
-        finish_job(
+        persist_job_result(
             job_id,
             success=False,
-            artifact=_build_job_artifact(
+            summary=None,
+            has_errors=False,
+            artifact=build_job_artifact(
                 job_id=job_id,
                 hcl_file=hcl_file,
                 dry_run=dry_run,
@@ -249,20 +213,6 @@ def _execute_job(
             ),
         )
         return False
-
-    root_logger = logging.getLogger()
-    original_root_level = root_logger.level
-    capture_debug_logs = debug_mode or root_logger.isEnabledFor(logging.DEBUG)
-    handler = JobLogHandler(
-        job_id,
-        min_level=logging.DEBUG if capture_debug_logs else logging.INFO,
-    )
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
-    )
-    if capture_debug_logs:
-        root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(handler)
 
     summary: dict[str, Any] = {}
     success = False
@@ -277,23 +227,21 @@ def _execute_job(
         def stop_checker() -> bool:
             return job_stop_requested(job_id)
 
-        with job_context(job_id):
+        with captured_job_logging(job_id, debug_mode=debug_mode):
             all_stats = engine.run(hcl_file, dry_run_override=dry_run or None, stop_requested=stop_checker)
-        summary, has_errors = _summary_from_stats(all_stats)
+        summary, has_errors = summary_from_stats(all_stats)
         stopped = getattr(engine, "stop_requested", False) is True
         success = True
     except Exception as exc:
         error_message = str(exc)
         logging.exception("Job %d failed for %s: %s", job_id, hcl_file, exc)
     finally:
-        root_logger.removeHandler(handler)
-        root_logger.setLevel(original_root_level)
-        finish_job(
+        persist_job_result(
             job_id,
             success=success,
             summary=summary if summary else None,
             has_errors=has_errors,
-            artifact=_build_job_artifact(
+            artifact=build_job_artifact(
                 job_id=job_id,
                 hcl_file=hcl_file,
                 dry_run=dry_run,
