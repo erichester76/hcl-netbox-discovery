@@ -23,34 +23,36 @@ import hcl2
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _eval_config_str(value: Any) -> Any:
-    """Evaluate env() references in a config-level attribute value.
+def _build_config_lookup(overrides: dict[str, Any] | None = None):
+    """Return an ``env()`` lookup that checks *overrides* before runtime config."""
+    override_values = overrides or {}
+    try:
+        from .db import get_config as _get_config  # noqa: PLC0415
+    except ImportError:
+        def _get_config(key: str, default: str = "") -> str:
+            return os.environ.get(key, default)
 
-    If *value* is a plain string that contains an ``env(`` call, it is eval'd
-    with only the ``env`` built-in in scope so that runtime configuration
-    values are resolved at parse time. The ``env()`` function is retained for
-    HCL compatibility, but it reads from DB-backed config settings rather than
-    the process environment. All other values are returned unchanged.
-    """
+    def _env_fn(key: str, default: str = "") -> str:
+        if key in override_values:
+            return str(override_values[key])
+        return _get_config(key, default)
+
+    return _env_fn
+
+
+def _eval_config_expr(value: Any, *, overrides: dict[str, Any] | None = None) -> Any:
+    """Evaluate ``env()`` references in config-level string values."""
     if not isinstance(value, str):
         return value
     stripped = value.strip()
     if not stripped:
         return value
-    if "env(" in stripped:
-        try:
-            from .db import get_config as _get_config  # noqa: PLC0415
-
-            def _env_fn(k: str, d: str = "") -> str:
-                return _get_config(k, d)
-        except ImportError:
-            def _env_fn(k: str, d: str = "") -> str:  # type: ignore[misc]
-                return os.environ.get(k, d)
-        try:
-            return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
-        except Exception:
-            return value
-    return value
+    if "env(" not in stripped:
+        return value
+    try:
+        return eval(stripped, {"__builtins__": {}}, {"env": _build_config_lookup(overrides)})
+    except Exception:
+        return value
 
 
 def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
@@ -60,29 +62,12 @@ def _eval_config_str_with_overrides(value: Any, overrides: dict) -> Any:
     first before the DB-backed runtime configuration. Used by
     :func:`build_source_config` to inject per-iteration values.
     """
-    if not isinstance(value, str):
-        return value
-    stripped = value.strip()
-    if not stripped:
-        return value
-    if "env(" in stripped:
-        try:
-            from .db import get_config as _get_config  # noqa: PLC0415
-            _base_lookup = _get_config
-        except ImportError:
-            def _base_lookup(k: str, d: str = "") -> str:
-                return d
+    return _eval_config_expr(value, overrides=overrides)
 
-        def _env_fn(k: str, d: str = "") -> str:
-            if k in overrides:
-                return str(overrides[k])
-            return _base_lookup(k, d)
 
-        try:
-            return eval(stripped, {"__builtins__": {}}, {"env": _env_fn})
-        except Exception:
-            return value
-    return value
+def _eval_config_str(value: Any) -> Any:
+    """Evaluate env() references in a config-level attribute value."""
+    return _eval_config_expr(value)
 
 
 def _labeled_list(raw_list: list) -> list[tuple[str, dict]]:
