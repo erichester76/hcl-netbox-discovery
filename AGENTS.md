@@ -67,6 +67,12 @@ Follow this workflow by default unless the user explicitly overrides it:
        - `origin/dev` for normal work
        - active `origin/release/<version>` for release-only fixes
        - `origin/main` only for production hotfixes
+   - Use a branch prefix that matches the work:
+     - `feature/<topic>`
+     - `bugfix/<topic>`
+     - `docs/<topic>`
+     - `chore/<topic>`
+     - `hotfix/<topic>`
    - If the target long-lived branch moves while a PR is open, rebase or merge
      the latest target branch before attempting merge.
 

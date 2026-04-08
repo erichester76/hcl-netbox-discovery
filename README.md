@@ -545,6 +545,15 @@ Routine feature and bugfix branches should start from `origin/dev` and target
 branch, then promote `release/<version>` to `main` for production. Create
 release tags only from a clean checkout of current `origin/main`.
 
+Use typed branch prefixes instead of a single catch-all branch namespace:
+
+- `feature/<topic>` for backward-compatible feature work
+- `bugfix/<topic>` for routine defect fixes
+- `hotfix/<topic>` for urgent production fixes branched from `main`
+- `docs/<topic>` for documentation-only changes
+- `chore/<topic>` for maintenance work with no user-facing behavior change
+- `release/<version>` for the active stabilization branch
+
 Current release branch:
 
 - `release/1.0.0`
