@@ -16,6 +16,8 @@ from collector.config import (
     IteratorConfig,
     SourceConfig,
     _bool,
+    _build_config_lookup,
+    _eval_config_expr,
     _eval_config_str,
     _eval_config_str_with_overrides,
     _field_update_mode,
@@ -128,6 +130,28 @@ class TestEvalConfigStr:
     def test_invalid_expr_returns_original(self):
         result = _eval_config_str("env(")
         assert result == "env("
+
+
+class TestEvalConfigExpr:
+    def test_override_precedence_is_shared(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="from_db")
+        result = _eval_config_expr("env('NETBOX_URL')", overrides={"NETBOX_URL": "from_override"})
+        assert result == "from_override"
+
+    def test_plain_non_env_string_is_returned(self):
+        assert _eval_config_expr("plain text", overrides={"A": "B"}) == "plain text"
+
+
+class TestBuildConfigLookup:
+    def test_lookup_uses_overrides_before_runtime_config(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="from_db")
+        lookup = _build_config_lookup({"NETBOX_URL": "from_override"})
+        assert lookup("NETBOX_URL") == "from_override"
+
+    def test_lookup_uses_runtime_config_without_override(self, tmp_path, monkeypatch):
+        _init_runtime_config_db(tmp_path, monkeypatch, NETBOX_URL="from_db")
+        lookup = _build_config_lookup()
+        assert lookup("NETBOX_URL") == "from_db"
 
 
 # ---------------------------------------------------------------------------
