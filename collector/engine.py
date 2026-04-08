@@ -68,6 +68,24 @@ def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
     )
 
 
+def _is_link_local_ip(address: Any) -> bool:
+    if not isinstance(address, str) or not address:
+        return False
+    try:
+        iface = ipaddress.ip_interface(address)
+    except ValueError:
+        return False
+    return iface.ip.is_link_local
+
+
+def _skip_link_local_ips_enabled(ctx: Any) -> bool:
+    collector_opts = getattr(ctx, "collector_opts", None)
+    if collector_opts is None:
+        return False
+    extra_flags = getattr(collector_opts, "extra_flags", {}) or {}
+    return bool(extra_flags.get("skip_link_local_ips"))
+
+
 def _host_route_variant(address: Any) -> str | None:
     if not isinstance(address, str) or not address:
         return None
@@ -1313,6 +1331,25 @@ class Engine:
                         f"{resource}:{'.'.join(missing_lookup_fields)}"
                     )
             return None
+        if (
+            resource == "ipam.ip_addresses"
+            and _skip_link_local_ips_enabled(ctx)
+            and _is_link_local_ip(payload.get("address"))
+        ):
+            logger.info(
+                "Skipping link-local IP by configuration  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r",
+                resource,
+                payload.get("address"),
+                payload.get("assigned_object_type"),
+                payload.get("assigned_object_id"),
+            )
+            if stats is not None:
+                stats.record("skipped")
+            if nested_stats is not None:
+                nested_stats.record_nested_skip(f"{resource}:link_local_filtered")
+            elif stats is not None:
+                stats.record_nested_skip(f"{resource}:link_local_filtered")
+            return None
         if ctx.dry_run:
             try:
                 dry_run_outcome, lookup_display, existing, effective_payload = self._dry_run_outcome(
@@ -1389,6 +1426,24 @@ class Engine:
                 if nested_stats is not None:
                     nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
             elif _is_duplicate_ip_conflict(resource, exc):
+                if _is_link_local_ip(payload.get("address")):
+                    logger.warning(
+                        "Skipping link-local duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
+                        resource,
+                        payload.get("address"),
+                        payload.get("assigned_object_type"),
+                        payload.get("assigned_object_id"),
+                        exc,
+                    )
+                    if nested_stats is not None:
+                        nested_stats.record_nested_skip(
+                            f"{resource}:link_local_duplicate_conflict"
+                        )
+                    elif stats is not None:
+                        stats.record_nested_skip(
+                            f"{resource}:link_local_duplicate_conflict"
+                        )
+                    return None
                 try:
                     normalized = self._normalize_duplicate_ip_host_route(ctx, payload)
                 except Exception as normalize_exc:

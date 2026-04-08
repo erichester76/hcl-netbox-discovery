@@ -310,6 +310,7 @@ collector {
   sync_inventory  = env("COLLECTOR_SYNC_INVENTORY", "true")
   sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
+  skip_link_local_ips = "env('COLLECTOR_SKIP_LINK_LOCAL_IPS', 'false')"
 
   iterator {
     max_workers = 2
@@ -329,6 +330,7 @@ collector {
 The collector block reserves only `max_workers`, `dry_run`, `sync_tag`, `regex_dir`, and `iterator`. Any other key is treated as a custom flag and is available in expressions as `collector.flag_name`.
 
 Common examples include `sync_interfaces`, `sync_inventory`, `sync_modules`, and `use_modules`.
+This also includes source-specific control flags such as `skip_link_local_ips`.
 
 ### `iterator` block
 
