@@ -11,6 +11,15 @@
     <small class="text-muted">{{ job.hcl_file }}</small>
   </div>
   <div class="col-auto">
+    {% if job.runtime_snapshot or job.code_version %}
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-primary me-2"
+      data-bs-toggle="modal"
+      data-bs-target="#runtimeSnapshotModal">
+      Runtime Snapshot
+    </button>
+    {% endif %}
     {% if job.status in ['queued', 'running'] %}
     <form method="POST" action="/jobs/{{ job.id }}/stop" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
@@ -80,6 +89,22 @@
       {% endfor %}
       </tbody>
     </table>
+  </div>
+</div>
+{% endif %}
+
+{% if job.runtime_snapshot or job.code_version %}
+<div class="modal fade" id="runtimeSnapshotModal" tabindex="-1" aria-labelledby="runtimeSnapshotModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="runtimeSnapshotModalLabel">Runtime Snapshot</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <pre class="log-pre mb-0"><code>{{ {"runtime_snapshot": job.runtime_snapshot, "code_version": job.code_version}|tojson(indent=2) }}</code></pre>
+      </div>
+    </div>
   </div>
 </div>
 {% endif %}

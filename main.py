@@ -180,9 +180,16 @@ def _execute_job(
     Returns True when the run completed without a top-level fatal error.
     Item-level errors still return True and are persisted as ``partial``.
     """
-    from collector.db import add_log, job_stop_requested, start_job  # noqa: PLC0415
+    from collector.db import (  # noqa: PLC0415
+        add_log,
+        get_job,
+        job_stop_requested,
+        start_job,
+        update_job_runtime_metadata,
+    )
     from collector.job_lifecycle import (  # noqa: PLC0415
         build_job_artifact,
+        capture_job_runtime_metadata,
         captured_job_logging,
         persist_job_result,
         summary_from_stats,
@@ -190,6 +197,19 @@ def _execute_job(
 
     if not job_already_started:
         start_job(job_id)
+
+    job_row = get_job(job_id) or {}
+    runtime_snapshot, code_version = capture_job_runtime_metadata(
+        hcl_file=hcl_file,
+        dry_run=dry_run,
+        debug_mode=debug_mode,
+        run_token=job_row.get("run_token"),
+    )
+    update_job_runtime_metadata(
+        job_id,
+        runtime_snapshot=runtime_snapshot,
+        code_version=code_version,
+    )
 
     if not os.path.isfile(hcl_file):
         logging.error("Mapping file not found: %s", hcl_file)
@@ -207,6 +227,8 @@ def _execute_job(
                 success=False,
                 has_errors=False,
                 summary=None,
+                runtime_snapshot=runtime_snapshot,
+                code_version=code_version,
                 all_stats=None,
                 error=f"Mapping file not found: {hcl_file}",
             ),
@@ -252,6 +274,8 @@ def _execute_job(
                 success=success,
                 has_errors=has_errors,
                 summary=summary if summary else None,
+                runtime_snapshot=runtime_snapshot,
+                code_version=code_version,
                 all_stats=all_stats,
                 error=error_message,
             ),
