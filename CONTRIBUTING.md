@@ -123,6 +123,14 @@ This repository uses three long-lived branches:
   - only release promotions and production hotfixes should land here
   - container/image builds and release tags should be treated as `main` artifacts
 
+Image publishing policy:
+
+- merges to `dev` publish a `:dev` image when the incoming branch is a code
+  branch
+- merges from `docs/*` and `chore/*` branches do not publish a `:dev` image
+- pushes to `main` publish production images
+- `v*` tags publish versioned release images
+
 Recommended flow:
 
 1. branch from `origin/dev`

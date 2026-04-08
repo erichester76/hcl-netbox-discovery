@@ -554,6 +554,13 @@ Use typed branch prefixes instead of a single catch-all branch namespace:
 - `chore/<topic>` for maintenance work with no user-facing behavior change
 - `release/<version>` for the active stabilization branch
 
+Image publishing follows the same promotion model:
+
+- pushes to `dev` publish a `:dev` image for code-bearing changes
+- merges from `docs/*` and `chore/*` branches do not publish a `:dev` image
+- pushes to `main` publish production images
+- `v*` tags publish release-version images
+
 Current release branch:
 
 - `release/1.0.0`
