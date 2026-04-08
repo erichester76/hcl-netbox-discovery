@@ -326,7 +326,7 @@ object "vm" {
     }
 
     tagged_vlan {
-      source_items = "_vlans"
+      source_items = "[{**v, 'site_name': regex_file(source('runtime.host.parent.name'), 'cluster_to_site')} for v in (source('_vlans') or [])]"
 
       field "vid" {
         value = "source('id')"
@@ -334,6 +334,12 @@ object "vm" {
 
       field "name" {
         value = "source('name')"
+      }
+
+      field "site" {
+        type     = "fk"
+        resource = "dcim.sites"
+        lookup   = { name = "source('site_name')" }
       }
     }
   }
