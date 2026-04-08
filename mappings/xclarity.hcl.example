@@ -89,7 +89,7 @@ collector {
 object "node" {
   source_collection = "nodes"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["serial", "name"]
   max_workers       = 4
 
   prerequisite "manufacturer" {
@@ -348,7 +348,7 @@ object "node" {
 object "chassis" {
   source_collection = "chassis"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["serial", "name"]
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
@@ -447,7 +447,7 @@ object "chassis" {
 object "switch" {
   source_collection = "switches"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["serial", "name"]
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
@@ -564,7 +564,7 @@ object "switch" {
 object "storage" {
   source_collection = "storage"
   netbox_resource   = "dcim.devices"
-  lookup_by         = ["serial"]
+  lookup_by         = ["serial", "name"]
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
