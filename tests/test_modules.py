@@ -506,6 +506,30 @@ class TestXclarityModulesHcl:
         )
         assert result == "Delta"
 
+    def test_expansion_card_bandwidth_zero_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 0})
+        assert result is None
+
+    def test_expansion_card_bandwidth_positive_is_returned(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 16})
+        assert result == 16
+
+    def test_power_supply_input_voltage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 0})
+        assert result is None
+
+    def test_power_supply_input_voltage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 208})
+        assert result == 208
+
+    def test_power_supply_wattage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 0})
+        assert result is None
+
+    def test_power_supply_wattage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 1100})
+        assert result == 1100
+
 
 # ---------------------------------------------------------------------------
 # prerequisites — ensure_module_bay_template
