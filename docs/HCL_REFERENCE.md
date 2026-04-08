@@ -252,6 +252,10 @@ block, and each parsed URL runs as its own source row. SNMP is excluded from
 this behavior because comma-delimited hosts are already native SNMP adapter
 input.
 
+When automatic URL fan-out is active, `source.max_workers` controls how many
+source rows may execute in parallel. `collector.max_workers` still controls
+object-level parallelism inside each source pass.
+
 ### `collection {}` sub-block (REST adapter only)
 
 One block per logical collection.  The block label becomes the collection name

@@ -298,9 +298,10 @@ CREATE TABLE config_settings (
    - Spawn a `daemon=True` background thread calling `_run_scheduled_job(sched)`
 4. Call `db.get_queued_jobs()` to pick up one-off jobs created by the web UI
 5. Spawn background threads for queued jobs not already in `_active_queued_job_ids`
-6. Worker threads attach a `JobLogHandler`, run the engine, then mark the job success / partial / failed
+6. Reconcile orphaned `running` jobs from a previous worker process before the loop starts
+7. Worker threads attach a `JobLogHandler`, run the engine, then mark the job success / partial / failed
 
-The `_active_schedule_ids` set (guarded by a `threading.Lock`) prevents a slow-running scheduled job from being re-fired on the next poll while it is still in progress. A separate `_active_queued_job_ids` guard prevents duplicate pickup of queued web jobs.
+The `_active_schedule_ids` set (guarded by a `threading.Lock`) prevents a slow-running scheduled job from being re-fired on the next poll while it is still in progress. A separate `_active_queued_job_ids` guard prevents duplicate pickup of queued web jobs inside one worker process; persisted stale-job reconciliation covers jobs abandoned by a prior worker process.
 
 ---
 

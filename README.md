@@ -90,7 +90,7 @@ Key components:
 | `collector/engine.py` | Top-level orchestrator per HCL file |
 | `collector/config.py` | HCL parser; produces a validated `CollectorConfig` dataclass tree |
 | `collector/db.py` | SQLite store for jobs, logs, schedules, and editable configuration settings |
-| `collector/job_log_handler.py` | Logging handler that persists INFO+ records to the job DB |
+| `collector/job_log_handler.py` | Logging handler that persists job log records to the SQLite DB |
 | `collector/field_resolvers.py` | Expression evaluator with 20+ helper functions |
 | `collector/prerequisites.py` | Resolves prerequisite objects (ensures they exist in NetBox) |
 | `collector/sources/rest.py` | Generic HTTP/REST adapter — zero Python per source |
@@ -108,7 +108,7 @@ For a deeper dive, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - Access to a [NetBox](https://netbox.dev/) instance with an API token
 - Credentials for the source systems you intend to sync
 
@@ -189,7 +189,7 @@ The web monitor provides a browser-based interface to:
 - **Edit configuration settings** stored in the shared SQLite database
 - **Manage the NetBox cache** — inspect entry counts per resource, flush entries, and pre-warm the cache
 
-The web UI does not execute collectors in-process. It creates queued jobs in the shared SQLite database, and the scheduler loop in `main.py --run-scheduler` picks them up for execution.
+The web UI does not execute collectors in-process. It creates queued jobs in the shared SQLite database, and the scheduler loop in `main.py --run-scheduler` picks them up for execution. On startup, the scheduler also reconciles orphaned `running` jobs left behind by a worker crash or container restart before claiming new work.
 
 For automation, poll recent jobs and then fetch the persisted artifact for any
 newly completed run:
@@ -243,7 +243,7 @@ The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job hist
 | `WEB_PASSWORD_HASH` | empty | Preferred password hash for the built-in web UI login |
 | `WEB_PASSWORD` | empty | Optional plaintext fallback when `WEB_PASSWORD_HASH` is not set |
 | `WEB_SESSION_COOKIE_SECURE` | `false` | Mark session cookies secure when serving the UI over HTTPS |
-| `COLLECTOR_DB_PATH` | `<project root>/collector_jobs.sqlite3` | Path to the SQLite job database |
+| `COLLECTOR_DB_PATH` | `<project root>/data/collector_jobs.sqlite3` | Path to the SQLite job database |
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
 
 Browser login settings remain environment-only. API token authentication is DB-backed through the `WEB_API_TOKEN` runtime setting and applies only to `/api/*` routes.
@@ -279,12 +279,15 @@ COLLECTOR_DB_PATH=./data/collector_jobs.sqlite3
 LOG_LEVEL=INFO
 ```
 
-### Job Artifacts
+### Job APIs
 
-Job runs now persist structured artifact JSON in the SQLite jobs table and
-expose that payload through the web API:
+Job runs persist structured artifact JSON in the SQLite jobs table and expose
+that payload through the web API:
 
 ```text
+GET /api/jobs
+GET /api/running-jobs
+GET /api/jobs/<id>/logs?after_id=<last_log_id>
 GET /api/jobs/<id>/artifact
 ```
 
@@ -317,6 +320,7 @@ All non-startup collector and source settings are DB-backed runtime configuratio
 - NetBox URL/token and cache/retry tuning
 - source credentials and connection settings
 - global collector sync flags such as `DRY_RUN`
+- API token authentication through `WEB_API_TOKEN`
 
 The `env()` helper in HCL is retained for compatibility, but it now resolves DB-backed runtime settings rather than reading directly from `os.environ`.
 
@@ -523,5 +527,6 @@ hcl-netbox-discovery/
 - **[`docs/DEVELOPER_ONBOARDING.md`](docs/DEVELOPER_ONBOARDING.md)** — Codebase tour and first-day developer guide
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — Full framework architecture, component roles, data flow, and design goals
 - **[`docs/HCL_REFERENCE.md`](docs/HCL_REFERENCE.md)** — Complete HCL language specification with all blocks, attributes, and expression helpers
+- **[`docs/ENGINEERING_AUDIT.md`](docs/ENGINEERING_AUDIT.md)** — Current refactor candidates and code-quality audit notes
 - **[`SUPPORT.md`](SUPPORT.md)** — Where to ask for help, file bugs, and request new source support
 - **[`SECURITY.md`](SECURITY.md)** — How to report security issues privately
