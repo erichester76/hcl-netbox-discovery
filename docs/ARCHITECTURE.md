@@ -248,6 +248,7 @@ CREATE TABLE config_settings (
 | `GET` | `/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status |
 | `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling); supports session auth or API token auth |
 | `GET` | `/api/jobs` | JSON: recent jobs with optional `after_id`, `status`, `hcl_file`, and `limit` filters; supports session auth or API token auth |
+| `GET` | `/api/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status; supports session auth or API token auth |
 | `GET` | `/api/jobs/<id>/artifact` | JSON: persisted structured artifact payload for a single job; supports session auth or API token auth |
 | `POST` | `/jobs/<id>/stop` | Request cooperative stop for a running job or immediately stop a queued job |
 | `POST` | `/jobs/run` | Trigger an on-demand job from the dashboard form |
@@ -687,6 +688,9 @@ Browser → Flask (web/app.py)
               │
               ├── GET  /jobs/<id>/logs → jsonify(new logs since after_id, job status)
               │                           (polled every 2 s by the log viewer)
+              │
+              ├── GET  /api/jobs/<id>/logs → jsonify(new logs since after_id, job status)
+              │                               (used by token-authenticated automation)
               │
               ├── GET  /schedules     → render_template("schedules.html",
               │                           schedules=get_schedules())

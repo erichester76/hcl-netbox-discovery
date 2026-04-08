@@ -516,13 +516,14 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     return _row_to_job(row)
 
 
-def get_job_logs(job_id: int) -> list[dict[str, Any]]:
-    """Return all log records for *job_id* in chronological order."""
+def get_job_logs(job_id: int, after_id: int = 0) -> list[dict[str, Any]]:
+    """Return log records for *job_id* in chronological order."""
+    after_id = max(after_id, 0)
     with _conn() as con:
         rows = con.execute(
             "SELECT id, job_id, timestamp, level, logger, message "
-            "FROM job_logs WHERE job_id=? ORDER BY id ASC",
-            (job_id,),
+            "FROM job_logs WHERE job_id=? AND id>? ORDER BY id ASC",
+            (job_id, after_id),
         ).fetchall()
     return [
         {
