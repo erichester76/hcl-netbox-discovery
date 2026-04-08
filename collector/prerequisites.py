@@ -432,6 +432,10 @@ class PrerequisiteRunner:
             payload["manufacturer"] = manufacturer_id
         if args.get("part_number"):
             payload["part_number"] = args["part_number"]
+        if args.get("u_height") is not None:
+            payload["u_height"] = args["u_height"]
+        if args.get("description"):
+            payload["description"] = args["description"]
         if dry_run:
             logger.info("[DRY-RUN] ensure_device_type model=%s manufacturer=%s", model, manufacturer_id)
             lookup_payload: dict[str, Any] = {"model": model}

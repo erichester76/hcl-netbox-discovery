@@ -718,6 +718,9 @@ object "device" {
     args     = {
       model        = "source('device_type.model') or 'Unknown'"
       manufacturer = "prereq('manufacturer')"
+      part_number  = "source('device_type.part_number') or None"
+      u_height     = "source('device_type.u_height')"
+      description  = "source('device_type.description') or None"
     }
     optional = false
   }
@@ -821,6 +824,10 @@ object "device" {
 
   field "comments" {
     value = "source('comments')"
+  }
+
+  field "description" {
+    value = "source('description') or ''"
   }
 
   field "tags" {
