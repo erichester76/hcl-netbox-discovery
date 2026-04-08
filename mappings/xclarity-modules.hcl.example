@@ -194,7 +194,8 @@ object "node" {
   }
 
   field "status" {
-    value = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
+    value       = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
+    update_mode = "if_missing"
   }
 
   # Network interfaces — one block covers all physical ports from onboard
@@ -598,7 +599,8 @@ object "chassis" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -698,7 +700,8 @@ object "switch" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -815,7 +818,8 @@ object "storage" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {

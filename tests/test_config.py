@@ -1077,6 +1077,17 @@ class TestXClarityMappings:
         status_field = next((f for f in node.fields if f.name == "status"), None)
         assert status_field is not None, f"node missing status field in {mapping_path}"
         assert status_field.value == self.STATUS_EXPR
+        assert status_field.update_mode == "if_missing"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_top_level_device_status_fields_only_fill_when_missing(self, mapping_path):
+        cfg = load_config(mapping_path)
+        for name in self.OBJECT_NAMES:
+            obj = next((o for o in cfg.objects if o.name == name), None)
+            assert obj is not None, f"missing object {name} in {mapping_path}"
+            status_field = next((f for f in obj.fields if f.name == "status"), None)
+            assert status_field is not None, f"object {name} missing status field"
+            assert status_field.update_mode == "if_missing"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_top_level_device_types_do_not_write_part_number(self, mapping_path):
