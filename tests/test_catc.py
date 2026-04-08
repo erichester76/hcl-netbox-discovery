@@ -1174,7 +1174,8 @@ class TestCatalystBulkAssignments:
 
         assert len(result) == 1
         assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
+        assert result[0]["site_name"] == "Southeast"
+        assert result[0]["location_name"] == "Clemson"
         assert src._client.site_design.get_site_assigned_network_devices.call_args_list == [
             call(site_id="area-1", offset=1, limit=500),
             call(site_id="site-1", offset=1, limit=500),
