@@ -187,6 +187,18 @@ Before creating a release tag, explicitly classify the change set:
 - if it adds features without breaking compatibility, bump `MINOR`
 - if it only fixes bugs or docs without breaking compatibility, bump `PATCH`
 
+Use the helper script to keep `pyproject.toml` aligned with release tags:
+
+```bash
+python scripts/bump_version.py patch
+python scripts/bump_version.py minor
+python scripts/bump_version.py major
+```
+
+After bumping the version, create the matching `vX.Y.Z` tag from a clean
+checkout of `origin/main`. The release workflow fails if a pushed `v*` tag does
+not match the Poetry version in `pyproject.toml`.
+
 ## Choosing Tests
 
 You do not always need the full suite while iterating.

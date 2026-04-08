@@ -69,6 +69,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read project version
+        id: project_version
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(f"version={data['tool']['poetry']['version']}")
+          PY
+
+      - name: Verify release tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          expected_tag="v${{ steps.project_version.outputs.version }}"
+          actual_tag="${GITHUB_REF_NAME}"
+          if [ "$actual_tag" != "$expected_tag" ]; then
+            echo "Actual tag ${actual_tag} does not match expected tag ${expected_tag} derived from pyproject.toml version" >&2
+            exit 1
+          fi
+
       - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
