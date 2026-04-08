@@ -256,7 +256,7 @@ object "region" {
 object "site" {
   source_collection = "dcim.sites"
   netbox_resource   = "dcim.sites"
-  lookup_by         = ["name"]
+  lookup_by         = ["name", "email"]
   max_workers       = 4
 
   prerequisite "region" {
