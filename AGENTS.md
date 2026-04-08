@@ -9,11 +9,11 @@ Before changing code, read:
 
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
-3. `docs/HCL_REFERENCE.md`
-4. `docs/REPOSITORY_GUIDE.md`
+3. `docs/REPOSITORY_GUIDE.md`
 
 The repository guide owns project-specific details such as layout, commands,
-runtime entry points, testing shortcuts, and codebase landmarks.
+runtime entry points, testing shortcuts, codebase landmarks, root-cause
+guardrails, and the remote job API workflow.
 
 ## Operating Principles
 
@@ -24,83 +24,6 @@ runtime entry points, testing shortcuts, and codebase landmarks.
 - Add or update tests when you change behavior.
 - Do not invent new frameworks, layers, or abstractions unless the task truly
   requires them.
-
-## Root-Cause Guardrails
-
-These rules are here because this codebase has accumulated several path-specific
-fixes that solved one symptom while leaving the underlying model inconsistent.
-
-### Job lifecycle and scheduler changes
-
-- Treat job claiming and schedule firing as **database-state problems first**, not
-  in-process coordination problems.
-- Do not rely on Python sets, thread-local state, or request-local checks as the
-  sole correctness mechanism for queue claiming or schedule de-duplication.
-- If you touch CLI runs, queued web jobs, or scheduled jobs, compare all three
-  paths and keep their persisted metadata and terminal status semantics aligned.
-- Prefer one shared execution/finish path over separate near-duplicate flows.
-- If a run can complete with item-level errors, ensure the persisted status
-  distinguishes that from full success.
-
-### Failure semantics and data quality
-
-- Do not silently convert fetch failures into empty collections unless the user
-  explicitly asked for best-effort behavior and the docs/tests are updated to
-  say so.
-- Do not swallow expression/config evaluation errors and then continue with
-  placeholder writes unless the placeholder behavior is explicitly intended.
-- Be especially careful with `"Unknown"`-style fallback objects. Missing required
-  source data should usually fail, skip, or mark partial rather than create
-  shared junk records.
-- If a behavior is intentionally best-effort, log it at a level operators will
-  actually see and document the consequence.
-
-### Nested write integrity
-
-- Child objects must not be promoted or linked as if their parent write
-  succeeded when the parent write actually failed.
-- For parent/child flows such as interface → IP → primary IP assignment, guard
-  the whole downstream chain on the parent object existing in NetBox.
-- Keep object integrity more important than “partial progress” when the partial
-  progress would produce misleading or unattached records.
-
-### Retry, transport, and adapter behavior
-
-- Do not add another retry loop on top of an existing retry loop without first
-  proving why the current layer cannot own the behavior.
-- Prefer one shared transport/retry policy per subsystem instead of duplicating
-  session setup, timeout defaults, SSL handling, and backoff behavior across
-  adapters.
-- If an option is documented and parsed, wire it through completely or remove
-  it. Avoid dead configuration surface area.
-- When adapter behavior diverges from other adapters, document why the
-  difference is intentional.
-
-### Reporting and observability
-
-- Counters, summaries, and job statuses must describe what actually happened.
-- Do not record `created`, `updated`, `skipped`, or `success` unless the code
-  can truly distinguish that outcome.
-- Logging capture should include the important lifecycle and failure events for a
-  job, not just the happy-path collector internals.
-
-### Web and security changes
-
-- Any new state-changing Flask route must be reviewed for authentication,
-  authorization, and CSRF implications.
-- Do not assume the web UI is private unless the task explicitly states that as
-  a deployment constraint.
-
-### Testing expectations
-
-- Prefer tests that drive the real production path over tests that reimplement
-  the same logic with mocks.
-- For scheduler and queue changes, add tests that exercise cross-path
-  invariants, not just one entry point.
-- For bug fixes, add at least one regression test that would have failed before
-  the fix and passes after it.
-- For retries, pagination, and adapter fetch logic, test the full call chain so
-  stacked retries or silent fallbacks are visible.
 
 ## Review-To-Delivery Workflow
 
@@ -190,65 +113,10 @@ Follow this workflow by default unless the user explicitly overrides it:
      - new artifact bundles
    - Resume the loop from new artifacts as they arrive.
 
-## Remote Job API Workflow
-
-Use the deployed web API as the default artifact/log retrieval path before
-falling back to manual file sync.
-
-### Current deployment
-
-- Current Clemson deployment base URL:
-  `http://4gk-mon-p-dkr01.server.clemson.edu:5000`
-- API authentication is token-based for `/api/*`.
-- The token is stored in the DB-backed `WEB_API_TOKEN` setting.
-- **Never** commit the live token value into the repository or documentation.
-  Get the current token from the operator or the deployed settings store at
-  runtime.
-
-### Required endpoints
-
-- `GET /api/jobs`
-  - Use for completed/recent job discovery.
-  - Supports:
-    - `limit`
-    - `after_id`
-    - `status`
-    - `hcl_file`
-- `GET /api/running-jobs`
-  - Use only for active-job discovery.
-- `GET /api/jobs/<id>/artifact`
-  - Use for structured artifact retrieval after a job reaches terminal state.
-- `GET /api/jobs/<id>/logs?after_id=<n>`
-  - Use for token-authenticated log polling and live triage.
-
-### Default polling loop
-
-1. Poll `/api/jobs?after_id=<last_seen_id>&limit=<n>` for newly completed jobs.
-2. For each new terminal job:
-   - inspect `status`
-   - fetch `/api/jobs/<id>/artifact`
-3. If a job is still active and live evidence is needed:
-   - poll `/api/jobs/<id>/logs?after_id=<last_log_id>`
-4. Prefer completed-job polling over `running-jobs` for fast sources such as
-   `azure` and `jnsu`, because they can finish between polls.
-
-### Runtime notes
-
-- Use `Authorization: Bearer <token>` or `X-API-Key: <token>` for `/api/*`.
-- `/api/jobs` may include inline `artifact` content, but the canonical detailed
-  artifact retrieval route is still `/api/jobs/<id>/artifact`.
-- When triaging live runs, create issues from API log/artifact evidence instead
-  of waiting for manual artifact sync if the API already exposes the needed
-  data.
-
 ## Documentation Expectations
 
-If you change:
-
-- CLI or web behavior: update `README.md`
-- system design or runtime flow: update `docs/ARCHITECTURE.md`
-- HCL syntax or supported options: update `docs/HCL_REFERENCE.md`
-- contributor/developer workflow: update `CONTRIBUTING.md` or `docs/REPOSITORY_GUIDE.md`
+For repository-specific documentation updates, use `docs/REPOSITORY_GUIDE.md`
+as the index of what belongs where.
 
 ## Safety Notes
 

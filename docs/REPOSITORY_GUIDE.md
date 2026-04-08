@@ -4,6 +4,22 @@ This guide covers repository-specific details for `hcl-netbox-discovery`.
 Use it with `README.md`, `docs/ARCHITECTURE.md`, and
 `docs/HCL_REFERENCE.md`.
 
+## Documentation Map
+
+Use the docs intentionally:
+
+- `README.md`
+  - user-facing setup, commands, deployment, operational behavior
+- `docs/ARCHITECTURE.md`
+  - runtime design, component interactions, DB/runtime flow
+- `docs/HCL_REFERENCE.md`
+  - HCL syntax, expressions, supported options, mapping semantics
+- `CONTRIBUTING.md`
+  - contributor workflow, PR expectations, branching/release process
+- `docs/REPOSITORY_GUIDE.md`
+  - repository-specific development context, commands, landmarks, guardrails,
+    and operational workflows
+
 ## 1. Mental Model
 
 At a high level, one collector run works like this:
@@ -208,7 +224,135 @@ Run the full suite before merging anything non-trivial.
 - Preserve backward compatibility in HCL where practical.
 - Use focused logging. Avoid noisy INFO logs unless they help operators.
 
-## 8. Easy Mistakes To Avoid
+## 8. Root-Cause Guardrails
+
+These rules are specific to this repository because several bug families have
+come from local symptom fixes that left the underlying model inconsistent.
+
+### Job lifecycle and scheduler changes
+
+- Treat job claiming and schedule firing as **database-state problems first**,
+  not in-process coordination problems.
+- Do not rely on Python sets, thread-local state, or request-local checks as
+  the sole correctness mechanism for queue claiming or schedule de-duplication.
+- If you touch CLI runs, queued web jobs, or scheduled jobs, compare all three
+  paths and keep their persisted metadata and terminal status semantics aligned.
+- Prefer one shared execution/finish path over separate near-duplicate flows.
+- If a run can complete with item-level errors, ensure the persisted status
+  distinguishes that from full success.
+
+### Failure semantics and data quality
+
+- Do not silently convert fetch failures into empty collections unless the user
+  explicitly asked for best-effort behavior and the docs/tests are updated to
+  say so.
+- Do not swallow expression/config evaluation errors and then continue with
+  placeholder writes unless the placeholder behavior is explicitly intended.
+- Be especially careful with `"Unknown"`-style fallback objects. Missing
+  required source data should usually fail, skip, or mark partial rather than
+  create shared junk records.
+- If a behavior is intentionally best-effort, log it at a level operators will
+  actually see and document the consequence.
+
+### Nested write integrity
+
+- Child objects must not be promoted or linked as if their parent write
+  succeeded when the parent write actually failed.
+- For parent/child flows such as interface → IP → primary IP assignment, guard
+  the whole downstream chain on the parent object existing in NetBox.
+- Keep object integrity more important than “partial progress” when the partial
+  progress would produce misleading or unattached records.
+
+### Retry, transport, and adapter behavior
+
+- Do not add another retry loop on top of an existing retry loop without first
+  proving why the current layer cannot own the behavior.
+- Prefer one shared transport/retry policy per subsystem instead of duplicating
+  session setup, timeout defaults, SSL handling, and backoff behavior across
+  adapters.
+- If an option is documented and parsed, wire it through completely or remove
+  it. Avoid dead configuration surface area.
+- When adapter behavior diverges from other adapters, document why the
+  difference is intentional.
+
+### Reporting and observability
+
+- Counters, summaries, and job statuses must describe what actually happened.
+- Do not record `created`, `updated`, `skipped`, or `success` unless the code
+  can truly distinguish that outcome.
+- Logging capture should include the important lifecycle and failure events for
+  a job, not just the happy-path collector internals.
+
+### Web and security changes
+
+- Any new state-changing Flask route must be reviewed for authentication,
+  authorization, and CSRF implications.
+- Do not assume the web UI is private unless the task explicitly states that as
+  a deployment constraint.
+
+### Testing expectations
+
+- Prefer tests that drive the real production path over tests that reimplement
+  the same logic with mocks.
+- For scheduler and queue changes, add tests that exercise cross-path
+  invariants, not just one entry point.
+- For bug fixes, add at least one regression test that would have failed before
+  the fix and passes after it.
+- For retries, pagination, and adapter fetch logic, test the full call chain so
+  stacked retries or silent fallbacks are visible.
+
+## 9. Remote Job API Workflow
+
+Use the deployed web API as the default artifact/log retrieval path before
+falling back to manual file sync.
+
+### Current deployment
+
+- Current Clemson deployment base URL:
+  `http://4gk-mon-p-dkr01.server.clemson.edu:5000`
+- API authentication is token-based for `/api/*`.
+- The token is stored in the DB-backed `WEB_API_TOKEN` setting.
+- **Never** commit the live token value into the repository or documentation.
+  Get the current token from the operator or the deployed settings store at
+  runtime.
+
+### Required endpoints
+
+- `GET /api/jobs`
+  - Use for completed/recent job discovery.
+  - Supports:
+    - `limit`
+    - `after_id`
+    - `status`
+    - `hcl_file`
+- `GET /api/running-jobs`
+  - Use only for active-job discovery.
+- `GET /api/jobs/<id>/artifact`
+  - Use for structured artifact retrieval after a job reaches terminal state.
+- `GET /api/jobs/<id>/logs?after_id=<n>`
+  - Use for token-authenticated log polling and live triage.
+
+### Default polling loop
+
+1. Poll `/api/jobs?after_id=<last_seen_id>&limit=<n>` for newly completed jobs.
+2. For each new terminal job:
+   - inspect `status`
+   - fetch `/api/jobs/<id>/artifact`
+3. If a job is still active and live evidence is needed:
+   - poll `/api/jobs/<id>/logs?after_id=<last_log_id>`
+4. Prefer completed-job polling over `running-jobs` for fast sources such as
+   `azure` and `jnsu`, because they can finish between polls.
+
+### Runtime notes
+
+- Use `Authorization: Bearer <token>` or `X-API-Key: <token>` for `/api/*`.
+- `/api/jobs` may include inline `artifact` content, but the canonical detailed
+  artifact retrieval route is still `/api/jobs/<id>/artifact`.
+- When triaging live runs, create issues from API log/artifact evidence instead
+  of waiting for manual artifact sync if the API already exposes the needed
+  data.
+
+## 10. Easy Mistakes To Avoid
 
 - Do not assume the web UI runs jobs directly.
 - Do not document mapping auto-discovery from `main.py`; manual runs require
@@ -219,7 +363,7 @@ Run the full suite before merging anything non-trivial.
 - Do not change `collector/db.py` casually without considering both web and
   scheduler paths.
 
-## 9. Good Starter Tasks
+## 11. Good Starter Tasks
 
 If you are new to the repo, these are good first changes:
 
@@ -229,7 +373,7 @@ If you are new to the repo, these are good first changes:
 - add a small web UI polish that does not change execution behavior
 - fix a doc/code drift issue with matching tests
 
-## 10. Before You Open A PR
+## 12. Before You Open A PR
 
 Run:
 
