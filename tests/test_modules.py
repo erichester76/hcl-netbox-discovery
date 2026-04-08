@@ -1208,6 +1208,34 @@ class TestEnsureModuleTypeProfileSchema:
         runner._ensure_module_type_profile({"name": "CPU"}, dry_run=False)
         nb.update.assert_not_called()
 
+    def test_module_type_generates_profile_schema_from_explicit_attribute_names(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=50)]
+        nb.update.return_value = MagicMock(id=99)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "MTFDDAV480TGA-1BC16A",
+                "profile": "Power supply",
+                "attribute_names": ["input_current", "input_voltage", "wattage"],
+                "attributes": None,
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        profile_update = nb.update.call_args_list[0]
+        assert profile_update[0][0] == "dcim.module_type_profiles"
+        assert profile_update[0][2]["schema"] == {
+            "type": "object",
+            "properties": {
+                "input_current": {},
+                "input_voltage": {},
+                "wattage": {},
+            },
+        }
+
     def test_dry_run_skips_both_upsert_and_update(self):
         nb = MagicMock()
         runner = self._make_runner(nb)
@@ -1911,7 +1939,7 @@ class TestProcessModulesPowerInput:
             call for call in nb.upsert.call_args_list if call[0][0] == "dcim.module_types"
         )
         payload = module_type_upsert[0][1]
-        assert payload["attributes"] == {}
+        assert "attributes" not in payload
         profile_schema_call = next(
             call for call in nb.update.call_args_list if call[0][0] == "dcim.module_type_profiles"
         )
@@ -2194,6 +2222,72 @@ class TestProcessModulesPowerInput:
             if c[0][0] == "dcim.power_ports"
         ]
         assert len(power_port_calls) == 0
+
+    def test_configured_attribute_names_forwarded_even_when_values_are_none(self):
+        """Configured module attribute names should still be forwarded so the
+        profile schema can be created even when the current item produces no
+        attribute values."""
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "powerSupplies": [
+                {
+                    "name": "PSU",
+                    "partNumber": "SP57A02000",
+                    "serialNumber": "PSU004",
+                    "manufacturer": "Lenovo",
+                    "slot": "1",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=99),  # ensure_module_type_profile
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type
+            MagicMock(id=40),  # upsert module
+        ]
+        nb.update.return_value = MagicMock(id=30)
+
+        mod_cfg = ModuleConfig(
+            source_items="powerSupplies",
+            profile="Power supply",
+            fields=[
+                FieldConfig(name="bay_name", value="source('name')"),
+                FieldConfig(name="position", value="str(source('slot'))"),
+                FieldConfig(name="model", value="source('partNumber')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+                FieldConfig(name="manufacturer", value="source('manufacturer')"),
+            ],
+            attributes=[
+                FieldConfig(name="input_current", value="source('inputCurrent')"),
+                FieldConfig(name="input_voltage", value="source('inputVoltage')"),
+                FieldConfig(name="wattage", value="source('outputWatts')"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+
+        with patch.object(PrerequisiteRunner, "_ensure_module_type", autospec=True) as ensure_module_type:
+            ensure_module_type.return_value = 30
+            engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        ensure_args = ensure_module_type.call_args.args[1]
+        assert ensure_args["attribute_names"] == [
+            "input_current",
+            "input_voltage",
+            "wattage",
+        ]
+        assert ensure_args["attributes"] is None
 
     def test_wattage_from_power_allocation_nested_path(self):
         """outputWatts from nested powerAllocation.totalOutputPower triggers c20."""
