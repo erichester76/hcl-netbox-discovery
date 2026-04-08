@@ -555,6 +555,8 @@ class TestJNSUDescriptionExpression:
         assert r.evaluate_strict(_JNSU_DESC_EXPR, label="description") == (
             "LAB-PRINTER@CLEMSON.EDU: Printer in Lab"
         )
+
+
 # Resolver – mask_to_prefix()
 # ---------------------------------------------------------------------------
 
