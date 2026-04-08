@@ -481,6 +481,21 @@ def test_stop_running_job_route_sets_stop_requested(app):
     assert job["stop_requested"] is True
 
 
+def test_stop_running_job_route_requires_login_and_csrf(secured_app):
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+
+    login_resp = _login(secured_app)
+    assert login_resp.status_code == 302
+
+    resp = _post_with_csrf(secured_app, f"/jobs/{job_id}/stop")
+
+    assert resp.status_code == 302
+    job = db_module.get_job(job_id)
+    assert job is not None
+    assert job["stop_requested"] is True
+
+
 def test_stop_terminal_job_route_returns_404(app):
     job_id = create_job("mappings/done.hcl")
     start_job(job_id)

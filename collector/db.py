@@ -358,7 +358,7 @@ def finish_job(
     *,
     forced_status: str | None = None,
 ) -> None:
-    """Mark job as success/partial/failed and store optional summary dict.
+    """Mark a job terminal and store optional summary/artifact payloads.
 
     Args:
         job_id: Primary key of the job to update.
@@ -368,6 +368,10 @@ def finish_job(
             but at least one item-level error was recorded in RunStats. Causes
             the status to be *partial* instead of *success*.
         artifact: Optional structured artifact dict persisted as JSON.
+        forced_status: Optional explicit terminal status override. Valid values
+            are terminal job states such as ``"stopped"`` and are intended for
+            flows that must preserve a nonstandard terminal outcome even when
+            *success* / *has_errors* would otherwise map to success/partial/failed.
     """
     if forced_status is not None:
         status = forced_status
@@ -395,29 +399,40 @@ def request_job_stop(job_id: int) -> str | None:
         or ``None`` when the job does not exist or is already terminal.
     """
     now = _now()
+    result: str | None = None
+    log_message: str | None = None
     with _conn() as con:
         con.execute("BEGIN IMMEDIATE")
         row = con.execute(
-            "SELECT status FROM jobs WHERE id=?",
+            "SELECT status, stop_requested FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
         if row is None:
             return None
 
         status = row[0]
+        already_requested = bool(row[1])
         if status == "queued":
             con.execute(
                 "UPDATE jobs SET status='stopped', stop_requested=1, finished_at=? WHERE id=?",
                 (now, job_id),
             )
-            return "stopped"
-        if status == "running":
+            result = "stopped"
+            log_message = "Job stopped by operator request before execution started."
+        elif status == "running":
             con.execute(
                 "UPDATE jobs SET stop_requested=1 WHERE id=?",
                 (job_id,),
             )
-            return "requested"
-        return None
+            result = "requested"
+            if not already_requested:
+                log_message = "Stop requested by operator."
+        else:
+            return None
+
+    if log_message is not None:
+        add_log(job_id, "INFO", __name__, log_message)
+    return result
 
 
 def job_stop_requested(job_id: int) -> bool:

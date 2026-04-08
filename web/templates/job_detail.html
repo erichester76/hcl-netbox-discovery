@@ -14,7 +14,7 @@
     {% if job.status in ['queued', 'running'] %}
     <form method="POST" action="/jobs/{{ job.id }}/stop" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-      <button type="submit" class="btn btn-sm btn-outline-danger">
+      <button type="submit" class="btn btn-sm btn-outline-danger" {% if job.stop_requested %}disabled{% endif %}>
         {% if job.stop_requested %}Stop Requested{% else %}Stop Job{% endif %}
       </button>
     </form>

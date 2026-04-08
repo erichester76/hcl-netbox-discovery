@@ -231,11 +231,13 @@ def test_request_job_stop_marks_queued_job_stopped():
     job_id = create_job("mappings/queued.hcl")
     action = request_job_stop(job_id)
     job = get_job(job_id)
+    logs = get_job_logs(job_id)
     assert action == "stopped"
     assert job is not None
     assert job["status"] == "stopped"
     assert job["stop_requested"] is True
     assert job["finished_at"] is not None
+    assert logs[-1]["message"] == "Job stopped by operator request before execution started."
 
 
 def test_request_job_stop_flags_running_job():
@@ -243,11 +245,27 @@ def test_request_job_stop_flags_running_job():
     start_job(job_id)
     action = request_job_stop(job_id)
     job = get_job(job_id)
+    logs = get_job_logs(job_id)
     assert action == "requested"
     assert job is not None
     assert job["status"] == "running"
     assert job["stop_requested"] is True
     assert job_stop_requested(job_id) is True
+    assert logs[-1]["message"] == "Stop requested by operator."
+
+
+def test_request_job_stop_does_not_duplicate_running_log_message():
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+
+    assert request_job_stop(job_id) == "requested"
+    assert request_job_stop(job_id) == "requested"
+
+    operator_logs = [
+        log for log in get_job_logs(job_id)
+        if log["message"] == "Stop requested by operator."
+    ]
+    assert len(operator_logs) == 1
 
 
 def test_get_running_jobs_no_limit():
