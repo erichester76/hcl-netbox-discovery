@@ -16,7 +16,9 @@ from .job_log_handler import JobLogHandler, job_context
 # last one restores it, so concurrent jobs don't race on the root level.
 _debug_capture_lock: threading.Lock = threading.Lock()
 _debug_capture_refcount: int = 0
-_debug_capture_saved_level: int = logging.WARNING
+# Actual value is captured from the root logger on the first debug-capture
+# context entry (when refcount transitions 0→1) before it is ever read.
+_debug_capture_saved_level: int = logging.NOTSET
 
 
 def summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
