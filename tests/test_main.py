@@ -230,6 +230,110 @@ def test_summary_from_stats_includes_nested_skips():
     }
 
 
+def test_summary_from_stats_aggregates_duplicate_object_names():
+    from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
+
+    first = _fake_stat()
+    first.created = 0
+    first.updated = 2
+    first.skipped = 1
+    first.processed = 3
+    first.nested_skipped = {"virtualization.interfaces:virtual_machine": 2}
+    first.source_url = "https://cu-xclarity.clemson.edu"
+
+    second = _fake_stat()
+    second.created = 0
+    second.updated = 1
+    second.skipped = 0
+    second.errored = 1
+    second.processed = 2
+    second.nested_skipped = {"virtualization.interfaces:virtual_machine": 1}
+    second.source_url = "https://proto-xclarity.clemson.edu"
+
+    summary, has_errors = summary_from_stats([first, second])
+
+    assert has_errors is True
+    assert summary["devices"] == {
+        "processed": 5,
+        "created": 0,
+        "updated": 3,
+        "skipped": 1,
+        "errored": 1,
+        "nested_skipped": {
+            "virtualization.interfaces:virtual_machine": 3,
+        },
+    }
+
+
+def test_main_artifact_includes_per_iteration_breakdown(tmp_path, tmp_db):
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text("")
+
+    first = _fake_stat()
+    first.object_name = "node"
+    first.created = 0
+    first.updated = 33
+    first.skipped = 27
+    first.errored = 5
+    first.processed = 65
+    first.source_url = "https://cu-xclarity.clemson.edu"
+
+    second = _fake_stat()
+    second.object_name = "node"
+    second.created = 0
+    second.updated = 0
+    second.skipped = 0
+    second.errored = 0
+    second.processed = 0
+    second.source_url = "https://poole-xclarity.clemson.edu"
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [first, second]
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import main  # noqa: PLC0415
+
+        rc = main(["--mapping", str(hcl)])
+
+    assert rc == 0
+    job = get_jobs()[0]
+    assert job["summary"]["node"] == {
+        "processed": 65,
+        "created": 0,
+        "updated": 33,
+        "skipped": 27,
+        "errored": 5,
+        "nested_skipped": {},
+    }
+    assert job["artifact"]["summary"]["node"]["processed"] == 65
+    assert job["artifact"]["iterations"] == {
+        "https://cu-xclarity.clemson.edu": {
+            "summary": {
+                "node": {
+                    "processed": 65,
+                    "created": 0,
+                    "updated": 33,
+                    "skipped": 27,
+                    "errored": 5,
+                    "nested_skipped": {},
+                }
+            }
+        },
+        "https://poole-xclarity.clemson.edu": {
+            "summary": {
+                "node": {
+                    "processed": 0,
+                    "created": 0,
+                    "updated": 0,
+                    "skipped": 0,
+                    "errored": 0,
+                    "nested_skipped": {},
+                }
+            }
+        },
+    }
+
+
 def test_main_creates_db_job_on_engine_failure(tmp_path, tmp_db, monkeypatch):
     """main() must mark the DB job as failed when the engine raises."""
     hcl = tmp_path / "test.hcl"
