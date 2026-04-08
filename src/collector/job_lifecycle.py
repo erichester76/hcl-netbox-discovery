@@ -9,6 +9,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
@@ -140,7 +141,7 @@ def capture_job_runtime_metadata(
             debug_mode=debug_mode,
             run_token=run_token,
         ),
-        _build_code_version(),
+        get_code_version(),
     )
 
 
@@ -195,7 +196,9 @@ def _build_runtime_snapshot(
     return snapshot
 
 
-def _build_code_version() -> dict[str, Any]:
+@lru_cache(maxsize=1)
+def get_code_version() -> dict[str, Any]:
+    """Return the current app version metadata for UI and persisted job records."""
     return {
         "version": _read_project_version(),
         "git_commit": _git_output("rev-parse", "HEAD"),

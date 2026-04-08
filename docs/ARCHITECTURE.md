@@ -248,7 +248,7 @@ CREATE TABLE config_settings (
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/` | Dashboard: active jobs panel (auto-polls `/api/running-jobs`) + recent history table + run-job form |
+| `GET` | `/` | Dashboard: active jobs panel (auto-polls `/api/running-jobs`) + recent history table + run-job form + header version label (prefers Git tag, falls back to version/commit) |
 | `GET` | `/jobs/<id>` | Job detail page with live-streaming log viewer (polls `/jobs/<id>/logs`) and a modal for runtime snapshot / code version inspection |
 | `GET` | `/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status |
 | `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling); supports session auth or API token auth |

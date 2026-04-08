@@ -143,6 +143,7 @@ poetry run python -m web.web_server
 The web monitor provides a browser-based interface to:
 
 - **View running jobs** in real time (logs stream automatically via polling)
+- **See the running app version** in the header, using the exact Git tag when the app is running a tagged release and falling back to the project version plus commit
 - **Stop queued or running jobs** from the dashboard or job detail page and persist a terminal `stopped` status with the partial summary collected so far
 - **Browse previous job logs** with colour-coded log levels
 - **Inspect sync summaries** (processed / created / updated / skipped / errored per object type, including `partial` runs)

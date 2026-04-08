@@ -92,6 +92,47 @@ def test_index_empty(app):
     assert b"HCL NetBox Discovery" in resp.data
 
 
+def test_index_shows_tagged_version_in_header(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "get_code_version",
+        lambda: {
+            "version": "1.1.1",
+            "git_commit": "abcdef1234567890",
+            "git_branch": "dev",
+            "git_tag": "v1.1.1",
+        },
+    )
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b"Version v1.1.1" in resp.data
+    assert b"(abcdef1)" not in resp.data
+
+
+def test_index_shows_version_and_commit_when_not_tagged(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "get_code_version",
+        lambda: {
+            "version": "1.1.1",
+            "git_commit": "abcdef1234567890",
+            "git_branch": "dev",
+            "git_tag": None,
+        },
+    )
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b"Version 1.1.1 (abcdef1)" in resp.data
+
+
 def test_login_page_renders_when_auth_enabled(secured_app):
     resp = secured_app.get("/login")
     assert resp.status_code == 200

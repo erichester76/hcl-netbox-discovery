@@ -31,6 +31,7 @@ from collector.db import (  # noqa: E402
     set_setting,
     update_schedule,
 )
+from collector.job_lifecycle import get_code_version  # noqa: E402
 from web.auth import (  # noqa: E402
     api_token_matches_request,
     auth_configuration_error,
@@ -81,11 +82,18 @@ def create_app() -> Flask:
 
     @app.context_processor
     def inject_security_helpers() -> dict[str, Any]:
+        code_version = get_code_version()
+        version_label = code_version.get("git_tag") or code_version.get("version") or "unknown"
+        git_commit = code_version.get("git_commit")
+        if not code_version.get("git_tag") and git_commit:
+            version_label = f"{version_label} ({git_commit[:7]})"
         return {
             "csrf_token": csrf_token,
             "web_auth_enabled": auth_enabled(),
             "web_authenticated": is_authenticated(),
             "web_username": session.get("username", configured_username()),
+            "web_code_version": code_version,
+            "web_version_label": version_label,
         }
 
     @app.before_request
