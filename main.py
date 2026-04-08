@@ -1,37 +1,5 @@
 #!/usr/bin/env python3
-"""
-File: main.py
-Purpose: Modular NetBox collector — CLI entry point.
-Created: 2026-03-30
-Last Changed: Copilot 2026-03-30 Issue: #debug-mode
-
-Usage
------
-  python main.py --mapping mappings/vmware.hcl
-  python main.py --mapping mappings/xclarity.hcl --dry-run
-  python main.py --run-scheduler
-
-Getting started
----------------
-  Mapping files ship as ``*.hcl.example`` templates.  Copy and rename to
-  ``*.hcl`` before running::
-
-      cp mappings/vmware.hcl.example mappings/vmware.hcl
-      # edit mappings/vmware.hcl to add your environment variables
-
-Options
--------
-  --mapping PATH        Path to a specific HCL mapping file.  May be repeated
-                        to run multiple mappings in sequence.
-  --dry-run             Log payloads without writing anything to NetBox.
-                        Overrides the dry_run setting in the mapping file.
-  --log-level LEVEL     Logging verbosity: DEBUG, INFO, WARNING, ERROR.
-                        Defaults to the LOG_LEVEL environment variable, or
-                        INFO if that is not set.
-  --run-scheduler       Run the scheduler loop, executing HCL jobs per their
-                        stored cron schedules.  This is the default mode used
-                        by the Docker container.
-"""
+"""CLI entry point for ad-hoc collector runs and the scheduler worker."""
 
 from __future__ import annotations
 

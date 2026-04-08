@@ -1,27 +1,4 @@
-"""Prerequisite evaluation — ensure_* methods and placement resolution.
-
-Each method corresponds to an HCL ``prerequisite.method`` value.  Methods
-receive a resolved args dict (values have already been evaluated by the field
-resolver) and return a value that is stored in ``RunContext.prereqs`` under
-the prerequisite's name.
-
-Return values:
-  - Scalar methods (ensure_*) → integer NetBox ID or None
-  - resolve_placement          → dict with keys site_id, location_id,
-                                 rack_id, rack_position
-  - lookup_tenant              → integer NetBox ID or None
-
-Available methods:
-  ensure_manufacturer, ensure_device_type, ensure_device_role,
-  ensure_site, ensure_location, ensure_rack, ensure_platform,
-  ensure_cluster_type, ensure_cluster_group, ensure_cluster,
-  ensure_inventory_item_role,
-  ensure_tenant_group, ensure_contact_group,
-  ensure_region, ensure_vlan_group, ensure_vrf,
-  ensure_tenant, lookup_tenant, resolve_placement,
-  ensure_module_bay_template, ensure_module_bay,
-  ensure_module_type_profile, ensure_module_type
-"""
+"""Prerequisite resolution helpers for ensure_* and placement methods."""
 
 from __future__ import annotations
 
@@ -36,10 +13,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 _MISSING = object()
 
-
-# ---------------------------------------------------------------------------
-# Shared utilities
-# ---------------------------------------------------------------------------
 
 def slugify(value: str) -> str:
     """Convert *value* to a NetBox-compatible slug (max 100 chars)."""
