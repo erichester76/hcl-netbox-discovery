@@ -227,7 +227,10 @@ def _execute_job(
         def stop_checker() -> bool:
             return job_stop_requested(job_id)
 
-        with captured_job_logging(job_id, debug_mode=debug_mode):
+        capture_debug_logs = debug_mode or (
+            not job_already_started and logging.getLogger().isEnabledFor(logging.DEBUG)
+        )
+        with captured_job_logging(job_id, capture_debug_logs=capture_debug_logs):
             all_stats = engine.run(hcl_file, dry_run_override=dry_run or None, stop_requested=stop_checker)
         summary, has_errors = summary_from_stats(all_stats)
         stopped = getattr(engine, "stop_requested", False) is True
@@ -239,7 +242,7 @@ def _execute_job(
         persist_job_result(
             job_id,
             success=success,
-            summary=summary if summary else None,
+            summary=summary,
             has_errors=has_errors,
             artifact=build_job_artifact(
                 job_id=job_id,

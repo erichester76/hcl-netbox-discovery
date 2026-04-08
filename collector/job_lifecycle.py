@@ -7,8 +7,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from collector.db import finish_job
-from collector.job_log_handler import JobLogHandler, job_context
+from .db import finish_job
+from .job_log_handler import JobLogHandler, job_context
 
 
 def summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
@@ -57,11 +57,10 @@ def build_job_artifact(
 
 
 @contextmanager
-def captured_job_logging(job_id: int, *, debug_mode: bool) -> Iterator[None]:
+def captured_job_logging(job_id: int, *, capture_debug_logs: bool) -> Iterator[None]:
     """Attach the DB log handler and restore the root logger afterwards."""
     root_logger = logging.getLogger()
     original_root_level = root_logger.level
-    capture_debug_logs = debug_mode or root_logger.isEnabledFor(logging.DEBUG)
     handler = JobLogHandler(
         job_id,
         min_level=logging.DEBUG if capture_debug_logs else logging.INFO,
