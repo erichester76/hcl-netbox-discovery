@@ -3,7 +3,7 @@
 from collector.config import load_config
 
 
-class TestVmwareExamplePlatformPrereqs:
+class TestVMwareExamplePlatformPrereqs:
     def test_vmware_example_platform_prereqs_do_not_set_manufacturer(self):
         cfg = load_config("mappings/vmware.hcl.example")
         platform_prereqs = []
@@ -18,4 +18,4 @@ class TestVmwareExamplePlatformPrereqs:
 
         vm_platform_prereqs = [prereq for name, prereq in platform_prereqs if name == "vm"]
         assert len(vm_platform_prereqs) == 1
-        assert vm_platform_prereqs[0].args["name"] == "coalesce(source('guest.guestFullName'), 'Unknown')"
+        assert vm_platform_prereqs[0].args["name"] == "source('guest.guestFullName') or 'Unknown'"

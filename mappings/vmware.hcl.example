@@ -272,7 +272,7 @@ object "vm" {
 
   prerequisite "platform" {
     method   = "ensure_platform"
-    args     = { name = "coalesce(source('guest.guestFullName'), 'Unknown')" }
+    args     = { name = "source('guest.guestFullName') or 'Unknown'" }
     optional = true
   }
 
