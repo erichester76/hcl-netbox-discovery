@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -1116,6 +1116,71 @@ class TestCatalystBulkAssignments:
         roots = src._select_assignment_roots(sites)
 
         assert [site.id for site in roots] == ["area-1", "area-2"]
+
+    def test_select_assignment_root_groups_orders_by_depth(self):
+        src = self._connected_source()
+        sites = [
+            SimpleNamespace(id="global", siteNameHierarchy="Global"),
+            SimpleNamespace(id="area-1", siteNameHierarchy="Global/US"),
+            SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson"),
+            SimpleNamespace(id="building-1", siteNameHierarchy="Global/US/Southeast/Clemson/Tillman"),
+        ]
+
+        groups = src._select_assignment_root_groups(sites)
+
+        assert [(depth, [site.id for site in roots]) for depth, roots in groups] == [
+            (2, ["area-1"]),
+            (4, ["site-1"]),
+            (5, ["building-1"]),
+        ]
+
+    def test_get_devices_bulk_assignment_retries_deeper_roots_when_shallow_roots_empty(self):
+        src = self._connected_source()
+
+        area_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
+        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        assignment = SimpleNamespace(
+            deviceId="device-uuid-1",
+            siteId="site-1",
+            siteNameHierarchy="Global/US/Southeast/Clemson",
+        )
+
+        src._client.sites.get_site.side_effect = [
+            SimpleNamespace(response=[area_site, child_site]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.devices.get_device_list.side_effect = [
+            SimpleNamespace(response=[device]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.site_design.get_site_assigned_network_devices.side_effect = [
+            SimpleNamespace(response=[]),
+            SimpleNamespace(response=[assignment]),
+        ]
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert result[0]["deviceId"] == "device-uuid-1"
+        assert result[0]["site_name"] == "Southeast"
+        assert result[0]["location_name"] == "Clemson"
+        assert src._client.site_design.get_site_assigned_network_devices.call_args_list == [
+            call(site_id="area-1", offset=1, limit=500),
+            call(site_id="site-1", offset=1, limit=500),
+        ]
+        src._client.sites.get_membership.assert_not_called()
 
     def test_rate_limit_backoff_retries_429_and_uses_retry_after(self):
         src = self._connected_source()
