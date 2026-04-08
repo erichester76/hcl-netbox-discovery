@@ -256,6 +256,8 @@ def _sanitize_url(value: str) -> str:
         return value
 
     hostname = parts.hostname or ""
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
     port = f":{parts.port}" if parts.port is not None else ""
     userinfo = ""
     if parts.username:

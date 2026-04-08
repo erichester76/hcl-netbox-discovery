@@ -605,7 +605,7 @@ def update_job_runtime_metadata(
     runtime_snapshot: dict[str, Any] | None | object = _UNSET,
     code_version: dict[str, Any] | None | object = _UNSET,
 ) -> None:
-    """Persist runtime snapshot metadata for a job before execution finishes."""
+    """Persist runtime snapshot and code version metadata for a job before execution finishes."""
     updates: list[str] = []
     params: list[Any] = []
 

@@ -254,6 +254,13 @@ def test_mask_sensitive_values_masks_sensitive_lists():
     assert masked["nested"]["api_key"] == ["********"]
 
 
+def test_mask_sensitive_values_preserves_ipv6_url_brackets():
+    masked = _mask_sensitive_values(
+        {"url": "https://api-user:api-pass@[2001:db8::1]:8443/path?api_token=top-secret"}
+    )
+    assert masked["url"] == "https://api-user:********@[2001:db8::1]:8443/path?api_token=********"
+
+
 def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):
     hcl = tmp_path / "stop.hcl"
     hcl.write_text("")
