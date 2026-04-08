@@ -68,6 +68,16 @@ def _is_duplicate_ip_conflict(resource: str, exc: Exception) -> bool:
     )
 
 
+def _is_link_local_ip(address: Any) -> bool:
+    if not isinstance(address, str) or not address:
+        return False
+    try:
+        iface = ipaddress.ip_interface(address)
+    except ValueError:
+        return False
+    return iface.ip.is_link_local
+
+
 def _host_route_variant(address: Any) -> str | None:
     if not isinstance(address, str) or not address:
         return None
@@ -1420,6 +1430,20 @@ class Engine:
                     except Exception as retry_exc:
                         exc = retry_exc
             if _is_duplicate_ip_conflict(resource, exc):
+                if _is_link_local_ip(payload.get("address")):
+                    logger.warning(
+                        "Skipping link-local duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
+                        resource,
+                        payload.get("address"),
+                        payload.get("assigned_object_type"),
+                        payload.get("assigned_object_id"),
+                        exc,
+                    )
+                    if nested_stats is not None:
+                        nested_stats.record_nested_skip(
+                            f"{resource}:link_local_duplicate_conflict"
+                        )
+                    return None
                 logger.error(
                     "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
                     resource,

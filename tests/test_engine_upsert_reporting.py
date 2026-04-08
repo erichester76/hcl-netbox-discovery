@@ -335,6 +335,35 @@ class TestEngineUpsertReporting:
         )
         assert "Normalizing host-route IP to desired prefix" in caplog.text
 
+    def test_link_local_duplicate_ip_conflict_skips_without_error(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+        nb.upsert_with_outcome.side_effect = Exception(
+            "The request failed with code 400 Bad Request: {'address': ['Duplicate IP address found in global table: 169.254.1.1/16']}"
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "ipam.ip_addresses",
+                {
+                    "address": "169.254.1.1/24",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": 1319,
+                },
+                lookup_fields=["address"],
+                nested_stats=stats,
+            )
+
+        assert result is None
+        assert stats.errored == 0
+        assert stats.nested_skipped == {
+            "ipam.ip_addresses:link_local_duplicate_conflict": 1
+        }
+        assert "Skipping link-local duplicate IP conflict" in caplog.text
+        assert "169.254.1.1/24" in caplog.text
+
     def test_dry_run_created_outcome_counts_created(self):
         engine = Engine()
         stats = RunStats("devices")
