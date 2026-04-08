@@ -933,8 +933,7 @@ class PrerequisiteRunner:
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
         profile_name = args.get("profile")
-        raw_attrs = args.get("attributes")
-        attrs: dict[str, Any] = raw_attrs or {}
+        attrs: dict[str, Any] = args.get("attributes") or {}
         attribute_names = [name for name in (args.get("attribute_names") or []) if name]
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
