@@ -15,6 +15,7 @@ from collector.db import (
     init_db,
     set_setting,
     start_job,
+    update_job_runtime_metadata,
 )
 
 
@@ -256,6 +257,22 @@ def test_job_detail_found(app):
     resp = app.get(f"/jobs/{job_id}")
     assert resp.status_code == 200
     assert b"Sync started for test" in resp.data
+
+
+def test_job_detail_shows_runtime_snapshot_modal(app):
+    job_id = create_job("mappings/test.hcl")
+    update_job_runtime_metadata(
+        job_id,
+        runtime_snapshot={"config": {"source": {"password": "********"}}},
+        code_version={"version": "0.1.0", "git_commit": "abc123"},
+    )
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b"Runtime Snapshot" in resp.data
+    assert b"runtimeSnapshotModal" in resp.data
+    assert b"abc123" in resp.data
 
 
 def test_job_detail_partial_status(app):

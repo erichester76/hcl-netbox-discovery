@@ -142,7 +142,9 @@ CREATE TABLE jobs (
     started_at  TEXT,               -- set by start_job()
     finished_at TEXT,               -- set by finish_job()
     summary     TEXT,               -- JSON blob: {object_name: {processed, created, ...}}
-    artifact_json TEXT              -- Structured per-job artifact metadata
+    artifact_json TEXT,             -- Structured per-job artifact metadata
+    runtime_snapshot_json TEXT,     -- Masked effective runtime config / execution plan for the run
+    code_version_json TEXT          -- Code version metadata (package version, git commit/tag/branch)
 );
 ```
 
@@ -218,6 +220,7 @@ CREATE TABLE config_settings (
 | `create_job(hcl_file, dry_run=False, debug_mode=False)` → `int` | Insert a new queued job; return its id |
 | `start_job(job_id)` | Mark job as running; set `started_at`; clear any stale `stop_requested` flag |
 | `finish_job(job_id, success, summary, has_errors=False, artifact=None, forced_status=None)` | Mark job as success/partial/failed/stopped; store JSON summary and structured artifact |
+| `update_job_runtime_metadata(job_id, runtime_snapshot=None, code_version=None)` | Persist masked runtime snapshot metadata and code version for a queued/running job |
 | `get_job(job_id)` → `dict\|None` | Fetch a single job record |
 | `get_jobs(limit)` → `list` | Most-recent jobs, newest first |
 | `get_running_jobs()` → `list` | All queued/running jobs (no limit) |
@@ -247,7 +250,7 @@ CREATE TABLE config_settings (
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Dashboard: active jobs panel (auto-polls `/api/running-jobs`) + recent history table + run-job form |
-| `GET` | `/jobs/<id>` | Job detail page with live-streaming log viewer (polls `/jobs/<id>/logs`) |
+| `GET` | `/jobs/<id>` | Job detail page with live-streaming log viewer (polls `/jobs/<id>/logs`) and a modal for runtime snapshot / code version inspection |
 | `GET` | `/jobs/<id>/logs` | JSON: new log lines since `?after_id=N` plus current job status |
 | `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling); supports session auth or API token auth |
 | `GET` | `/api/jobs` | JSON: recent jobs with optional `after_id`, `status`, `hcl_file`, and `limit` filters; supports session auth or API token auth |

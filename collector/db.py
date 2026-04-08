@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     started_at  TEXT,
     finished_at TEXT,
     summary     TEXT,
-    artifact_json TEXT
+    artifact_json TEXT,
+    runtime_snapshot_json TEXT,
+    code_version_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS job_logs (
@@ -472,6 +474,16 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN artifact_json TEXT")
         except Exception:
             pass  # column already exists
+        # Migration: add runtime_snapshot_json column for masked effective run metadata
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN runtime_snapshot_json TEXT")
+        except Exception:
+            pass  # column already exists
+        # Migration: add code_version_json column for git/version metadata
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN code_version_json TEXT")
+        except Exception:
+            pass  # column already exists
         # Migration: add stop_requested column if it was not present in older DBs
         try:
             con.execute("ALTER TABLE jobs ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0")
@@ -586,6 +598,22 @@ def finish_job(
         )
 
 
+def update_job_runtime_metadata(
+    job_id: int,
+    *,
+    runtime_snapshot: dict[str, Any] | None = None,
+    code_version: dict[str, Any] | None = None,
+) -> None:
+    """Persist runtime snapshot metadata for a job before execution finishes."""
+    runtime_snapshot_json = json.dumps(runtime_snapshot) if runtime_snapshot is not None else None
+    code_version_json = json.dumps(code_version) if code_version is not None else None
+    with _conn() as con:
+        con.execute(
+            "UPDATE jobs SET runtime_snapshot_json=?, code_version_json=? WHERE id=?",
+            (runtime_snapshot_json, code_version_json, job_id),
+        )
+
+
 def request_job_stop(job_id: int) -> str | None:
     """Request that *job_id* stop, or stop it immediately if still queued.
 
@@ -690,7 +718,7 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     """Return the *limit* most-recent jobs, newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -715,7 +743,7 @@ def get_jobs_filtered(
         params.append(hcl_file)
     params.append(limit)
     query = (
-        "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+        "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
         f"FROM jobs WHERE {' AND '.join(clauses)} ORDER BY id DESC LIMIT ?"
     )
     with _conn() as con:
@@ -727,7 +755,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -737,7 +765,7 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
         row = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -791,6 +819,8 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
         "dry_run": bool(row[9]) if len(row) > 9 else False,
         "debug_mode": bool(row[10]) if len(row) > 10 else False,
         "artifact": None,
+        "runtime_snapshot": None,
+        "code_version": None,
     }
     if row[8]:
         try:
@@ -802,6 +832,16 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
             job["artifact"] = json.loads(row[11])
         except (json.JSONDecodeError, TypeError):
             job["artifact"] = row[11]
+    if len(row) > 12 and row[12]:
+        try:
+            job["runtime_snapshot"] = json.loads(row[12])
+        except (json.JSONDecodeError, TypeError):
+            job["runtime_snapshot"] = row[12]
+    if len(row) > 13 and row[13]:
+        try:
+            job["code_version"] = json.loads(row[13])
+        except (json.JSONDecodeError, TypeError):
+            job["code_version"] = row[13]
     return job
 
 
@@ -809,7 +849,7 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     """Return all jobs with status='queued', oldest first (FIFO execution order)."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs WHERE status='queued' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -844,7 +884,7 @@ def claim_next_queued_job() -> dict[str, Any] | None:
             return None
 
         claimed = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -1007,7 +1047,7 @@ def dispatch_next_due_schedule() -> dict[str, Any] | None:
         job_id = int(cur.lastrowid)
 
         job_row = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, 0, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json, runtime_snapshot_json, code_version_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
