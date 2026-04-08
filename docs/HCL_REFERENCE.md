@@ -36,133 +36,6 @@ object   "NAME"  { … }   # one NetBox resource type (repeatable)
 
 Declares how to connect to the data source.
 
-### VMware (pyVmomi SDK)
-
-```hcl
-source "vcenter" {
-  api_type   = "vmware"
-  url        = env("VCENTER_URL")
-  username   = env("VCENTER_USER")
-  password   = env("VCENTER_PASS")
-}
-```
-
-### REST-based sources (no Python required)
-
-Any HTTP/REST API uses `api_type = "rest"` with `collection {}` sub-blocks that
-map collection names to endpoints.  No Python code is needed.
-
-```hcl
-source "xclarity" {
-  api_type   = "rest"
-  url        = env("XCLARITY_HOST")
-  username   = env("XCLARITY_USER")
-  password   = env("XCLARITY_PASS")
-  verify_ssl = env("XCLARITY_VERIFY_SSL", "true")
-  auth       = "basic"
-
-  collection "nodes" {
-    endpoint        = "/nodes"
-    list_key        = "nodeList"
-    detail_endpoint = "/nodes/{uuid}"
-    detail_id_field = "uuid"
-  }
-
-  collection "switches" {
-    endpoint = "/switches"
-    list_key = "switchList"
-  }
-}
-```
-
-### Azure (`api_type = "azure"`)
-
-```hcl
-source "azure" {
-  api_type    = "azure"
-  auth_method = env("AZURE_AUTH_METHOD", "default")   # "default" | "service_principal"
-  tenant_id   = env("AZURE_TENANT_ID", "")
-  client_id   = env("AZURE_CLIENT_ID", "")
-  password    = env("AZURE_CLIENT_SECRET", "")        # client secret for service_principal
-  subscription_ids = env("AZURE_SUBSCRIPTION_IDS", "") # comma-separated, empty = all
-}
-```
-
-### LDAP (`api_type = "ldap"`)
-
-```hcl
-source "ldap" {
-  api_type   = "ldap"
-  url        = env("LDAP_SERVER")    # e.g. ldaps://ldap.example.com:636
-  username   = env("LDAP_USER")      # bind DN
-  password   = env("LDAP_PASS")
-  verify_ssl = true
-
-  search_base   = env("LDAP_SEARCH_BASE")
-  search_filter = env("LDAP_FILTER", "(objectClass=*)")
-  attributes    = "*"                # comma-separated, or "*" for all
-}
-```
-
-### Cisco Catalyst Center (`api_type = "catc"`)
-
-```hcl
-source "catc" {
-  api_type   = "catc"
-  url        = env("CATC_HOST")
-  username   = env("CATC_USER")
-  password   = env("CATC_PASS")
-  verify_ssl = env("CATC_VERIFY_SSL", "true")
-  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "true")
-  site_assignment_strategy  = env("CATC_SITE_ASSIGNMENT_STRATEGY", "auto")
-  wait_on_rate_limit        = env("CATC_WAIT_ON_RATE_LIMIT", "true")
-  rate_limit_retry_attempts = env("CATC_RATE_LIMIT_RETRY_ATTEMPTS", "3")
-  rate_limit_retry_initial_delay = env("CATC_RATE_LIMIT_RETRY_INITIAL_DELAY", "1.0")
-  rate_limit_retry_max_delay = env("CATC_RATE_LIMIT_RETRY_MAX_DELAY", "30.0")
-  rate_limit_retry_jitter   = env("CATC_RATE_LIMIT_RETRY_JITTER", "0.5")
-}
-```
-
-The Catalyst Center adapter fetches device inventory in bulk, then joins it to
-site assignments using the site-assignment API at the shallowest non-Global
-site roots it can find. This avoids one membership lookup per site on large
-hierarchies. When the installed SDK or Catalyst Center release does not expose
-that site-assignment API, the adapter falls back to the older per-site
-membership walk.
-
-`site_assignment_strategy` controls which path is tried first:
-
-- `auto` (default): bulk site-assignment join first, per-site membership fallback
-- `bulk`: bulk site-assignment join first, per-site membership fallback
-- `membership`: per-site membership walk first, bulk site-assignment fallback
-
-Use `membership` when you already know the bulk site-assignment API is slow or
-times out in a given Catalyst Center environment, but still want the adapter to
-fall back to bulk if the membership walk produces no usable device/site pairs.
-
-When interface collection is enabled, the adapter also synthesizes `mgmt0` and
-`radio0` for Unified AP devices so management interface/IP parity matches the
-legacy CATC collector behavior.
-
-Use `mappings/catalyst-center.hcl.example` as the single maintained Catalyst
-Center mapping template so the deployed mapping path uses the same
-name/site/device_type/manufacturer wiring that CI validates.
-
-### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
-
-```hcl
-source "nexus" {
-  api_type         = "nexus"
-  url              = env("NDFC_HOST")
-  username         = env("NDFC_USER")
-  password         = env("NDFC_PASS")
-  verify_ssl       = env("NDFC_VERIFY_SSL", "true")
-  fetch_interfaces = env("NDFC_FETCH_INTERFACES", "false")
-}
-```
-
-### F5 BIG-IP (`api_type = "f5"`)
-
 ```hcl
 source "f5" {
   api_type         = "f5"
@@ -174,64 +47,7 @@ source "f5" {
 }
 ```
 
-### Prometheus node-exporter (`api_type = "prometheus"`)
-
-```hcl
-source "prometheus" {
-  api_type         = "prometheus"
-  url              = env("PROMETHEUS_URL")
-  username         = env("PROMETHEUS_USER", "")
-  password         = env("PROMETHEUS_PASS", "")
-  verify_ssl       = env("PROMETHEUS_VERIFY_SSL", "true")
-  fetch_interfaces = env("PROMETHEUS_FETCH_INTERFACES", "true")
-}
-```
-
-### SNMP (`api_type = "snmp"`)
-
-```hcl
-source "snmp_devices" {
-  api_type   = "snmp"
-  url        = env("SNMP_HOSTS")          # comma-separated list of hosts
-  username   = env("SNMP_COMMUNITY", "public")  # v2c community string
-
-  # Optional SNMP parameters
-  version    = env("SNMP_VERSION", "2c")
-  port       = env("SNMP_PORT", "161")
-  timeout    = env("SNMP_TIMEOUT", "5")
-  retries    = env("SNMP_RETRIES", "1")
-
-  # SNMPv3 (only when version = "3")
-  # v3_user       = env("SNMP_V3_USER")
-  # v3_auth_pass  = env("SNMP_V3_AUTH_PASS")
-  # v3_auth_proto = env("SNMP_V3_AUTH_PROTO", "sha")
-  # v3_priv_pass  = env("SNMP_V3_PRIV_PASS")
-  # v3_priv_proto = env("SNMP_V3_PRIV_PROTO", "aes")
-
-  # Vendor-specific OIDs to fetch per device (added to device dict by field name)
-  extra_oids = {
-    jnx_model  = "1.3.6.1.4.1.2636.3.1.2.0"
-    jnx_serial = "1.3.6.1.4.1.2636.3.1.3.0"
-  }
-}
-```
-
-The SNMP adapter is vendor-agnostic. It exposes `sys_object_id` (raw sysObjectID OID) and `if_type` (raw integer) on every device/interface. Vendor-specific detection and field extraction should be expressed in HCL field expressions using `when()`, `regex_extract()`, and `map_value()`.
-
-### NetBox source (`api_type = "netbox"`)
-
-```hcl
-source "source_nb" {
-  api_type   = "netbox"
-  url        = env("SOURCE_NETBOX_URL")
-  password   = env("SOURCE_NETBOX_TOKEN")       # source NetBox API token
-  verify_ssl = env("SOURCE_NETBOX_VERIFY_SSL", "true")
-  filters    = env("SOURCE_NETBOX_FILTERS", "") # optional JSON object string
-  page_size  = "1000"
-}
-```
-
-This adapter reads from a source NetBox instance and returns plain dicts that can be remapped into the destination NetBox.
+See specific source examples at end of document
 
 ### `source` scalar attributes
 
@@ -775,3 +591,201 @@ cp .env.example .env
 # edit .env with your credentials
 set -a && source .env && set +a
 ```
+
+### VMware (pyVmomi SDK)
+
+```hcl
+source "vcenter" {
+  api_type   = "vmware"
+  url        = env("VCENTER_URL")
+  username   = env("VCENTER_USER")
+  password   = env("VCENTER_PASS")
+}
+```
+
+### REST-based sources (no Python required)
+
+Any HTTP/REST API uses `api_type = "rest"` with `collection {}` sub-blocks that
+map collection names to endpoints.  No Python code is needed.
+
+```hcl
+source "xclarity" {
+  api_type   = "rest"
+  url        = env("XCLARITY_HOST")
+  username   = env("XCLARITY_USER")
+  password   = env("XCLARITY_PASS")
+  verify_ssl = env("XCLARITY_VERIFY_SSL", "true")
+  auth       = "basic"
+
+  collection "nodes" {
+    endpoint        = "/nodes"
+    list_key        = "nodeList"
+    detail_endpoint = "/nodes/{uuid}"
+    detail_id_field = "uuid"
+  }
+
+  collection "switches" {
+    endpoint = "/switches"
+    list_key = "switchList"
+  }
+}
+```
+
+### Azure (`api_type = "azure"`)
+
+```hcl
+source "azure" {
+  api_type    = "azure"
+  auth_method = env("AZURE_AUTH_METHOD", "default")   # "default" | "service_principal"
+  tenant_id   = env("AZURE_TENANT_ID", "")
+  client_id   = env("AZURE_CLIENT_ID", "")
+  password    = env("AZURE_CLIENT_SECRET", "")        # client secret for service_principal
+  subscription_ids = env("AZURE_SUBSCRIPTION_IDS", "") # comma-separated, empty = all
+}
+```
+
+### LDAP (`api_type = "ldap"`)
+
+```hcl
+source "ldap" {
+  api_type   = "ldap"
+  url        = env("LDAP_SERVER")    # e.g. ldaps://ldap.example.com:636
+  username   = env("LDAP_USER")      # bind DN
+  password   = env("LDAP_PASS")
+  verify_ssl = true
+
+  search_base   = env("LDAP_SEARCH_BASE")
+  search_filter = env("LDAP_FILTER", "(objectClass=*)")
+  attributes    = "*"                # comma-separated, or "*" for all
+}
+```
+
+### Cisco Catalyst Center (`api_type = "catc"`)
+
+```hcl
+source "catc" {
+  api_type   = "catc"
+  url        = env("CATC_HOST")
+  username   = env("CATC_USER")
+  password   = env("CATC_PASS")
+  verify_ssl = env("CATC_VERIFY_SSL", "true")
+  fetch_interfaces          = env("CATC_FETCH_INTERFACES", "true")
+  site_assignment_strategy  = env("CATC_SITE_ASSIGNMENT_STRATEGY", "auto")
+  wait_on_rate_limit        = env("CATC_WAIT_ON_RATE_LIMIT", "true")
+  rate_limit_retry_attempts = env("CATC_RATE_LIMIT_RETRY_ATTEMPTS", "3")
+  rate_limit_retry_initial_delay = env("CATC_RATE_LIMIT_RETRY_INITIAL_DELAY", "1.0")
+  rate_limit_retry_max_delay = env("CATC_RATE_LIMIT_RETRY_MAX_DELAY", "30.0")
+  rate_limit_retry_jitter   = env("CATC_RATE_LIMIT_RETRY_JITTER", "0.5")
+}
+```
+
+The Catalyst Center adapter fetches device inventory in bulk, then joins it to
+site assignments using the site-assignment API at the shallowest non-Global
+site roots it can find. This avoids one membership lookup per site on large
+hierarchies. When the installed SDK or Catalyst Center release does not expose
+that site-assignment API, the adapter falls back to the older per-site
+membership walk.
+
+`site_assignment_strategy` controls which path is tried first:
+
+- `auto` (default): bulk site-assignment join first, per-site membership fallback
+- `bulk`: bulk site-assignment join first, per-site membership fallback
+- `membership`: per-site membership walk first, bulk site-assignment fallback
+
+Use `membership` when you already know the bulk site-assignment API is slow or
+times out in a given Catalyst Center environment, but still want the adapter to
+fall back to bulk if the membership walk produces no usable device/site pairs.
+
+When interface collection is enabled, the adapter also synthesizes `mgmt0` and
+`radio0` for Unified AP devices so management interface/IP parity matches the
+legacy CATC collector behavior.
+
+Use `mappings/catalyst-center.hcl.example` as the single maintained Catalyst
+Center mapping template so the deployed mapping path uses the same
+name/site/device_type/manufacturer wiring that CI validates.
+
+### Cisco Nexus Dashboard Fabric Controller (`api_type = "nexus"`)
+
+```hcl
+source "nexus" {
+  api_type         = "nexus"
+  url              = env("NDFC_HOST")
+  username         = env("NDFC_USER")
+  password         = env("NDFC_PASS")
+  verify_ssl       = env("NDFC_VERIFY_SSL", "true")
+  fetch_interfaces = env("NDFC_FETCH_INTERFACES", "false")
+}
+```
+
+### F5 BIG-IP (`api_type = "f5"`)
+
+```hcl
+source "f5" {
+  api_type         = "f5"
+  url              = env("F5_HOST")
+  username         = env("F5_USER")
+  password         = env("F5_PASS")
+  verify_ssl       = env("F5_VERIFY_SSL", "true")
+  fetch_interfaces = env("F5_FETCH_INTERFACES", "false")
+}
+```
+
+### Prometheus node-exporter (`api_type = "prometheus"`)
+
+```hcl
+source "prometheus" {
+  api_type         = "prometheus"
+  url              = env("PROMETHEUS_URL")
+  username         = env("PROMETHEUS_USER", "")
+  password         = env("PROMETHEUS_PASS", "")
+  verify_ssl       = env("PROMETHEUS_VERIFY_SSL", "true")
+  fetch_interfaces = env("PROMETHEUS_FETCH_INTERFACES", "true")
+}
+```
+
+### SNMP (`api_type = "snmp"`)
+
+```hcl
+source "snmp_devices" {
+  api_type   = "snmp"
+  url        = env("SNMP_HOSTS")          # comma-separated list of hosts
+  username   = env("SNMP_COMMUNITY", "public")  # v2c community string
+
+  # Optional SNMP parameters
+  version    = env("SNMP_VERSION", "2c")
+  port       = env("SNMP_PORT", "161")
+  timeout    = env("SNMP_TIMEOUT", "5")
+  retries    = env("SNMP_RETRIES", "1")
+
+  # SNMPv3 (only when version = "3")
+  # v3_user       = env("SNMP_V3_USER")
+  # v3_auth_pass  = env("SNMP_V3_AUTH_PASS")
+  # v3_auth_proto = env("SNMP_V3_AUTH_PROTO", "sha")
+  # v3_priv_pass  = env("SNMP_V3_PRIV_PASS")
+  # v3_priv_proto = env("SNMP_V3_PRIV_PROTO", "aes")
+
+  # Vendor-specific OIDs to fetch per device (added to device dict by field name)
+  extra_oids = {
+    jnx_model  = "1.3.6.1.4.1.2636.3.1.2.0"
+    jnx_serial = "1.3.6.1.4.1.2636.3.1.3.0"
+  }
+}
+```
+
+The SNMP adapter is vendor-agnostic. It exposes `sys_object_id` (raw sysObjectID OID) and `if_type` (raw integer) on every device/interface. Vendor-specific detection and field extraction should be expressed in HCL field expressions using `when()`, `regex_extract()`, and `map_value()`.
+
+### NetBox source (`api_type = "netbox"`)
+
+```hcl
+source "source_nb" {
+  api_type   = "netbox"
+  url        = env("SOURCE_NETBOX_URL")
+  password   = env("SOURCE_NETBOX_TOKEN")       # source NetBox API token
+  verify_ssl = env("SOURCE_NETBOX_VERIFY_SSL", "true")
+  filters    = env("SOURCE_NETBOX_FILTERS", "") # optional JSON object string
+  page_size  = "1000"
+}
+```
+
+This adapter reads from a source NetBox instance and returns plain dicts that can be remapped into the destination NetBox.
+
