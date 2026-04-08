@@ -40,7 +40,7 @@ jobs:
         run: pip install poetry
 
       - name: Install dependencies
-        run: poetry install --with dev --no-root
+        run: poetry install --with dev
 
       - name: Run test suite
         run: poetry run pytest

@@ -4,7 +4,7 @@ This document is for developers new to `hcl-netbox-discovery` who want to get pr
 
 ## What This Project Is
 
-`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `collector/`, the Flask UI is in `web/`, and the custom NetBox client wrapper is provided by the external `pynetbox-wrapper` dependency.
+`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `src/collector/`, the Flask UI is in `src/web/`, and the custom NetBox client wrapper is provided by the external `pynetbox-wrapper` dependency.
 
 The web UI and the scheduler share one SQLite database:
 
@@ -33,14 +33,6 @@ Run commands through Poetry:
 poetry run pytest
 poetry run ruff check .
 poetry run python main.py --mapping mappings/vmware.hcl --dry-run
-```
-
-### Legacy fallback
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 If you need environment-based config for local runs:
@@ -81,13 +73,13 @@ poetry run python main.py --run-scheduler
 ### Run the web UI
 
 ```bash
-poetry run python web_server.py
+poetry run python -m web.web_server
 ```
 
 ## Repo Layout
 
-- `collector/`: parser, engine, DB, field resolvers, prerequisites, source adapters
-- `web/`: Flask app and templates
+- `src/collector/`: parser, engine, DB, field resolvers, prerequisites, source adapters
+- `src/web/`: Flask app and templates
 - `pynetbox-wrapper`: external NetBox client wrapper dependency with retries, caching, and upsert helpers
 - `mappings/`: example HCL mapping files
 - `regex/`: plain-text mapping files used by `regex_file()`

@@ -1,5 +1,5 @@
 """
-File: collector/job_log_handler.py
+File: src/collector/job_log_handler.py
 Purpose: Logging handler that persists log records to the collector DB.
 Created: 2026-03-30
 Last Changed: Copilot 2026-03-31 Issue: #debug-logging

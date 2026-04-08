@@ -5,17 +5,12 @@ from __future__ import annotations
 import glob
 import logging
 import os
-import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
-
-# Make the project root importable when Flask is started from the repo root.
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
 
 from collector.db import (  # noqa: E402
     create_job,
@@ -51,6 +46,7 @@ from web.auth import (  # noqa: E402
 from web.serializers import job_artifact_payload, job_logs_payload, jobs_payload  # noqa: E402
 
 logger = logging.getLogger(__name__)
+_ROOT = str(Path(__file__).resolve().parents[2])
 
 # ---------------------------------------------------------------------------
 def create_app() -> Flask:

@@ -86,21 +86,21 @@ Key components:
 | Component | Role |
 |---|---|
 | `main.py` | CLI entry point; runs explicit mappings or the long-running scheduler loop |
-| `web_server.py` | Web UI entry point; starts the Flask monitor server |
-| `collector/engine.py` | Top-level orchestrator per HCL file |
-| `collector/config.py` | HCL parser; produces a validated `CollectorConfig` dataclass tree |
-| `collector/db.py` | SQLite store for jobs, logs, schedules, and editable configuration settings |
-| `collector/job_log_handler.py` | Logging handler that persists job log records to the SQLite DB |
-| `collector/field_resolvers.py` | Expression evaluator with 20+ helper functions |
-| `collector/prerequisites.py` | Resolves prerequisite objects (ensures they exist in NetBox) |
-| `collector/sources/rest.py` | Generic HTTP/REST adapter — zero Python per source |
-| `collector/sources/vmware.py` | pyVmomi adapter for VMware vCenter |
-| `collector/sources/azure.py` | Azure SDK adapter |
-| `collector/sources/ldap.py` | LDAP3 adapter |
-| `collector/sources/catc.py` | Cisco Catalyst Center adapter |
+| `src/web/web_server.py` | Web UI entry point; starts the Flask monitor server |
+| `src/collector/engine.py` | Top-level orchestrator per HCL file |
+| `src/collector/config.py` | HCL parser; produces a validated `CollectorConfig` dataclass tree |
+| `src/collector/db.py` | SQLite store for jobs, logs, schedules, and editable configuration settings |
+| `src/collector/job_log_handler.py` | Logging handler that persists job log records to the SQLite DB |
+| `src/collector/field_resolvers.py` | Expression evaluator with 20+ helper functions |
+| `src/collector/prerequisites.py` | Resolves prerequisite objects (ensures they exist in NetBox) |
+| `src/collector/sources/rest.py` | Generic HTTP/REST adapter — zero Python per source |
+| `src/collector/sources/vmware.py` | pyVmomi adapter for VMware vCenter |
+| `src/collector/sources/azure.py` | Azure SDK adapter |
+| `src/collector/sources/ldap.py` | LDAP3 adapter |
+| `src/collector/sources/catc.py` | Cisco Catalyst Center adapter |
 | `pynetbox-wrapper` dependency | Production-ready NetBox client wrapper: caching, rate-limiting, upsert, retry |
-| `web/app.py` | Flask application factory; dashboard, job detail, schedules, cache, and settings routes |
-| `web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
+| `src/web/app.py` | Flask application factory; dashboard, job detail, schedules, cache, and settings routes |
+| `src/web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
 
 For a deeper dive, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -112,34 +112,7 @@ For a deeper dive, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - Access to a [NetBox](https://netbox.dev/) instance with an API token
 - Credentials for the source systems you intend to sync
 
-Python dependencies are managed in `pyproject.toml` (Poetry workflow).  
-`requirements*.txt` remains as a legacy/fallback path.
-
-```
-requests==2.32.3
-deepdiff==8.0.1
-pyyaml==6.0.2
-# Python-hcl2 for HCL parsing
-python-hcl2>=4.3.0
-# redis for caching
-redis
-# LDAP
-ldap3
-# Netbox
-pynetbox==7.3.3
-netboxlabs-diode-sdk
-# VMware
-pyvmomi==8.0.3.0.1
-# Cisco Catalyst Center
-dnacentersdk>=2.6.0
-# Microsoft Azure
-azure-identity>=1.15.0
-azure-mgmt-compute>=30.0.0
-azure-mgmt-network>=25.0.0
-azure-mgmt-subscription>=3.1.1
-# SNMP
-pysnmp>=7.1
-```
+Python dependencies are managed in `pyproject.toml` through Poetry.
 
 ---
 
@@ -162,18 +135,8 @@ Run project commands with Poetry:
 ```bash
 poetry run pytest
 poetry run python main.py --mapping mappings/vmware.hcl --dry-run
-poetry run python web_server.py
+poetry run python -m web.web_server
 ```
-
-Legacy fallback install path:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt -r requirements-dev.txt
-```
-
----
 
 ## Web UI
 
@@ -212,10 +175,10 @@ X-API-Key: <token>
 
 ```bash
 # Development
-poetry run python web_server.py      # listens on http://0.0.0.0:5000
+poetry run python -m web.web_server      # listens on http://0.0.0.0:5000
 
 # Custom port / host
-poetry run python web_server.py --port 8080 --host 127.0.0.1
+poetry run python -m web.web_server --port 8080 --host 127.0.0.1
 
 # Production (gunicorn)
 poetry run gunicorn -w 2 -b 0.0.0.0:5000 "web.app:create_app()"
@@ -450,43 +413,40 @@ cp regex/xclarity_room_to_location.example  regex/xclarity_room_to_location
 ```
 hcl-netbox-discovery/
 ├── main.py                        # CLI entry point
-├── web_server.py                  # Web UI entry point
-├── requirements.txt               # Legacy/fallback dependency export
-│
-├── collector/                     # Core framework package
-│   ├── engine.py                  # Top-level orchestrator
-│   ├── config.py                  # HCL parser + dataclass models
-│   ├── context.py                 # Per-run execution context
-│   ├── db.py                      # SQLite job-tracking store
-│   ├── job_log_handler.py         # Logging handler → job DB
-│   ├── field_resolvers.py         # Expression evaluator
-│   ├── prerequisites.py           # Prerequisite resolution
-│   └── sources/
-│       ├── base.py                # Abstract DataSource interface
-│       ├── rest.py                # Generic REST adapter
-│       ├── vmware.py              # VMware vCenter (pyVmomi)
-│       ├── azure.py               # Microsoft Azure
-│       ├── ldap.py                # LDAP directory
-│       ├── catc.py                # Cisco Catalyst Center
-│       ├── nexus.py               # Cisco Nexus Dashboard (NDFC)
-│       ├── f5.py                  # F5 BIG-IP
-│       ├── prometheus.py          # Prometheus node-exporter
-│       ├── snmp.py                # SNMP (vendor-agnostic)
-│       ├── tenable.py             # Tenable One / Nessus
-│       └── netbox.py              # NetBox-to-NetBox source adapter
-│
-├── web/                           # Web UI package
-│   ├── app.py                     # Flask application factory + routes
-│   └── templates/
-│       ├── base.html              # Shared navbar / layout (Bootstrap 5)
-│       ├── index.html             # Dashboard: running jobs, recent history, run form
-│       ├── job_detail.html        # Job log viewer + sync summary table
-│       ├── schedules.html         # Schedule list and create form
-│       ├── schedule_edit.html     # Schedule edit form
-│       ├── cache.html             # Cache status and flush UI
-│       ├── settings.html          # DB-backed settings UI
-│       └── 404.html               # Not-found page
-│
+├── src/
+│   ├── collector/                 # Core framework package
+│   │   ├── engine.py              # Top-level orchestrator
+│   │   ├── config.py              # HCL parser + dataclass models
+│   │   ├── context.py             # Per-run execution context
+│   │   ├── db.py                  # SQLite job-tracking store
+│   │   ├── job_log_handler.py     # Logging handler → job DB
+│   │   ├── field_resolvers.py     # Expression evaluator
+│   │   ├── prerequisites.py       # Prerequisite resolution
+│   │   └── sources/
+│   │       ├── base.py            # Abstract DataSource interface
+│   │       ├── rest.py            # Generic REST adapter
+│   │       ├── vmware.py          # VMware vCenter (pyVmomi)
+│   │       ├── azure.py           # Microsoft Azure
+│   │       ├── ldap.py            # LDAP directory
+│   │       ├── catc.py            # Cisco Catalyst Center
+│   │       ├── nexus.py           # Cisco Nexus Dashboard (NDFC)
+│   │       ├── f5.py              # F5 BIG-IP
+│   │       ├── prometheus.py      # Prometheus node-exporter
+│   │       ├── snmp.py            # SNMP (vendor-agnostic)
+│   │       ├── tenable.py         # Tenable One / Nessus
+│   │       └── netbox.py          # NetBox-to-NetBox source adapter
+│   └── web/                       # Web UI package
+│       ├── web_server.py          # Web UI entry point
+│       ├── app.py                 # Flask application factory + routes
+│       └── templates/
+│           ├── base.html          # Shared navbar / layout (Bootstrap 5)
+│           ├── index.html         # Dashboard: running jobs, recent history, run form
+│           ├── job_detail.html    # Job log viewer + sync summary table
+│           ├── schedules.html     # Schedule list and create form
+│           ├── schedule_edit.html # Schedule edit form
+│           ├── cache.html         # Cache status and flush UI
+│           ├── settings.html      # DB-backed settings UI
+│           └── 404.html           # Not-found page
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example

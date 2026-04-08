@@ -9,8 +9,8 @@ duplication, or coupling to justify a future focused change.
 
 **Files**
 - `main.py`
-- `collector/db.py`
-- `web/app.py`
+- `src/collector/db.py`
+- `src/web/app.py`
 
 **Why**
 - The project now supports queued, running, success, partial, failed, and
@@ -29,8 +29,8 @@ duplication, or coupling to justify a future focused change.
 ## 2. Consolidate job API response shaping
 
 **Files**
-- `web/app.py`
-- `collector/db.py`
+- `src/web/app.py`
+- `src/collector/db.py`
 
 **Why**
 - Job JSON is now exposed through multiple routes:
@@ -47,7 +47,7 @@ duplication, or coupling to justify a future focused change.
 ## 3. Collapse duplicated config evaluation helpers
 
 **Files**
-- `collector/config.py`
+- `src/collector/config.py`
 
 **Why**
 - `_eval_config_str()` and `_eval_config_str_with_overrides()` are closely
@@ -62,8 +62,8 @@ duplication, or coupling to justify a future focused change.
 ## 4. Reduce module schema derivation coupling
 
 **Files**
-- `collector/engine.py`
-- `collector/prerequisites.py`
+- `src/collector/engine.py`
+- `src/collector/prerequisites.py`
 - `mappings/xclarity-modules.hcl.example`
 
 **Why**
@@ -80,7 +80,7 @@ duplication, or coupling to justify a future focused change.
 ## 5. Split auth helpers from Flask route definitions
 
 **Files**
-- `web/app.py`
+- `src/web/app.py`
 
 **Why**
 - The app factory now contains session auth, API token auth, CSRF checks, route
@@ -95,9 +95,9 @@ duplication, or coupling to justify a future focused change.
 ## 6. Clarify source payload contracts for placement and identity
 
 **Files**
-- `collector/sources/catc.py`
-- `collector/sources/vmware.py`
-- `collector/sources/netbox.py`
+- `src/collector/sources/catc.py`
+- `src/collector/sources/vmware.py`
+- `src/collector/sources/netbox.py`
 - related mappings under `mappings/`
 
 **Why**
