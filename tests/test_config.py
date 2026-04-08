@@ -1007,3 +1007,19 @@ class TestNetboxToNetboxContactMapping:
         contact = next((o for o in cfg.objects if o.name == "contact"), None)
         assert contact is not None, "missing contact object in netbox-to-netbox mapping"
         assert contact.lookup_by == ["name", "email"]
+
+
+class TestVmwareMappings:
+    PATHS = ["mappings/vmware.hcl.example"]
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_vm_tagged_vlans_include_cluster_derived_site(self, mapping_path):
+        cfg = load_config(mapping_path)
+        vm = next((o for o in cfg.objects if o.name == "vm"), None)
+        assert vm is not None, f"missing vm object in {mapping_path}"
+        assert vm.interfaces, "vm should define interfaces"
+        interface = vm.interfaces[0]
+        assert interface.tagged_vlans, "vm interface should define tagged_vlans"
+        vlan = interface.tagged_vlans[0]
+        field_values = {f.name: f.value for f in vlan.fields}
+        assert field_values["site"] == "regex_file(source('runtime.host.parent.name'), 'cluster_to_site')"

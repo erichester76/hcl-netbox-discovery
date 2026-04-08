@@ -343,6 +343,10 @@ object "vm" {
       field "name" {
         value = "source('name')"
       }
+
+      field "site" {
+        value = "regex_file(source('runtime.host.parent.name'), 'cluster_to_site')"
+      }
     }
   }
 
