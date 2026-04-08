@@ -147,6 +147,7 @@ def test_api_job_logs_allows_token_auth(secured_app):
     resp = secured_app.get(f"/api/jobs/{job_id}/logs", headers={"Authorization": "Bearer api-secret"})
 
     assert resp.status_code == 200
+    assert resp.get_json()["status"] == "running"
     assert resp.get_json()["logs"][0]["message"] == "first"
 
 
@@ -477,7 +478,6 @@ def test_api_job_logs_returns_incremental_logs(app):
     resp = app.get(f"/api/jobs/{job_id}/logs")
     assert resp.status_code == 200
     data = resp.get_json()
-    assert data["job_id"] == job_id
     assert data["status"] == "running"
     assert [entry["message"] for entry in data["logs"]] == ["first", "second"]
 
@@ -486,6 +486,19 @@ def test_api_job_logs_returns_incremental_logs(app):
     assert resp.status_code == 200
     data = resp.get_json()
     assert [entry["message"] for entry in data["logs"]] == ["second"]
+
+
+def test_api_job_logs_clamps_negative_after_id(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "INFO", "engine", "first")
+    add_log(job_id, "INFO", "engine", "second")
+
+    resp = app.get(f"/api/jobs/{job_id}/logs?after_id=-99")
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert [entry["message"] for entry in data["logs"]] == ["first", "second"]
 
 
 def test_api_job_logs_404(app):

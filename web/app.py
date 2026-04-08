@@ -168,9 +168,8 @@ def create_app() -> Flask:
     @app.route("/jobs/<int:job_id>/logs")
     def job_logs_json(job_id: int):
         """Return logs since *after_id* as JSON (used for live-polling)."""
-        after_id = request.args.get("after_id", 0, type=int)
-        logs = get_job_logs(job_id)
-        new_logs = [lg for lg in logs if lg["id"] > after_id]
+        after_id = max(request.args.get("after_id", 0, type=int), 0)
+        new_logs = get_job_logs(job_id, after_id=after_id)
         job = get_job(job_id)
         return jsonify(
             {
@@ -220,15 +219,13 @@ def create_app() -> Flask:
     @app.route("/api/jobs/<int:job_id>/logs")
     def api_job_logs(job_id: int):
         """Return incremental job logs as JSON for API clients."""
-        after_id = request.args.get("after_id", 0, type=int)
+        after_id = max(request.args.get("after_id", 0, type=int), 0)
         job = get_job(job_id)
         if job is None:
             return jsonify({"error": "job not found"}), 404
-        logs = get_job_logs(job_id)
-        new_logs = [lg for lg in logs if lg["id"] > after_id]
+        new_logs = get_job_logs(job_id, after_id=after_id)
         return jsonify(
             {
-                "job_id": job["id"],
                 "status": job["status"],
                 "logs": new_logs,
             }
