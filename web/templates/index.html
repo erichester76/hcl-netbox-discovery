@@ -63,7 +63,7 @@
         {% if running %}
         <table class="table table-hover mb-0">
           <thead class="table-light">
-            <tr><th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th></tr>
+            <tr><th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th><th></th></tr>
           </thead>
           <tbody>
           {% for j in running %}
@@ -72,6 +72,14 @@
               <td>{{ j.hcl_file }}</td>
               <td><span class="badge badge-{{ j.status }}">{{ j.status }}</span></td>
               <td>{{ j.started_at or j.created_at }}</td>
+              <td>
+                <form method="POST" action="/jobs/{{ j.id }}/stop" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+                  <button type="submit" class="btn btn-sm btn-outline-danger" {% if j.stop_requested %}disabled{% endif %}>
+                    {% if j.stop_requested %}Stop Requested{% else %}Stop{% endif %}
+                  </button>
+                </form>
+              </td>
               <td><a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-primary">View Logs</a></td>
             </tr>
           {% endfor %}
@@ -149,14 +157,22 @@
     }
     var html = '<table class="table table-hover mb-0">' +
                '<thead class="table-light"><tr>' +
-               '<th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th>' +
+               '<th>#</th><th>Mapping File</th><th>Status</th><th>Started</th><th></th><th></th>' +
                '</tr></thead><tbody>';
     jobs.forEach(function (j) {
+      var stopLabel = j.stop_requested ? 'Stop Requested' : 'Stop';
+      var stopDisabled = j.stop_requested ? ' disabled' : '';
       html += '<tr>' +
         '<td>' + j.id + '</td>' +
         '<td>' + j.hcl_file + '</td>' +
         '<td><span class="badge badge-' + j.status + '">' + j.status + '</span></td>' +
         '<td>' + (j.started_at || j.created_at) + '</td>' +
+        '<td>' +
+          '<form method="POST" action="/jobs/' + j.id + '/stop" class="d-inline">' +
+          '<input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />' +
+          '<button type="submit" class="btn btn-sm btn-outline-danger"' + stopDisabled + '>' + stopLabel + '</button>' +
+          '</form>' +
+        '</td>' +
         '<td><a href="/jobs/' + j.id + '" class="btn btn-sm btn-outline-primary">View Logs</a></td>' +
         '</tr>';
     });

@@ -131,9 +131,10 @@ CREATE TABLE jobs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     hcl_file    TEXT    NOT NULL,
     run_token   TEXT,
-    status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | partial | failed
+    status      TEXT    NOT NULL DEFAULT 'queued',  -- queued | running | success | partial | failed | stopped
     dry_run     INTEGER NOT NULL DEFAULT 0,
     debug_mode  INTEGER NOT NULL DEFAULT 0,
+    stop_requested INTEGER NOT NULL DEFAULT 0,      -- cooperative stop flag for queued/running jobs
     created_at  TEXT    NOT NULL,   -- ISO-8601 UTC timestamp
     started_at  TEXT,               -- set by start_job()
     finished_at TEXT,               -- set by finish_job()
@@ -148,6 +149,8 @@ Status lifecycle:
 queued  →  running  →  success
                     →  partial
                     →  failed
+queued  →  stopped
+running →  stopped
 ```
 
 #### `job_logs`
@@ -210,12 +213,14 @@ CREATE TABLE config_settings (
 |---|---|
 | `init_db()` | Create tables (idempotent — safe to call on every startup) |
 | `create_job(hcl_file, dry_run=False, debug_mode=False)` → `int` | Insert a new queued job; return its id |
-| `start_job(job_id)` | Mark job as running; set `started_at` |
-| `finish_job(job_id, success, summary, has_errors=False, artifact=None)` | Mark job as success/partial/failed; store JSON summary and structured artifact |
+| `start_job(job_id)` | Mark job as running; set `started_at`; clear any stale `stop_requested` flag |
+| `finish_job(job_id, success, summary, has_errors=False, artifact=None, forced_status=None)` | Mark job as success/partial/failed/stopped; store JSON summary and structured artifact |
 | `get_job(job_id)` → `dict\|None` | Fetch a single job record |
 | `get_jobs(limit)` → `list` | Most-recent jobs, newest first |
 | `get_running_jobs()` → `list` | All queued/running jobs (no limit) |
 | `get_queued_jobs()` → `list` | Queued jobs waiting for the scheduler worker |
+| `request_job_stop(job_id)` → `str\|None` | Mark a queued job stopped immediately or flag a running job for cooperative stop |
+| `job_stop_requested(job_id)` → `bool` | Return whether a running job has been asked to stop |
 | `add_log(job_id, level, logger, message)` | Append one log line |
 | `get_job_logs(job_id)` → `list` | All log lines for a job, chronological |
 | `create_schedule(name, hcl_file, cron_expr, ...)` → `int` | Insert a new schedule |
@@ -244,6 +249,7 @@ CREATE TABLE config_settings (
 | `GET` | `/api/running-jobs` | JSON: all queued/running jobs (used by dashboard polling); supports session auth or API token auth |
 | `GET` | `/api/jobs` | JSON: recent jobs with optional `after_id`, `status`, `hcl_file`, and `limit` filters; supports session auth or API token auth |
 | `GET` | `/api/jobs/<id>/artifact` | JSON: persisted structured artifact payload for a single job; supports session auth or API token auth |
+| `POST` | `/jobs/<id>/stop` | Request cooperative stop for a running job or immediately stop a queued job |
 | `POST` | `/jobs/run` | Trigger an on-demand job from the dashboard form |
 | `GET` | `/schedules` | Scheduler management page: list all schedules + add-schedule form |
 | `POST` | `/schedules/create` | Create a new schedule (computes initial `next_run_at` via `croniter`) |
@@ -271,6 +277,12 @@ CREATE TABLE config_settings (
 - Grouped display of web, NetBox, source, and collector options
 - Sensitive values rendered as password-style inputs
 - Reset action that clears a DB override and falls back to env/default
+
+### Job stop semantics
+
+- Queued jobs can be stopped immediately from the UI; they transition directly to `stopped` without being claimed by the scheduler.
+- Running jobs are stopped cooperatively. The web UI sets `stop_requested=1`, and the engine checks that flag between object and item boundaries.
+- When a running job stops cooperatively, `finish_job()` stores terminal status `stopped` and persists the partial summary accumulated so far.
 
 ---
 

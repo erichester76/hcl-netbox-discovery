@@ -8,8 +8,9 @@ isolated copy via ``for_item`` or ``for_nested``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from .config import CollectorOptions
 
@@ -26,12 +27,13 @@ class RunContext:
     source_obj: Any                    # current source object being processed
     parent_nb_obj: Any                 # parent NetBox record (for nested items)
     dry_run: bool
+    stop_requested: Callable[[], bool] | None = None
 
     def for_item(
         self,
         source_obj: Any,
-        prereqs: Optional[dict] = None,
-    ) -> "RunContext":
+        prereqs: dict | None = None,
+    ) -> RunContext:
         """Return a copy scoped to a specific top-level source item.
 
         The new context gets a fresh (empty) prereq dict unless *prereqs* is
@@ -46,13 +48,14 @@ class RunContext:
             source_obj=source_obj,
             parent_nb_obj=None,
             dry_run=self.dry_run,
+            stop_requested=self.stop_requested,
         )
 
     def for_nested(
         self,
         source_obj: Any,
         parent_nb_obj: Any,
-    ) -> "RunContext":
+    ) -> RunContext:
         """Return a copy scoped to a nested source item (interface, inventory item, …).
 
         The prereq dict is inherited from the parent context so that expressions
@@ -68,4 +71,5 @@ class RunContext:
             source_obj=source_obj,
             parent_nb_obj=parent_nb_obj,
             dry_run=self.dry_run,
+            stop_requested=self.stop_requested,
         )

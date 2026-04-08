@@ -248,7 +248,7 @@ def _execute_job(
     Returns True when the run completed without a top-level fatal error.
     Item-level errors still return True and are persisted as ``partial``.
     """
-    from collector.db import add_log, finish_job, start_job  # noqa: PLC0415
+    from collector.db import add_log, finish_job, job_stop_requested, start_job  # noqa: PLC0415
     from collector.job_log_handler import JobLogHandler, job_context  # noqa: PLC0415
 
     if not job_already_started:
@@ -291,13 +291,19 @@ def _execute_job(
     success = False
     has_errors = False
     error_message: str | None = None
+    stopped = False
     try:
         from collector.engine import Engine  # noqa: PLC0415
 
         engine = Engine()
+
+        def stop_checker() -> bool:
+            return job_stop_requested(job_id)
+
         with job_context(job_id):
-            all_stats = engine.run(hcl_file, dry_run_override=dry_run or None)
+            all_stats = engine.run(hcl_file, dry_run_override=dry_run or None, stop_requested=stop_checker)
         summary, has_errors = _summary_from_stats(all_stats)
+        stopped = getattr(engine, "stop_requested", False) is True
         success = True
     except Exception as exc:
         error_message = str(exc)
@@ -320,6 +326,7 @@ def _execute_job(
                 summary=summary if summary else None,
                 error=error_message,
             ),
+            forced_status="stopped" if stopped and success else None,
         )
 
     return success

@@ -304,6 +304,16 @@ class Engine:
     def __init__(self) -> None:
         self._dry_run_id_counter = count(start=-1, step=-1)
         self._dry_run_id_lock = threading.Lock()
+        self.stop_requested = False
+
+    def _should_stop(self, ctx: RunContext) -> bool:
+        checker = getattr(ctx, "stop_requested", None)
+        if callable(checker) and checker():
+            if not self.stop_requested:
+                logger.warning("Stop requested; terminating job after current in-flight work")
+            self.stop_requested = True
+            return True
+        return self.stop_requested
 
     @staticmethod
     def _nb_helper(ctx: RunContext, name: str) -> Any:
@@ -797,6 +807,7 @@ class Engine:
         self,
         mapping_path: str,
         dry_run_override: bool | None = None,
+        stop_requested: Any = None,
     ) -> list[RunStats]:
         """Parse *mapping_path* and sync all objects to NetBox.
 
@@ -903,6 +914,8 @@ class Engine:
 
         try:
             for rows, pass_workers in groups:
+                if self.stop_requested:
+                    break
                 total = len(rows)
                 if pass_workers > 1 and total > 1:
                     logger.info(
@@ -918,14 +931,15 @@ class Engine:
                         futures = {
                             executor.submit(
                                 contextvars.copy_context().run,
-                                self._run_pass,
-                                source_cfg,
-                                cfg,
-                                nb,
-                                dry_run,
-                                idx,
-                                total,
-                            ): idx
+                            self._run_pass,
+                            source_cfg,
+                            cfg,
+                            nb,
+                            dry_run,
+                            idx,
+                            total,
+                            stop_requested,
+                        ): idx
                             for idx, source_cfg in enumerate(rows)
                         }
                         for future in as_completed(futures):
@@ -946,7 +960,17 @@ class Engine:
                         all_stats.extend(stats_by_idx[i])
                 else:
                     for idx, source_cfg in enumerate(rows):
-                        pass_stats = self._run_pass(source_cfg, cfg, nb, dry_run, idx, total)
+                        if self.stop_requested:
+                            break
+                        pass_stats = self._run_pass(
+                            source_cfg,
+                            cfg,
+                            nb,
+                            dry_run,
+                            idx,
+                            total,
+                            stop_requested,
+                        )
                         all_stats.extend(pass_stats)
         finally:
             nb.close()
@@ -962,6 +986,7 @@ class Engine:
         dry_run: bool,
         pass_idx: int = 0,
         total_passes: int = 1,
+        stop_requested: Any = None,
     ) -> list[RunStats]:
         """Connect to *source_cfg*, process all object blocks, and disconnect.
 
@@ -987,11 +1012,14 @@ class Engine:
             source_obj=None,
             parent_nb_obj=None,
             dry_run=dry_run,
+            stop_requested=stop_requested,
         )
 
         pass_stats: list[RunStats] = []
         try:
             for obj_cfg in cfg.objects:
+                if self._should_stop(base_ctx):
+                    break
                 stats = self._process_object(obj_cfg, base_ctx)
                 pass_stats.append(stats)
                 stats.log_summary()
@@ -1029,6 +1057,9 @@ class Engine:
     def _process_object(self, obj_cfg: ObjectConfig, ctx: RunContext) -> RunStats:
         stats = RunStats(obj_cfg.name)
 
+        if self._should_stop(ctx):
+            return stats
+
         logger.info(
             "Fetching %r (collection=%s) from source",
             obj_cfg.name,
@@ -1049,8 +1080,11 @@ class Engine:
             max_workers=max_workers,
             thread_name_prefix=obj_cfg.name[:16],
         ) as executor:
-            futures = {
-                executor.submit(
+            futures = {}
+            for item in items:
+                if self._should_stop(ctx):
+                    break
+                future = executor.submit(
                     # Copy the context once per item so each worker thread
                     # gets its own Context object.  A single Context cannot
                     # be entered concurrently from multiple threads, which
@@ -1062,9 +1096,8 @@ class Engine:
                     ctx.for_item(item),
                     prereq_runner,
                     stats,
-                ): item
-                for item in items
-            }
+                )
+                futures[future] = item
             for future in as_completed(futures):
                 exc = future.exception()
                 if exc:
@@ -1091,6 +1124,9 @@ class Engine:
         prereq_runner: PrerequisiteRunner,
         stats: RunStats,
     ) -> None:
+        if self._should_stop(ctx):
+            return
+
         resolver = Resolver(ctx)
 
         # 1. Resolve prerequisites in declaration order
@@ -1139,6 +1175,8 @@ class Engine:
         self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
 
         # 4. Upsert to NetBox
+        if self._should_stop(ctx):
+            return
         nb_obj = self._upsert(
             ctx,
             obj_cfg.netbox_resource,
@@ -1151,6 +1189,8 @@ class Engine:
             return
 
         # 5. Process nested collections
+        if self._should_stop(ctx):
+            return
         try:
             self._process_interfaces(obj_cfg, nb_obj, ctx, stats)
             self._process_inventory_items(obj_cfg, nb_obj, ctx, stats)
