@@ -1,95 +1,4 @@
-"""Field expression evaluator.
-
-Expressions are plain Python strings evaluated with a restricted scope of
-helper functions.  No arbitrary builtins are exposed — ``__builtins__`` is
-replaced with an empty dict so that only the explicitly provided helpers are
-callable.
-
-Supported helpers
------------------
-source(path)
-    Walk a dotted path on the current source object.  Handles both plain
-    Python dicts (dict.get) and attribute objects (getattr) at each step.
-
-    Path syntax:
-      "a.b.c"           – nested attribute/key access
-      "list[KEY]"       – filter a list for items matching KEY
-                          • dicts: item has a key named KEY
-                          • VMware objects: identifierType.key == KEY
-      "list[*]"         – flatten/iterate all items in list
-
-env(name, default="")
-    get_config(name, default) – DB-backed runtime configuration is authoritative
-    for non-startup settings and falls back to *default* when unset.
-
-regex_file(value, filename)
-    Apply pattern/replacement pairs from ``regex/<filename>`` to *value*.
-    Each line in the file is ``pattern,replacement`` (CSV, first comma splits).
-    Returns the first matched replacement, or *value* if nothing matches.
-
-map_value(value, mapping, default=None)
-    Dictionary lookup: mapping.get(value, default).
-
-when(condition, true_val, false_val)
-    Ternary: true_val if condition else false_val.
-
-coalesce(*args)
-    Return the first argument that is not None and not an empty string.
-    String arguments that look like plain dotted paths (no parentheses or
-    spaces) are treated as source() paths and resolved automatically.
-
-replace(value, old, new)
-    str.replace(old, new) on value.
-
-upper(value) / lower(value)
-    str.upper() / str.lower().
-
-truncate(value, n)
-    value[:n] as a string.
-
-split(value, sep=None)
-    value.split(sep) — returns a list of parts.  Use indexing to get a
-    specific element, e.g. ``split(source('name'))[0]``.
-
-join(sep, items)
-    sep.join(str(i) for i in items if i) — skips falsy items.
-
-to_gb(bytes_value)
-    int(bytes_value / 1_073_741_824).
-
-to_mb(kb_value)
-    int(kb_value / 1024).
-
-str(value)
-    Convert *value* to a string (empty string for None).
-
-int(value, default=0)
-    Safely convert *value* to an integer, returning *default* on error.
-
-regex_replace(value, pattern, replacement)
-    Apply ``re.sub(pattern, replacement, str(value))``.
-
-regex_extract(value, pattern, group=1)
-    Return the captured group *group* from the first match of *pattern* in
-    *value*.  Returns ``None`` when there is no match.  Useful for extracting
-    tokens from vendor sysDescr strings without complex backreference escaping.
-
-mask_to_prefix(mask)
-    Convert a dotted-decimal IPv4 subnet mask (e.g. ``'255.255.255.0'``) to its
-    CIDR prefix length integer (e.g. ``24``).  Returns ``None`` on any error.
-
-prereq(name)
-    Look up a resolved prerequisite by name.  Use dot notation to access
-    attributes on multi-value prerequisites, e.g. prereq("placement.site_id").
-
-getattr(obj, name, default=None)
-    Safe attribute access — equivalent to Python's built-in getattr.  Useful
-    in list comprehensions to filter objects by attribute presence, e.g.
-    ``[d for d in source('devices') if getattr(d, 'capacityInKB', None)]``.
-
-collector.<flag>
-    Access a boolean/string flag from the collector {} block.
-"""
+"""Evaluate field expressions with a restricted helper scope."""
 
 from __future__ import annotations
 
@@ -107,10 +16,6 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Path walker
-# ---------------------------------------------------------------------------
 
 def _get_attr(obj: Any, key: str) -> Any:
     """Return obj[key] or getattr(obj, key), preferring dict access."""

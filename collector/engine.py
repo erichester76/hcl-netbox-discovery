@@ -1,11 +1,4 @@
-"""Top-level orchestrator for HCL-driven NetBox syncing.
-
-Usage
------
-from collector.engine import Engine
-engine = Engine()
-engine.run("mappings/vmware.hcl")
-"""
+"""Top-level orchestrator for HCL-driven NetBox sync runs."""
 
 from __future__ import annotations
 
@@ -43,9 +36,8 @@ from .prerequisites import (
 
 logger = logging.getLogger(__name__)
 
-# Default IEC 60320 power-port connector type used when a power_input block
-# does not specify a type expression or when the expression evaluates to a
-# falsy value.
+# Default IEC 60320 power-port connector type used when a ``power_input`` block
+# omits a type expression or the expression resolves to a falsy value.
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
 _VMWARE_SNAPSHOT_VMDK_RE = _re.compile(r"(?P<stem>[^/\\]+)-\d{6}(?P<ext>\.vmdk)\b")
 
@@ -103,10 +95,6 @@ def _normalize_vmware_virtual_disk_description(value: Any) -> Any:
         return value
     return _VMWARE_SNAPSHOT_VMDK_RE.sub(r"\g<stem>\g<ext>", value)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _build_nb_client(cfg_nb: Any) -> Any:
     """Construct a pynetbox2 NetBoxAPI client from *cfg_nb* (NetBoxConfig)."""
