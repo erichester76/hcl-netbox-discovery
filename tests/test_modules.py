@@ -1939,7 +1939,7 @@ class TestProcessModulesPowerInput:
             call for call in nb.upsert.call_args_list if call[0][0] == "dcim.module_types"
         )
         payload = module_type_upsert[0][1]
-        assert payload["attributes"] == {}
+        assert "attributes" not in payload
         profile_schema_call = next(
             call for call in nb.update.call_args_list if call[0][0] == "dcim.module_type_profiles"
         )
