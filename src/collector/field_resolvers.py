@@ -6,6 +6,7 @@ import logging
 import os
 import re as _re
 import types
+from functools import lru_cache
 from typing import Any
 
 try:
@@ -15,6 +16,12 @@ except ImportError:
         return default
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=512)
+def _compile_expression(expression: str) -> Any:
+    """Compile a field expression once and reuse it across evaluations."""
+    return compile(expression, "<field-expression>", "eval")
 
 
 def _get_attr(obj: Any, key: str) -> Any:
@@ -158,7 +165,8 @@ class Resolver:
         if not isinstance(expression, str):
             return expression
         try:
-            return eval(expression, {"__builtins__": {}}, self._scope)  # noqa: S307
+            compiled = _compile_expression(expression)
+            return eval(compiled, {"__builtins__": {}}, self._scope)  # noqa: S307
         except Exception as exc:
             logger.debug("Expression eval failed %r: %s", expression, exc)
             return None
@@ -173,7 +181,8 @@ class Resolver:
         if not isinstance(expression, str):
             return expression
         try:
-            return eval(expression, {"__builtins__": {}}, self._scope)  # noqa: S307
+            compiled = _compile_expression(expression)
+            return eval(compiled, {"__builtins__": {}}, self._scope)  # noqa: S307
         except Exception as exc:
             raise ValueError(f"{label} evaluation failed: {exc}") from exc
 

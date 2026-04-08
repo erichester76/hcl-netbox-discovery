@@ -8,7 +8,7 @@ import pytest
 
 from collector.config import CollectorOptions
 from collector.context import RunContext
-from collector.field_resolvers import Resolver, walk_path
+from collector.field_resolvers import Resolver, _compile_expression, walk_path
 
 # ---------------------------------------------------------------------------
 # walk_path()
@@ -434,6 +434,17 @@ class TestResolverErrorHandling:
         r = _make_resolver({})
         assert r.evaluate_strict("'vmware-host'", label="lookup_name") == "vmware-host"
         assert r.evaluate("Hypervisor Host") is None
+
+    def test_compiles_identical_expression_once(self):
+        _compile_expression.cache_clear()
+        r = _make_resolver({"name": "alpha"})
+
+        assert r.evaluate("source('name')") == "alpha"
+        assert r.evaluate("source('name')") == "alpha"
+
+        cache_info = _compile_expression.cache_info()
+        assert cache_info.misses == 1
+        assert cache_info.hits >= 1
 
 
 # ---------------------------------------------------------------------------
