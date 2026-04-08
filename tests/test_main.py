@@ -261,6 +261,28 @@ def test_mask_sensitive_values_preserves_ipv6_url_brackets():
     assert masked["url"] == "https://api-user:********@[2001:db8::1]:8443/path?api_token=********"
 
 
+def test_get_code_version_prefers_baked_env_metadata(monkeypatch):
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setenv("APP_VERSION", "1.1.1")
+    monkeypatch.setenv("APP_GIT_COMMIT", "abcdef1234567890")
+    monkeypatch.setenv("APP_GIT_BRANCH", "dev")
+    monkeypatch.setenv("APP_GIT_TAG", "v1.1.1")
+    monkeypatch.setattr(job_lifecycle, "_read_project_version", lambda: "0.0.0")
+    monkeypatch.setattr(job_lifecycle, "_git_output", lambda *_args: "fallback")
+
+    job_lifecycle.get_code_version.cache_clear()
+    try:
+        assert job_lifecycle.get_code_version() == {
+            "version": "1.1.1",
+            "git_commit": "abcdef1234567890",
+            "git_branch": "dev",
+            "git_tag": "v1.1.1",
+        }
+    finally:
+        job_lifecycle.get_code_version.cache_clear()
+
+
 def test_capture_job_runtime_metadata_redacts_config_error_details(tmp_path):
     hcl = tmp_path / "broken.hcl"
     hcl.write_text("broken")

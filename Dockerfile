@@ -1,4 +1,8 @@
 ARG PYTHON_VER=3.12
+ARG APP_VERSION=
+ARG APP_GIT_COMMIT=
+ARG APP_GIT_BRANCH=
+ARG APP_GIT_TAG=
 
 # ---------------------------------------------------------------------------
 # Stage 1 – install Python dependencies via Poetry into a virtual environment
@@ -45,6 +49,10 @@ FROM python:${PYTHON_VER}-slim
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ARG NO_PROXY
+ARG APP_VERSION
+ARG APP_GIT_COMMIT
+ARG APP_GIT_BRANCH
+ARG APP_GIT_TAG
 
 # Runtime LDAP libraries required by ldap3
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,12 +65,17 @@ WORKDIR /app
 # Copy the virtual environment from the builder stage
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+ENV APP_VERSION="${APP_VERSION}" \
+    APP_GIT_COMMIT="${APP_GIT_COMMIT}" \
+    APP_GIT_BRANCH="${APP_GIT_BRANCH}" \
+    APP_GIT_TAG="${APP_GIT_TAG}"
 
 # Copy application source
 COPY mappings/  mappings/
 COPY regex/     regex/
 COPY src/       src/
 COPY main.py    .
+COPY pyproject.toml .
 
 # Run as a non-root user
 RUN useradd -r -u 1001 -g root appuser

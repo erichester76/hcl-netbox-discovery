@@ -87,6 +87,17 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Read project version
+        id: project_version
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          print(f"version={data['tool']['poetry']['version']}")
+          PY
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
@@ -96,3 +107,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             PYTHON_VER=3.12
+            APP_VERSION=${{ steps.project_version.outputs.version }}
+            APP_GIT_COMMIT=${{ github.sha }}
+            APP_GIT_BRANCH=${{ github.ref_type == 'branch' && github.ref_name || '' }}
+            APP_GIT_TAG=${{ github.ref_type == 'tag' && github.ref_name || '' }}
