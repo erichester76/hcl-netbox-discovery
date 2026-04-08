@@ -39,6 +39,7 @@ from collector.db import (  # noqa: E402
     get_schedules,
     get_settings_by_group,
     init_db,
+    request_job_stop,
     reset_setting,
     set_setting,
     update_schedule,
@@ -225,6 +226,13 @@ def create_app() -> Flask:
             return redirect(url_for("index"))
 
         job_id = _dispatch_job(hcl_file, dry_run, debug_mode)
+        return redirect(url_for("job_detail", job_id=job_id))
+
+    @app.route("/jobs/<int:job_id>/stop", methods=["POST"])
+    def stop_job(job_id: int):
+        action = request_job_stop(job_id)
+        if action is None:
+            abort(404)
         return redirect(url_for("job_detail", job_id=job_id))
 
     @app.route("/cache")

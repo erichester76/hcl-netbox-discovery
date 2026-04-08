@@ -22,6 +22,8 @@ from collector.db import (
     get_schedule,
     get_schedules,
     init_db,
+    job_stop_requested,
+    request_job_stop,
     reset_setting,
     set_setting,
     start_job,
@@ -134,6 +136,16 @@ def test_finish_job_partial():
     assert job["summary"] == summary
 
 
+def test_finish_job_forced_stopped():
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    summary = {"devices": {"processed": 3, "created": 1, "updated": 1, "skipped": 1, "errored": 0}}
+    finish_job(job_id, success=True, summary=summary, forced_status="stopped")
+    job = get_job(job_id)
+    assert job["status"] == "stopped"
+    assert job["summary"] == summary
+
+
 def test_get_job_not_found():
     assert get_job(99999) is None
 
@@ -213,6 +225,29 @@ def test_get_running_jobs_includes_queued_and_running():
     assert queued_id in ids
     assert running_id in ids
     assert done_id not in ids
+
+
+def test_request_job_stop_marks_queued_job_stopped():
+    job_id = create_job("mappings/queued.hcl")
+    action = request_job_stop(job_id)
+    job = get_job(job_id)
+    assert action == "stopped"
+    assert job is not None
+    assert job["status"] == "stopped"
+    assert job["stop_requested"] is True
+    assert job["finished_at"] is not None
+
+
+def test_request_job_stop_flags_running_job():
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+    action = request_job_stop(job_id)
+    job = get_job(job_id)
+    assert action == "requested"
+    assert job is not None
+    assert job["status"] == "running"
+    assert job["stop_requested"] is True
+    assert job_stop_requested(job_id) is True
 
 
 def test_get_running_jobs_no_limit():

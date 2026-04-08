@@ -11,6 +11,14 @@
     <small class="text-muted">{{ job.hcl_file }}</small>
   </div>
   <div class="col-auto">
+    {% if job.status in ['queued', 'running'] %}
+    <form method="POST" action="/jobs/{{ job.id }}/stop" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <button type="submit" class="btn btn-sm btn-outline-danger">
+        {% if job.stop_requested %}Stop Requested{% else %}Stop Job{% endif %}
+      </button>
+    </form>
+    {% endif %}
     <a href="/" class="btn btn-sm btn-outline-secondary">← Dashboard</a>
   </div>
 </div>
@@ -82,6 +90,9 @@
     <span>Log Output</span>
     {% if job.status == 'running' %}
     <span class="badge bg-primary" id="live-badge">● LIVE</span>
+    {% endif %}
+    {% if job.stop_requested and job.status == 'running' %}
+    <span class="badge bg-warning text-dark ms-2">Stop requested</span>
     {% endif %}
   </div>
   <div class="card-body p-0">

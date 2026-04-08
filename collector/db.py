@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     hcl_file    TEXT    NOT NULL,
     run_token   TEXT,
     status      TEXT    NOT NULL DEFAULT 'queued',
+    stop_requested INTEGER NOT NULL DEFAULT 0,
     dry_run     INTEGER NOT NULL DEFAULT 0,
     debug_mode  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT    NOT NULL,
@@ -275,6 +276,11 @@ def init_db() -> None:
             con.execute("ALTER TABLE jobs ADD COLUMN artifact_json TEXT")
         except Exception:
             pass  # column already exists
+        # Migration: add stop_requested column if it was not present in older DBs
+        try:
+            con.execute("ALTER TABLE jobs ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass  # column already exists
 
         # Bootstrap settings remain environment-only and should not appear in
         # the DB-backed runtime settings table or Settings UI.
@@ -338,7 +344,7 @@ def start_job(job_id: int) -> None:
     """Mark job as running."""
     with _conn() as con:
         con.execute(
-            "UPDATE jobs SET status='running', started_at=? WHERE id=?",
+            "UPDATE jobs SET status='running', started_at=?, stop_requested=0 WHERE id=?",
             (_now(), job_id),
         )
 
@@ -349,6 +355,8 @@ def finish_job(
     summary: dict | None = None,
     has_errors: bool = False,
     artifact: dict | None = None,
+    *,
+    forced_status: str | None = None,
 ) -> None:
     """Mark job as success/partial/failed and store optional summary dict.
 
@@ -361,7 +369,9 @@ def finish_job(
             the status to be *partial* instead of *success*.
         artifact: Optional structured artifact dict persisted as JSON.
     """
-    if not success:
+    if forced_status is not None:
+        status = forced_status
+    elif not success:
         status = "failed"
     elif has_errors:
         status = "partial"
@@ -374,6 +384,50 @@ def finish_job(
             "UPDATE jobs SET status=?, finished_at=?, summary=?, artifact_json=? WHERE id=?",
             (status, _now(), summary_json, artifact_json, job_id),
         )
+
+
+def request_job_stop(job_id: int) -> str | None:
+    """Request that *job_id* stop, or stop it immediately if still queued.
+
+    Returns:
+        ``"requested"`` when a running job was flagged for cooperative stop,
+        ``"stopped"`` when a queued job was transitioned directly to stopped,
+        or ``None`` when the job does not exist or is already terminal.
+    """
+    now = _now()
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT status FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            return None
+
+        status = row[0]
+        if status == "queued":
+            con.execute(
+                "UPDATE jobs SET status='stopped', stop_requested=1, finished_at=? WHERE id=?",
+                (now, job_id),
+            )
+            return "stopped"
+        if status == "running":
+            con.execute(
+                "UPDATE jobs SET stop_requested=1 WHERE id=?",
+                (job_id,),
+            )
+            return "requested"
+        return None
+
+
+def job_stop_requested(job_id: int) -> bool:
+    """Return True when *job_id* has a pending stop request."""
+    with _conn() as con:
+        row = con.execute(
+            "SELECT stop_requested FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+    return bool(row[0]) if row is not None else False
 
 
 def add_log(job_id: int, level: str, logger_name: str, message: str) -> None:
@@ -389,7 +443,7 @@ def get_jobs(limit: int = 100) -> list[dict[str, Any]]:
     """Return the *limit* most-recent jobs, newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -414,7 +468,7 @@ def get_jobs_filtered(
         params.append(hcl_file)
     params.append(limit)
     query = (
-        "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+        "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
         f"FROM jobs WHERE {' AND '.join(clauses)} ORDER BY id DESC LIMIT ?"
     )
     with _conn() as con:
@@ -426,7 +480,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs (no limit), newest first."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -436,7 +490,7 @@ def get_job(job_id: int) -> dict[str, Any] | None:
     """Return a single job record or *None* if not found."""
     with _conn() as con:
         row = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()
@@ -481,24 +535,25 @@ def _row_to_job(row: tuple) -> dict[str, Any]:
         "hcl_file": row[1],
         "run_token": row[2],
         "status": row[3],
-        "created_at": row[4],
-        "started_at": row[5],
-        "finished_at": row[6],
+        "stop_requested": bool(row[4]),
+        "created_at": row[5],
+        "started_at": row[6],
+        "finished_at": row[7],
         "summary": None,
-        "dry_run": bool(row[8]) if len(row) > 8 else False,
-        "debug_mode": bool(row[9]) if len(row) > 9 else False,
+        "dry_run": bool(row[9]) if len(row) > 9 else False,
+        "debug_mode": bool(row[10]) if len(row) > 10 else False,
         "artifact": None,
     }
-    if row[7]:
+    if row[8]:
         try:
-            job["summary"] = json.loads(row[7])
+            job["summary"] = json.loads(row[8])
         except (json.JSONDecodeError, TypeError):
-            job["summary"] = row[7]
-    if len(row) > 10 and row[10]:
+            job["summary"] = row[8]
+    if len(row) > 11 and row[11]:
         try:
-            job["artifact"] = json.loads(row[10])
+            job["artifact"] = json.loads(row[11])
         except (json.JSONDecodeError, TypeError):
-            job["artifact"] = row[10]
+            job["artifact"] = row[11]
     return job
 
 
@@ -506,7 +561,7 @@ def get_queued_jobs() -> list[dict[str, Any]]:
     """Return all jobs with status='queued', oldest first (FIFO execution order)."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE status='queued' ORDER BY id ASC"
         ).fetchall()
     return [_row_to_job(r) for r in rows]
@@ -541,7 +596,7 @@ def claim_next_queued_job() -> dict[str, Any] | None:
             return None
 
         claimed = con.execute(
-            "SELECT id, hcl_file, run_token, status, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
             "FROM jobs WHERE id=?",
             (job_id,),
         ).fetchone()

@@ -456,6 +456,41 @@ def test_api_job_artifact_404(app):
     assert resp.get_json() == {"error": "job not found"}
 
 
+def test_stop_queued_job_route_marks_job_stopped(app):
+    job_id = create_job("mappings/queued.hcl")
+
+    resp = app.post(f"/jobs/{job_id}/stop")
+
+    assert resp.status_code == 302
+    job = db_module.get_job(job_id)
+    assert job is not None
+    assert job["status"] == "stopped"
+    assert job["stop_requested"] is True
+
+
+def test_stop_running_job_route_sets_stop_requested(app):
+    job_id = create_job("mappings/running.hcl")
+    start_job(job_id)
+
+    resp = app.post(f"/jobs/{job_id}/stop")
+
+    assert resp.status_code == 302
+    job = db_module.get_job(job_id)
+    assert job is not None
+    assert job["status"] == "running"
+    assert job["stop_requested"] is True
+
+
+def test_stop_terminal_job_route_returns_404(app):
+    job_id = create_job("mappings/done.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.post(f"/jobs/{job_id}/stop")
+
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Cache status page
 # ---------------------------------------------------------------------------

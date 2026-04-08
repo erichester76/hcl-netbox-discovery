@@ -155,6 +155,28 @@ def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     assert job["artifact"]["summary"]["devices"]["created"] == 1
 
 
+def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):
+    hcl = tmp_path / "stop.hcl"
+    hcl.write_text("")
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+    fake_engine.stop_requested = True
+
+    from main import _execute_job  # noqa: PLC0415
+
+    job_id = db_module.create_job(str(hcl), dry_run=False)
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        rc = _execute_job(job_id, str(hcl), dry_run=False)
+
+    assert rc is True
+    job = db_module.get_job(job_id)
+    assert job is not None
+    assert job["status"] == "stopped"
+    assert job["summary"] is not None
+
+
 def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
     hcl = tmp_path / "test.hcl"
     hcl.write_text("")
