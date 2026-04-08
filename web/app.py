@@ -217,6 +217,23 @@ def create_app() -> Flask:
             }
         )
 
+    @app.route("/api/jobs/<int:job_id>/logs")
+    def api_job_logs(job_id: int):
+        """Return incremental job logs as JSON for API clients."""
+        after_id = request.args.get("after_id", 0, type=int)
+        job = get_job(job_id)
+        if job is None:
+            return jsonify({"error": "job not found"}), 404
+        logs = get_job_logs(job_id)
+        new_logs = [lg for lg in logs if lg["id"] > after_id]
+        return jsonify(
+            {
+                "job_id": job["id"],
+                "status": job["status"],
+                "logs": new_logs,
+            }
+        )
+
     @app.route("/jobs/run", methods=["POST"])
     def run_job():
         hcl_file = request.form.get("hcl_file", "").strip()

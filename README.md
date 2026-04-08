@@ -196,6 +196,7 @@ newly completed run:
 
 ```text
 GET /api/jobs?after_id=<last_seen_id>&hcl_file=mappings/azure.hcl
+GET /api/jobs/<id>/logs?after_id=<last_seen_log_id>
 GET /api/jobs/<id>/artifact
 ```
 

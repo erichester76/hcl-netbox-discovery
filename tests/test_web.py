@@ -138,6 +138,18 @@ def test_api_allows_authenticated_session(secured_app):
     assert resp.status_code == 200
 
 
+def test_api_job_logs_allows_token_auth(secured_app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "INFO", "engine", "first")
+    set_setting("WEB_API_TOKEN", "api-secret")
+
+    resp = secured_app.get(f"/api/jobs/{job_id}/logs", headers={"Authorization": "Bearer api-secret"})
+
+    assert resp.status_code == 200
+    assert resp.get_json()["logs"][0]["message"] == "first"
+
+
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
     db_path = str(tmp_path / "test_web_invalid_auth.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
@@ -452,6 +464,32 @@ def test_api_job_artifact_returns_null_when_missing(app):
 
 def test_api_job_artifact_404(app):
     resp = app.get("/api/jobs/99999/artifact")
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "job not found"}
+
+
+def test_api_job_logs_returns_incremental_logs(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "INFO", "engine", "first")
+    add_log(job_id, "INFO", "engine", "second")
+
+    resp = app.get(f"/api/jobs/{job_id}/logs")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["job_id"] == job_id
+    assert data["status"] == "running"
+    assert [entry["message"] for entry in data["logs"]] == ["first", "second"]
+
+    first_id = data["logs"][0]["id"]
+    resp = app.get(f"/api/jobs/{job_id}/logs?after_id={first_id}")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert [entry["message"] for entry in data["logs"]] == ["second"]
+
+
+def test_api_job_logs_404(app):
+    resp = app.get("/api/jobs/99999/logs")
     assert resp.status_code == 404
     assert resp.get_json() == {"error": "job not found"}
 
