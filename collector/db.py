@@ -447,6 +447,42 @@ def job_stop_requested(job_id: int) -> bool:
     return bool(row[0]) if row is not None else False
 
 
+def reconcile_stale_running_jobs() -> list[int]:
+    """Mark orphaned ``running`` jobs as terminal after worker restart.
+
+    Jobs that were actively stopping when the worker died are finalized as
+    ``stopped``. All other orphaned running jobs are finalized as ``failed``.
+
+    Returns the list of reconciled job ids, oldest first.
+    """
+    now = _now()
+    reconciled: list[tuple[int, str, str]] = []
+    with _conn() as con:
+        con.execute("BEGIN IMMEDIATE")
+        rows = con.execute(
+            "SELECT id, stop_requested FROM jobs WHERE status='running' ORDER BY id ASC"
+        ).fetchall()
+        for row in rows:
+            job_id = int(row[0])
+            stop_requested = bool(row[1])
+            status = "stopped" if stop_requested else "failed"
+            message = (
+                "Job was stopping when the worker restarted; marked stopped during startup reconciliation."
+                if stop_requested
+                else "Job was still running when the worker restarted; marked failed during startup reconciliation."
+            )
+            con.execute(
+                "UPDATE jobs SET status=?, finished_at=? WHERE id=? AND status='running'",
+                (status, now, job_id),
+            )
+            reconciled.append((job_id, status, message))
+
+    for job_id, _, message in reconciled:
+        add_log(job_id, "WARNING", __name__, message)
+
+    return [job_id for job_id, _, _ in reconciled]
+
+
 def add_log(job_id: int, level: str, logger_name: str, message: str) -> None:
     """Append one log record for a job."""
     with _conn() as con:
