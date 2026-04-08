@@ -180,23 +180,31 @@ object "host" {
 
   # Physical NICs
   interface {
-    source_items = "config.network.pnic"
+    source_items = "[{'_nic': nic, '_host_name': source('name')} for nic in (source('config.network.pnic') or [])]"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "source('device')"
+      value = "source('_nic.device')"
     }
 
     field "mac_address" {
-      value = "upper(source('mac'))"
+      value = "upper(source('_nic.mac'))"
     }
 
     field "type" {
-      value = "map_value(source('linkSpeed.speedMb'), {1000: '1000base-t', 10000: '10gbase-x-sfpp', 25000: '25gbase-x-sfp28', 40000: '40gbase-x-qsfpp', 100000: '100gbase-x-qsfp28'}, '1000base-t')"
+      value = "map_value(source('_nic.linkSpeed.speedMb'), {1000: '1000base-t', 10000: '10gbase-x-sfpp', 25000: '25gbase-x-sfp28', 40000: '40gbase-x-qsfpp', 100000: '100gbase-x-qsfp28'}, '1000base-t')"
+    }
+
+    field "speed" {
+      value = "source('_nic.linkSpeed.speedMb')"
+    }
+
+    field "duplex" {
+      value = "map_value(source('_nic.linkSpeed.duplex'), {True: 'full', False: 'half'}, None)"
     }
 
     field "description" {
-      value = "join(' ', [source('driver'), source('driverVersion')])"
+      value = "join(' ', [source('_host_name'), source('_nic.device')])"
     }
   }
 
