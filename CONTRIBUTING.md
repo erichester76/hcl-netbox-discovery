@@ -139,6 +139,27 @@ Hotfix rule:
 - merge the fix into `main`
 - immediately back-merge or cherry-pick it into the active `release/<version>` branch and `dev` so the branches do not drift
 
+## Branch Naming
+
+Use branch names that communicate intent:
+
+- `feature/<topic>`
+  - default for backward-compatible features targeting `dev`
+- `bugfix/<topic>`
+  - default for routine fixes targeting `dev`
+- `docs/<topic>`
+  - documentation-only work, normally targeting `dev`
+- `chore/<topic>`
+  - maintenance or cleanup work with no user-facing contract change
+- `hotfix/<topic>`
+  - urgent production fixes branched from `origin/main`
+- `release/<version>`
+  - the active stabilization branch, not a short-lived feature branch
+
+Avoid a generic branch prefix for unrelated work. The prefix should tell
+reviewers what kind of change is being promoted through `dev`,
+`release/<version>`, and `main`.
+
 ## Versioning Rules
 
 Version tags follow semantic versioning:

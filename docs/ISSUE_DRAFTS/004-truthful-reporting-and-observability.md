@@ -50,4 +50,4 @@ lifecycle events are easy to miss.
 
 ## Suggested Branch
 
-- `codex/truthful-reporting`
+- `bugfix/truthful-reporting`

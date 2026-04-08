@@ -13,11 +13,10 @@ Recommended order:
 
 Recommended branch naming pattern:
 
-- `codex/<short-root-cause-name>`
+- `bugfix/<short-root-cause-name>`
 
 Examples:
 
-- `codex/atomic-job-lifecycle`
-- `codex/web-control-plane-security`
-- `codex/engine-write-integrity`
-
+- `bugfix/atomic-job-lifecycle`
+- `bugfix/web-control-plane-security`
+- `bugfix/engine-write-integrity`

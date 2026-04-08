@@ -68,5 +68,4 @@ how they persist `dry_run`, compute `partial` vs `success`, and record failures.
 
 ## Suggested Branch
 
-- `codex/atomic-job-lifecycle`
-
+- `bugfix/atomic-job-lifecycle`

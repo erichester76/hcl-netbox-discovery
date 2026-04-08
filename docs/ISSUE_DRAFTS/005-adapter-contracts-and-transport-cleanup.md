@@ -65,4 +65,4 @@ stacked NetBox retry loops, dead configuration surface such as `NetBoxSource`
 
 ## Suggested Branch
 
-- `codex/adapter-contracts-transport`
+- `bugfix/adapter-contracts-transport`

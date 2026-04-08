@@ -48,5 +48,4 @@ not currently enforce or document such an assumption.
 
 ## Suggested Branch
 
-- `codex/web-control-plane-security`
-
+- `bugfix/web-control-plane-security`

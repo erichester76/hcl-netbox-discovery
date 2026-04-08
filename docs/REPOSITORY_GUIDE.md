@@ -107,6 +107,20 @@ Only branch directly from `origin/main` for true production hotfixes, and
 back-port those fixes to the active `release/<version>` branch and `dev`
 immediately after merge.
 
+### Branch Naming
+
+Use prefixes that describe the change type:
+
+- `feature/<topic>` for normal feature work
+- `bugfix/<topic>` for routine defect fixes
+- `docs/<topic>` for documentation-only changes
+- `chore/<topic>` for maintenance work
+- `hotfix/<topic>` for urgent production fixes from `origin/main`
+
+Do not use a single generic branch namespace for unrelated work. The branch
+name should make it obvious how the change should flow through `dev`,
+`release/<version>`, and `main`.
+
 ## 3b. Versioning
 
 Releases follow semantic versioning from `1.0.0` onward:
