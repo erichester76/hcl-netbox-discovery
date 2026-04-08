@@ -28,7 +28,7 @@ _debug_capture_refcount: int = 0
 # Actual value is captured from the root logger on the first debug-capture
 # context entry (when refcount transitions 0→1) before it is ever read.
 _debug_capture_saved_level: int = logging.NOTSET
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MASKED = "********"
 _SENSITIVE_KEY_FRAGMENTS = ("password", "pass", "token", "secret", "client_secret", "api_key")
 
@@ -199,11 +199,15 @@ def _build_runtime_snapshot(
 @lru_cache(maxsize=1)
 def get_code_version() -> dict[str, Any]:
     """Return the current app version metadata for UI and persisted job records."""
+    env_version = os.environ.get("APP_VERSION")
+    env_git_commit = os.environ.get("APP_GIT_COMMIT")
+    env_git_branch = os.environ.get("APP_GIT_BRANCH")
+    env_git_tag = os.environ.get("APP_GIT_TAG")
     return {
-        "version": _read_project_version(),
-        "git_commit": _git_output("rev-parse", "HEAD"),
-        "git_branch": _git_output("rev-parse", "--abbrev-ref", "HEAD"),
-        "git_tag": _git_output("describe", "--tags", "--exact-match"),
+        "version": env_version or _read_project_version(),
+        "git_commit": env_git_commit or _git_output("rev-parse", "HEAD"),
+        "git_branch": env_git_branch or _git_output("rev-parse", "--abbrev-ref", "HEAD"),
+        "git_tag": env_git_tag or _git_output("describe", "--tags", "--exact-match"),
     }
 
 
