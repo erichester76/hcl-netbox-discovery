@@ -13,30 +13,27 @@
 #   COLLECTOR_SKIP_LINK_LOCAL_IPS  true | false  (default: false)
 #   DRY_RUN               Set to "true" to log payloads without writing
 #
-# Multiple vCenter support (iterator):
-#   To collect from more than one vCenter, add an iterator {} block inside
-#   the collector {} block.  Each key (except max_workers) in the iterator
-#   block maps to a list of values.  The engine iterates through the lists in
-#   lock-step (zip), running a full collection pass for each index.  The
-#   values override env() calls in the source block for that pass. In the
-#   common case where all vCenters share the same username and password, keep
-#   VCENTER_USER and VCENTER_PASS in the source block and iterate only
-#   VCENTER_URL. Set max_workers > 1 to run multiple vCenter passes in
-#   parallel.
+# Multiple vCenter support:
+#   To collect from more than one vCenter, set VCENTER_URL to a comma-delimited
+#   list and set source.max_workers to control how many vCenter passes may run
+#   in parallel. Shared VCENTER_USER and VCENTER_PASS values stay in the same
+#   source block and are reused for each parsed URL.
 #   Example:
 #
-#     collector {
-#       iterator {
-#         max_workers  = 2
-#         VCENTER_URL  = ["vc1.example.com", "vc2.example.com", "vc3.example.com"]
-#       }
+#     source "vmware" {
+#       api_type    = "vmware"
+#       url         = "env('VCENTER_URL')"  # vc1.example.com,vc2.example.com,vc3.example.com
+#       username    = "env('VCENTER_USER')"
+#       password    = "env('VCENTER_PASS')"
+#       max_workers = 2
 #     }
 
 source "vmware" {
-  api_type  = "vmware"
-  url       = "env('VCENTER_URL')"
-  username  = "env('VCENTER_USER')"
-  password  = "env('VCENTER_PASS')"
+  api_type    = "vmware"
+  url         = "env('VCENTER_URL')"
+  username    = "env('VCENTER_USER')"
+  password    = "env('VCENTER_PASS')"
+  max_workers = 1
   verify_ssl = false
 }
 
@@ -57,11 +54,6 @@ collector {
   sync_vms         = true
   skip_link_local_ips = "env('COLLECTOR_SKIP_LINK_LOCAL_IPS', 'false')"
 
-  # Uncomment and populate to collect from multiple vCenters in one run:
-  # iterator {
-  #   max_workers  = 2
-  #   VCENTER_URL  = ["vc1.example.com", "vc2.example.com"]
-  # }
 }
 
 # ---------------------------------------------------------------------------

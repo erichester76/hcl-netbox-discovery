@@ -36,26 +36,29 @@
 #   location.rack          → NetBox rack
 #   location.lowestRackUnit → rack position (front face, U number)
 #
-# Multiple XClarity support (iterator):
-#   To collect from more than one XClarity instance, add an iterator {} block
-#   inside the collector {} block. Keep XCLARITY_USER and XCLARITY_PASS in the
-#   source block when credentials are shared and iterate only XCLARITY_HOST.
+# Multiple XClarity support:
+#   To collect from more than one XClarity instance, set XCLARITY_HOST to a
+#   comma-delimited list and set source.max_workers to control how many passes
+#   may run in parallel. Shared XCLARITY_USER and XCLARITY_PASS values stay in
+#   the source block and are reused for each parsed host value.
 #   Example:
 #
-#     collector {
-#       iterator {
-#         max_workers   = 2
-#         XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
-#       }
+#     source "xclarity" {
+#       api_type    = "rest"
+#       url         = "env('XCLARITY_HOST')"  # xclarity-a.example.com,xclarity-b.example.com
+#       username    = "env('XCLARITY_USER')"
+#       password    = "env('XCLARITY_PASS')"
+#       max_workers = 2
 #     }
 
 source "xclarity" {
-  api_type   = "rest"
-  url        = "env('XCLARITY_HOST')"
-  username   = "env('XCLARITY_USER')"
-  password   = "env('XCLARITY_PASS')"
-  verify_ssl = "env('XCLARITY_VERIFY_SSL', 'true')"
-  auth       = "basic"
+  api_type    = "rest"
+  url         = "env('XCLARITY_HOST')"
+  username    = "env('XCLARITY_USER')"
+  password    = "env('XCLARITY_PASS')"
+  max_workers = 1
+  verify_ssl  = "env('XCLARITY_VERIFY_SSL', 'true')"
+  auth        = "basic"
 
   collection "nodes" {
     endpoint        = "/nodes"
@@ -98,11 +101,6 @@ collector {
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
 
-  # Uncomment and populate to collect from multiple XClarity instances in one run:
-  # iterator {
-  #   max_workers   = 2
-  #   XCLARITY_HOST = ["xclarity-a.example.com", "xclarity-b.example.com"]
-  # }
 }
 
 # ---------------------------------------------------------------------------

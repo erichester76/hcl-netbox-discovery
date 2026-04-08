@@ -23,6 +23,7 @@ from collector.config import (
     _labeled_list,
     _unlabeled_list,
     build_source_config,
+    build_source_groups,
     load_config,
 )
 from collector.db import init_db, set_setting
@@ -857,6 +858,139 @@ class TestLoadConfigIterator:
         """)
         cfg = load_config(path)
         assert "iterator" not in cfg.collector.extra_flags
+
+    def test_source_max_workers_parsed(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type    = "vmware"
+              url         = "vc1.example.com, vc2.example.com"
+              max_workers = 3
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.source.max_workers == 3
+        assert "max_workers" not in cfg.source.extra
+
+    def test_build_source_groups_auto_fans_out_comma_delimited_urls(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type    = "vmware"
+              url         = "vc1.example.com, vc2.example.com, vc3.example.com"
+              username    = "shared-user"
+              password    = "shared-pass"
+              max_workers = 2
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        groups = build_source_groups(cfg)
+
+        assert len(groups) == 1
+        rows, max_workers = groups[0]
+        assert max_workers == 2
+        assert [row.url for row in rows] == [
+            "vc1.example.com",
+            "vc2.example.com",
+            "vc3.example.com",
+        ]
+        assert all(row.username == "shared-user" for row in rows)
+        assert all(row.password == "shared-pass" for row in rows)
+
+    def test_explicit_iterator_takes_priority_over_auto_url_fanout(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "env('VCENTER_URL', 'vc1.example.com,vc2.example.com')"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                max_workers = 2
+                VCENTER_URL = ["iter1.example.com", "iter2.example.com"]
+              }
+            }
+        """)
+        cfg = load_config(path)
+        groups = build_source_groups(cfg)
+
+        assert len(groups) == 1
+        rows, max_workers = groups[0]
+        assert max_workers == 2
+        assert [row.url for row in rows] == ["iter1.example.com", "iter2.example.com"]
+
+    def test_snmp_comma_delimited_urls_remain_single_source_group(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "snmp" {
+              api_type = "snmp"
+              url      = "10.0.0.1,10.0.0.2"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+        groups = build_source_groups(cfg)
+
+        assert len(groups) == 1
+        rows, max_workers = groups[0]
+        assert max_workers == 1
+        assert len(rows) == 1
+        assert rows[0].url == "10.0.0.1,10.0.0.2"
+
+    def test_empty_iterator_rows_fall_back_to_single_source_default(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                max_workers = 2
+                VCENTER_URL = []
+              }
+            }
+        """)
+        cfg = load_config(path)
+        groups = build_source_groups(cfg)
+
+        assert len(groups) == 1
+        rows, max_workers = groups[0]
+        assert len(rows) == 1
+        assert rows[0].url == "vc.example.com"
+        assert max_workers == 1
+
+    def test_rest_auth_fields_remain_in_source_extra(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "rest" {
+              api_type    = "rest"
+              url         = "https://api.example.com"
+              auth        = "bearer"
+              auth_header = "Authorization"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+
+        assert cfg.source.extra["auth"] == "bearer"
+        assert cfg.source.extra["auth_header"] == "Authorization"
 
 
 class TestXClarityMappings:
