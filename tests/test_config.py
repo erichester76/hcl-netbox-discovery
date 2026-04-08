@@ -1200,3 +1200,30 @@ class TestVmwareMappings:
         assert site_field.type == "fk"
         assert site_field.resource == "dcim.sites"
         assert site_field.lookup == {"name": "source('site_name')"}
+
+
+class TestSourcePayloadContracts:
+    def test_xclarity_example_forwards_documented_placement_candidates(self):
+        cfg = load_config("mappings/xclarity.hcl.example")
+        device = next((o for o in cfg.objects if o.name == "node"), None)
+        assert device is not None
+        prereqs = {p.name: p for p in device.prerequisites}
+        placement = prereqs["placement"]
+
+        assert placement.method == "resolve_placement"
+        assert placement.args["location_candidate"] == "source('location.location')"
+        assert placement.args["site_candidate"] == "coalesce('location.location', 'dataCenter')"
+        assert placement.args["datacenter_candidate"] == "source('dataCenter')"
+
+    def test_xclarity_examples_prefer_serial_in_lookup_contract(self):
+        for mapping_path in (
+            "mappings/xclarity.hcl.example",
+            "mappings/xclarity-modules.hcl.example",
+        ):
+            cfg = load_config(mapping_path)
+            devices = [o for o in cfg.objects if o.netbox_resource == "dcim.devices"]
+            assert devices, f"missing dcim.devices objects in {mapping_path}"
+            for device in devices:
+                assert device.lookup_by[0] == "serial", (
+                    f"{mapping_path} object {device.name!r} should prefer serial lookup"
+                )

@@ -12,6 +12,9 @@ The engine reads the HCL file, connects to both systems, and orchestrates the fu
 
 The web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs, managing schedules, editing configuration settings, and controlling the NetBox cache. The unattended scheduler itself runs in `main.py --run-scheduler`. All job history, logs, schedules, and DB-backed config overrides are stored in a local SQLite database.
 
+Adapter-to-mapping payload contracts for placement and identity are documented
+in `docs/SOURCE_PAYLOAD_CONTRACTS.md`.
+
 ---
 
 ## Package Layout
