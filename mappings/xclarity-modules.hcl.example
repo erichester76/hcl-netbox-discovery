@@ -274,7 +274,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer')"
+      value = "source('manufacturer') or 'Lenovo'"
     }
 
     attribute "cores" {
@@ -313,7 +313,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer')"
+      value = "source('manufacturer') or 'Lenovo'"
     }
 
     attribute "size" {
@@ -397,7 +397,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer')"
+      value = "source('manufacturer') or 'Lenovo'"
     }
 
     attribute "bandwidth" {
@@ -436,7 +436,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer')"
+      value = "source('manufacturer') or 'Lenovo'"
     }
 
     power_input {

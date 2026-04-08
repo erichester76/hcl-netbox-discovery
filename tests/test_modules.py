@@ -343,6 +343,37 @@ class TestXclarityModulesHcl:
         expr = self._get_disk_type_expr()
         return Resolver(ctx).evaluate(expr)
 
+    def _get_module_field_expr(self, profile, field_name):
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        mod = next(m for m in node.modules if m.profile == profile)
+        field = next(f for f in mod.fields if f.name == field_name)
+        return field.value
+
+    def _eval_module_field(self, profile, field_name, source_obj):
+        from collector.config import CollectorOptions
+        from collector.context import RunContext
+        from collector.field_resolvers import Resolver
+
+        opts = CollectorOptions(
+            max_workers=1,
+            dry_run=False,
+            sync_tag="test",
+            regex_dir="/tmp/regex",
+        )
+        ctx = RunContext(
+            nb=None,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp/regex",
+            prereqs={},
+            source_obj=source_obj,
+            parent_nb_obj=None,
+            dry_run=False,
+        )
+        expr = self._get_module_field_expr(profile, field_name)
+        return Resolver(ctx).evaluate(expr)
+
     def test_hard_disk_type_hdd_from_media_type(self):
         """When mediaType is 'HDD', the type attribute should be 'HDD'."""
         result = self._eval_disk_type({"mediaType": "HDD"})
@@ -374,6 +405,22 @@ class TestXclarityModulesHcl:
         """Normalisation must be case-insensitive ('Rotational' → 'HDD')."""
         result = self._eval_disk_type({"type": "Rotational"})
         assert result == "HDD"
+
+    def test_expansion_card_manufacturer_falls_back_to_lenovo(self):
+        result = self._eval_module_field("Expansion card", "manufacturer", {})
+        assert result == "Lenovo"
+
+    def test_power_supply_manufacturer_falls_back_to_lenovo(self):
+        result = self._eval_module_field("Power supply", "manufacturer", {})
+        assert result == "Lenovo"
+
+    def test_power_supply_manufacturer_preserves_reported_value(self):
+        result = self._eval_module_field(
+            "Power supply",
+            "manufacturer",
+            {"manufacturer": "Delta Electronics"},
+        )
+        assert result == "Delta Electronics"
 
 
 # ---------------------------------------------------------------------------
