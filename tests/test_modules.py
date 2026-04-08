@@ -328,6 +328,14 @@ class TestXclarityModulesHcl:
         attr = next(a for a in mod.attributes if a.name == attr_name)
         return attr.value
 
+    def _get_module_field_expr(self, profile: str, field_name: str):
+        """Return a field expression from a module block in the example mapping."""
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        mod = next(m for m in node.modules if m.profile == profile)
+        field = next(f for f in mod.fields if f.name == field_name)
+        return field.value
+
     def _eval_module_attr(self, profile: str, attr_name: str, source_obj):
         """Evaluate a module attribute expression against a source object."""
         from collector.config import CollectorOptions
@@ -352,6 +360,31 @@ class TestXclarityModulesHcl:
         )
         expr = self._get_module_attr_expr(profile, attr_name)
         return Resolver(ctx).evaluate_strict(expr, label=f"{profile}.{attr_name}")
+
+    def _eval_module_field(self, profile: str, field_name: str, source_obj):
+        """Evaluate a module field expression against a source object."""
+        from collector.config import CollectorOptions
+        from collector.context import RunContext
+        from collector.field_resolvers import Resolver
+
+        opts = CollectorOptions(
+            max_workers=1,
+            dry_run=False,
+            sync_tag="test",
+            regex_dir="/tmp/regex",
+        )
+        ctx = RunContext(
+            nb=None,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp/regex",
+            prereqs={},
+            source_obj=source_obj,
+            parent_nb_obj=None,
+            dry_run=False,
+        )
+        expr = self._get_module_field_expr(profile, field_name)
+        return Resolver(ctx).evaluate_strict(expr, label=f"{profile}.{field_name}")
 
     def _eval_disk_type(self, source_obj):
         return self._eval_module_attr("Hard disk", "type", source_obj)
@@ -447,6 +480,30 @@ class TestXclarityModulesHcl:
     def test_hard_disk_speed_positive_is_returned(self):
         result = self._eval_module_attr("Hard disk", "speed", {"rpm": 7200})
         assert result == 7200
+
+    def test_expansion_card_manufacturer_falls_back_to_lenovo(self):
+        result = self._eval_module_field("Expansion card", "manufacturer", {})
+        assert result == "Lenovo"
+
+    def test_expansion_card_reported_manufacturer_wins(self):
+        result = self._eval_module_field(
+            "Expansion card",
+            "manufacturer",
+            {"manufacturer": "NVIDIA"},
+        )
+        assert result == "NVIDIA"
+
+    def test_power_supply_manufacturer_falls_back_to_lenovo(self):
+        result = self._eval_module_field("Power supply", "manufacturer", {})
+        assert result == "Lenovo"
+
+    def test_power_supply_reported_manufacturer_wins(self):
+        result = self._eval_module_field(
+            "Power supply",
+            "manufacturer",
+            {"manufacturer": "Delta"},
+        )
+        assert result == "Delta"
 
 
 # ---------------------------------------------------------------------------
