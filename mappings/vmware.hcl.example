@@ -10,6 +10,7 @@
 # Optional:
 #   NETBOX_CACHE_BACKEND  Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL      Redis URL or SQLite path
+#   COLLECTOR_SKIP_LINK_LOCAL_IPS  true | false  (default: false)
 #   DRY_RUN               Set to "true" to log payloads without writing
 #
 # Multiple vCenter support (iterator):
