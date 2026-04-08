@@ -244,6 +244,13 @@ This adapter reads from a source NetBox instance and returns plain dicts that ca
 | `verify_ssl` | no | TLS certificate verification (default: `"true"`) |
 | `auth` | no | Auth scheme for `rest` adapter: `basic` \| `bearer` \| `header` (default: `"basic"`) |
 | `auth_header` | no | Header name when `auth = "header"` (default: `"X-Api-Key"`) |
+| `max_workers` | no | Parallelism for automatic multi-source fan-out when `url` contains a comma-delimited list (default: `1`) |
+
+For non-SNMP source types, a comma-delimited `url` value automatically fans out
+into multiple source passes. Shared credentials stay in the same `source {}`
+block, and each parsed URL runs as its own source row. SNMP is excluded from
+this behavior because comma-delimited hosts are already native SNMP adapter
+input.
 
 ### `collection {}` sub-block (REST adapter only)
 
@@ -311,11 +318,6 @@ collector {
   sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
   skip_link_local_ips = "env('COLLECTOR_SKIP_LINK_LOCAL_IPS', 'false')"
-
-  iterator {
-    max_workers = 2
-    VCENTER_URL = ["vc1.example.com", "vc2.example.com"]
-  }
 }
 ```
 
@@ -325,16 +327,20 @@ collector {
 | `dry_run` | no | Log payloads without writing to NetBox (default: `"false"`) |
 | `sync_tag` | no | Tag applied to every object created/updated by this run |
 | `regex_dir` | no | Directory containing regex pattern files (default: `"./regex"`) |
-| `iterator` | no | Repeatable unlabeled block that runs multiple source passes with per-row `env()` overrides |
+| `iterator` | no | Legacy repeatable unlabeled block that runs multiple source passes with per-row `env()` overrides |
 
 The collector block reserves only `max_workers`, `dry_run`, `sync_tag`, `regex_dir`, and `iterator`. Any other key is treated as a custom flag and is available in expressions as `collector.flag_name`.
 
 Common examples include `sync_interfaces`, `sync_inventory`, `sync_modules`, and `use_modules`.
 This also includes source-specific control flags such as `skip_link_local_ips`.
 
-### `iterator` block
+### `iterator` block (legacy compatibility)
 
-Each `iterator {}` block defines one group of source-connection overrides. The engine re-evaluates `env()` calls in the `source {}` block for each row, then runs a full collector pass per row.
+Prefer comma-delimited `source.url` values for multi-source runs. Existing
+`iterator {}` blocks remain supported for backward compatibility. Each
+`iterator {}` block defines one group of source-connection overrides. The
+engine re-evaluates `env()` calls in the `source {}` block for each row, then
+runs a full collector pass per row.
 
 | Attribute | Required | Description |
 |---|---|---|

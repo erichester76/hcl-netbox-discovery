@@ -29,7 +29,7 @@ from .config import (
     InterfaceConfig,
     ObjectConfig,
     SourceConfig,
-    build_source_config,
+    build_source_groups,
     load_config,
 )
 from .context import RunContext
@@ -891,24 +891,7 @@ class Engine:
                 )
                 cfg.collector.sync_tag = ""
 
-        # Build groups of (source_configs, max_workers).  When iterator blocks
-        # are present each row produces its own SourceConfig with env() calls
-        # re-evaluated using that row's variable overrides.  The iterator's
-        # max_workers controls how many passes within that group run in parallel.
-        if cfg.collector.iterators:
-            groups: list[tuple[list[SourceConfig], int]] = []
-            for iterator in cfg.collector.iterators:
-                n = len(iterator)
-                if n == 0:
-                    logger.warning("Iterator block is empty; skipping")
-                    continue
-                rows: list[SourceConfig] = [
-                    build_source_config(cfg.raw_source_body, cfg.source_label, iterator.get_row(i))
-                    for i in range(n)
-                ]
-                groups.append((rows, max(1, iterator.max_workers)))
-        else:
-            groups = [([cfg.source], 1)]
+        groups = build_source_groups(cfg)
 
         all_stats: list[RunStats] = []
 

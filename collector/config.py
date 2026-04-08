@@ -13,7 +13,7 @@ Unlabeled blocks:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 import hcl2
@@ -148,6 +148,7 @@ class SourceConfig:
     username: str = ""
     password: str = ""
     verify_ssl: bool = True
+    max_workers: int = 1
     extra: dict = field(default_factory=dict)
     collections: dict = field(default_factory=dict)  # name → CollectionConfig
 
@@ -557,6 +558,47 @@ def _parse_iterators(raw: list) -> list[IteratorConfig]:
     return configs
 
 
+def _split_csv_values(value: str) -> list[str]:
+    """Split a comma-delimited config string into normalized values."""
+    if not isinstance(value, str):
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def build_source_groups(cfg: CollectorConfig) -> list[tuple[list[SourceConfig], int]]:
+    """Build source execution groups for a collector run.
+
+    Priority:
+    1. Explicit legacy ``iterator {}`` blocks (backward compatibility)
+    2. Automatic fan-out from a comma-delimited ``source.url`` string
+       using ``source.max_workers``
+    3. Single-source default
+
+    SNMP is excluded from automatic URL fan-out because comma-delimited hosts
+    are already adapter-native input for that source type.
+    """
+    if cfg.collector.iterators:
+        groups: list[tuple[list[SourceConfig], int]] = []
+        for iterator in cfg.collector.iterators:
+            n = len(iterator)
+            if n == 0:
+                continue
+            rows = [
+                build_source_config(cfg.raw_source_body, cfg.source_label, iterator.get_row(i))
+                for i in range(n)
+            ]
+            groups.append((rows, max(1, iterator.max_workers)))
+        return groups
+
+    if cfg.source.api_type != "snmp":
+        urls = _split_csv_values(cfg.source.url)
+        if len(urls) > 1:
+            rows = [replace(cfg.source, url=url) for url in urls]
+            return [(rows, max(1, cfg.source.max_workers))]
+
+    return [([cfg.source], 1)]
+
+
 def build_source_config(
     source_body: dict,
     source_label: str,
@@ -581,7 +623,16 @@ def build_source_config(
         else _eval_config_str(v)
     )
 
-    _SOURCE_SCALAR_KEYS = {"api_type", "url", "username", "password", "verify_ssl", "auth", "auth_header"}
+    _SOURCE_SCALAR_KEYS = {
+        "api_type",
+        "url",
+        "username",
+        "password",
+        "verify_ssl",
+        "auth",
+        "auth_header",
+        "max_workers",
+    }
     raw_collections = source_body.get("collection", [])
     collections: dict[str, CollectionConfig] = {}
     for col_label, col_body in _labeled_list(raw_collections):
@@ -599,10 +650,11 @@ def build_source_config(
         username=_eval(source_body.get("username", "")),
         password=_eval(source_body.get("password", "")),
         verify_ssl=_bool(_eval(source_body.get("verify_ssl", "true")), default=True),
+        max_workers=_int(_eval(source_body.get("max_workers", 1)), default=1),
         extra={
             k: _eval(v)
             for k, v in source_body.items()
-            if k not in _SOURCE_SCALAR_KEYS and k != "collection"
+            if k not in _SOURCE_SCALAR_KEYS and k not in {"collection", "max_workers"}
         },
         collections=collections,
     )
