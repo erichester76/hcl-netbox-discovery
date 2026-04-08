@@ -418,6 +418,23 @@ class TestLoadConfigCollectorDefaults:
         assert cfg.collector.extra_flags.get("full_sync") is True
         assert cfg.collector.extra_flags.get("batch_size") == 50
 
+    def test_skip_link_local_ips_flag_parsed(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              skip_link_local_ips = "true"
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.collector.extra_flags.get("skip_link_local_ips") is True
+
 
 class TestLoadConfigNetBoxOptions:
     def test_netbox_cache_and_rate_limit(self, tmp_path):

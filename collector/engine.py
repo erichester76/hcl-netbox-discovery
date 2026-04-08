@@ -78,6 +78,14 @@ def _is_link_local_ip(address: Any) -> bool:
     return iface.ip.is_link_local
 
 
+def _skip_link_local_ips_enabled(ctx: Any) -> bool:
+    collector_opts = getattr(ctx, "collector_opts", None)
+    if collector_opts is None:
+        return False
+    extra_flags = getattr(collector_opts, "extra_flags", {}) or {}
+    return bool(extra_flags.get("skip_link_local_ips"))
+
+
 def _host_route_variant(address: Any) -> str | None:
     if not isinstance(address, str) or not address:
         return None
@@ -1322,6 +1330,21 @@ class Engine:
                     nested_stats.record_nested_skip(
                         f"{resource}:{'.'.join(missing_lookup_fields)}"
                     )
+            return None
+        if (
+            resource == "ipam.ip_addresses"
+            and _skip_link_local_ips_enabled(ctx)
+            and _is_link_local_ip(payload.get("address"))
+        ):
+            logger.info(
+                "Skipping link-local IP by configuration  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r",
+                resource,
+                payload.get("address"),
+                payload.get("assigned_object_type"),
+                payload.get("assigned_object_id"),
+            )
+            if nested_stats is not None:
+                nested_stats.record_nested_skip(f"{resource}:link_local_filtered")
             return None
         if ctx.dry_run:
             try:

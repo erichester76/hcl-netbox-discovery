@@ -10,12 +10,17 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from collector.config import FieldConfig
+from collector.config import CollectorOptions, FieldConfig
 from collector.engine import Engine, RunStats
 
 
-def _ctx(*, nb, dry_run: bool = False, source_obj=None):
-    return SimpleNamespace(nb=nb, dry_run=dry_run, source_obj=source_obj)
+def _ctx(*, nb, dry_run: bool = False, source_obj=None, extra_flags=None):
+    return SimpleNamespace(
+        nb=nb,
+        dry_run=dry_run,
+        source_obj=source_obj,
+        collector_opts=CollectorOptions(extra_flags=extra_flags or {}),
+    )
 
 
 class TestEngineUpsertReporting:
@@ -363,6 +368,60 @@ class TestEngineUpsertReporting:
         }
         assert "Skipping link-local duplicate IP conflict" in caplog.text
         assert "169.254.1.1/24" in caplog.text
+
+    def test_skip_link_local_ipv4_by_config_without_writing(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+
+        with caplog.at_level(logging.INFO):
+            result = engine._upsert(
+                _ctx(nb=nb, extra_flags={"skip_link_local_ips": True}),
+                "ipam.ip_addresses",
+                {
+                    "address": "169.254.1.10/24",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": 1319,
+                },
+                lookup_fields=["address"],
+                nested_stats=stats,
+            )
+
+        assert result is None
+        assert stats.errored == 0
+        assert stats.nested_skipped == {
+            "ipam.ip_addresses:link_local_filtered": 1
+        }
+        assert "Skipping link-local IP by configuration" in caplog.text
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
+
+    def test_skip_link_local_ipv6_by_config_without_writing(self, caplog):
+        engine = Engine()
+        stats = RunStats("devices")
+        nb = MagicMock()
+
+        with caplog.at_level(logging.INFO):
+            result = engine._upsert(
+                _ctx(nb=nb, extra_flags={"skip_link_local_ips": True}),
+                "ipam.ip_addresses",
+                {
+                    "address": "fe80::1/64",
+                    "assigned_object_type": "virtualization.vminterface",
+                    "assigned_object_id": 77,
+                },
+                lookup_fields=["address"],
+                nested_stats=stats,
+            )
+
+        assert result is None
+        assert stats.errored == 0
+        assert stats.nested_skipped == {
+            "ipam.ip_addresses:link_local_filtered": 1
+        }
+        assert "Skipping link-local IP by configuration" in caplog.text
+        nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
 
     def test_dry_run_created_outcome_counts_created(self):
         engine = Engine()
