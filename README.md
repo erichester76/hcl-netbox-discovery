@@ -512,7 +512,8 @@ hcl-netbox-discovery/
 ├── docs/
 │   ├── ARCHITECTURE.md            # Framework design and data flow
 │   ├── HCL_REFERENCE.md           # Full HCL language specification
-│   └── DEVELOPER_ONBOARDING.md    # New-developer orientation guide
+│   ├── REPOSITORY_GUIDE.md        # Repo-specific developer guide
+│   └── DEVELOPER_ONBOARDING.md    # Redirect to repository guide
 
 ├── CONTRIBUTING.md                # Local setup, workflow, and PR guidance
 
@@ -524,7 +525,7 @@ hcl-netbox-discovery/
 ## Further Documentation
 
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — Local setup, development workflow, testing, and PR expectations
-- **[`docs/DEVELOPER_ONBOARDING.md`](docs/DEVELOPER_ONBOARDING.md)** — Codebase tour and first-day developer guide
+- **[`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md)** — Repository-specific codebase tour, setup, and workflow guide
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — Full framework architecture, component roles, data flow, and design goals
 - **[`docs/HCL_REFERENCE.md`](docs/HCL_REFERENCE.md)** — Complete HCL language specification with all blocks, attributes, and expression helpers
 - **[`docs/ENGINEERING_AUDIT.md`](docs/ENGINEERING_AUDIT.md)** — Current refactor candidates and code-quality audit notes

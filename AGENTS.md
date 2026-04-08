@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Repository-specific guidance for AI coding agents working in `hcl-netbox-discovery`.
+General working policies for AI coding agents. Repository-specific details
+belong in the repository guide and linked docs referenced below.
 
 ## First Read
 
@@ -9,81 +10,20 @@ Before changing code, read:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/HCL_REFERENCE.md`
+4. `docs/REPOSITORY_GUIDE.md`
 
-Those three files describe the current execution model, HCL surface area, and the split between the web UI and the scheduler worker.
+The repository guide owns project-specific details such as layout, commands,
+runtime entry points, testing shortcuts, and codebase landmarks.
 
-## Project Reality
-
-- This repository does **not** use a `/src` layout. Main code lives in `collector/`, `web/`, `main.py`, and `web_server.py`, with the NetBox wrapper provided by the external `pynetbox-wrapper` dependency.
-- The primary Python metadata file is `pyproject.toml`.
-- Poetry is the primary dependency and environment workflow.
-- `requirements.txt` and `requirements-dev.txt` are legacy/fallback install paths and should not become the primary source of truth.
-- The project targets Python 3.12 in packaging and CI.
-- Formatting and linting use `ruff`, not `black`.
-- Tests use `pytest`.
-- The long-running worker is `poetry run python main.py --run-scheduler`.
-- The Flask UI entry point is `poetry run python web_server.py`.
-
-## Development Commands
-
-Use the lightest command that fits the task.
-
-### Local environment
-
-```bash
-pip install --user poetry
-poetry install --with dev
-```
-
-Run commands via Poetry:
-
-```bash
-poetry run pytest
-poetry run ruff check .
-poetry run python main.py --mapping mappings/vmware.hcl --dry-run
-```
-
-Legacy fallback:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
-```
-
-### Tests
-
-```bash
-poetry run pytest
-poetry run pytest tests/test_config.py
-poetry run pytest tests/test_web.py -q
-```
-
-### Lint and format
-
-```bash
-poetry run ruff check .
-poetry run ruff check . --fix
-poetry run ruff format .
-poetry run pre-commit run --all-files
-```
-
-### Run the app
-
-```bash
-poetry run python main.py --mapping mappings/vmware.hcl --dry-run
-poetry run python main.py --run-scheduler
-poetry run python web_server.py
-```
-
-## How To Work In This Repo
+## Operating Principles
 
 - Stay tightly scoped to the user’s request.
 - Prefer surgical edits over broad refactors.
-- Keep changes consistent with the current architecture and naming.
+- Keep changes consistent with the repository’s current architecture and naming.
 - Update docs when behavior, commands, or architecture change.
 - Add or update tests when you change behavior.
-- Do not invent new frameworks, layers, or abstractions unless the task truly requires them.
+- Do not invent new frameworks, layers, or abstractions unless the task truly
+  requires them.
 
 ## Root-Cause Guardrails
 
@@ -301,18 +241,6 @@ falling back to manual file sync.
   of waiting for manual artifact sync if the API already exposes the needed
   data.
 
-## Codebase Landmarks
-
-- `collector/config.py`: HCL parsing and config dataclasses
-- `collector/engine.py`: main orchestration and threaded object processing
-- `collector/field_resolvers.py`: expression evaluation helpers used by HCL
-- `collector/prerequisites.py`: ensure/lookup helpers for NetBox prerequisites
-- `collector/db.py`: shared SQLite jobs/logs/schedules/settings store
-- `collector/sources/`: source adapters
-- `pynetbox-wrapper`: external NetBox client wrapper dependency with cache, retry, and upsert behavior
-- `web/app.py`: Flask routes and web-side job queueing
-- `tests/`: primary regression safety net
-
 ## Documentation Expectations
 
 If you change:
@@ -320,21 +248,14 @@ If you change:
 - CLI or web behavior: update `README.md`
 - system design or runtime flow: update `docs/ARCHITECTURE.md`
 - HCL syntax or supported options: update `docs/HCL_REFERENCE.md`
-- contributor/developer workflow: update `CONTRIBUTING.md` or `docs/DEVELOPER_ONBOARDING.md`
+- contributor/developer workflow: update `CONTRIBUTING.md` or `docs/REPOSITORY_GUIDE.md`
 
 ## Safety Notes
 
 - Never commit secrets.
 - Treat `.env.example` as the reference list of supported environment variables.
-- Be careful with SQLite schema changes in `collector/db.py`; the web UI and scheduler both depend on that file.
-- Preserve the web/scheduler split: the web UI queues jobs, and the scheduler worker executes them.
-
-## Testing Heuristics
-
-- For parser/config changes: run `poetry run pytest tests/test_config.py`
-- For engine changes: run the relevant `poetry run pytest tests/test_engine*.py` modules
-- For DB or scheduler changes: run `poetry run pytest tests/test_db.py tests/test_main.py tests/test_web.py`
-- For source adapter changes: run the matching adapter test module with `poetry run pytest`
+- Be careful with shared persistence/schema changes; verify all execution paths
+  that depend on them.
 
 ## Scope Discipline
 

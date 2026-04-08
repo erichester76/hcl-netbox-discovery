@@ -16,7 +16,7 @@ Read these first:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/HCL_REFERENCE.md`
-4. `docs/DEVELOPER_ONBOARDING.md`
+4. `docs/REPOSITORY_GUIDE.md`
 
 ## Local Setup
 
@@ -177,7 +177,7 @@ When a change affects behavior, update the matching docs in the same branch:
 - `README.md`: user-visible commands and operational behavior
 - `docs/ARCHITECTURE.md`: runtime model, components, DB design
 - `docs/HCL_REFERENCE.md`: HCL syntax and supported options
-- `docs/DEVELOPER_ONBOARDING.md`: contributor workflow and codebase orientation
+- `docs/REPOSITORY_GUIDE.md`: contributor workflow and codebase orientation
 
 ## Pull Requests
 
