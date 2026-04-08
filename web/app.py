@@ -1,4 +1,4 @@
-"""Flask web application for monitoring and triggering HCL sync jobs."""
+"""Flask web application for monitoring, queuing, and inspecting sync jobs."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 
-# Ensure the project root is on sys.path so that local packages are importable.
+# Make the project root importable when Flask is started from the repo root.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -58,14 +58,16 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = get_config("WEB_SECRET_KEY", "dev-change-me")
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["SESSION_COOKIE_SECURE"] = os.environ.get("WEB_SESSION_COOKIE_SECURE", "").strip().lower() in {
+    app.config["SESSION_COOKIE_SECURE"] = os.environ.get(
+        "WEB_SESSION_COOKIE_SECURE", ""
+    ).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
 
-    # Initialise the job database on first request
+    # The web app and scheduler worker share the same SQLite database.
     with app.app_context():
         init_db()
 
@@ -324,7 +326,11 @@ def create_app() -> Flask:
     def schedule_toggle(schedule_id: int):
         sched = get_schedule(schedule_id)
         if sched:
-            next_run = _compute_next_run(sched["cron_expr"]) if not sched["enabled"] else sched["next_run_at"]
+            next_run = (
+                _compute_next_run(sched["cron_expr"])
+                if not sched["enabled"]
+                else sched["next_run_at"]
+            )
             update_schedule(
                 schedule_id,
                 sched["name"],
@@ -392,7 +398,6 @@ def _dispatch_job(hcl_file: str, dry_run: bool = False, debug_mode: bool = False
 
 def _is_api_request() -> bool:
     return request.path.startswith("/api/")
-
 
 # ---------------------------------------------------------------------------
 # Cache helpers
@@ -517,9 +522,7 @@ def _prewarm_cache(resource: str | None) -> None:
 def _discover_mappings() -> list[str]:
     """Return HCL mapping files available in ``<root>/mappings/``."""
     pattern = os.path.join(_ROOT, "mappings", "*.hcl")
-    return sorted(
-        os.path.relpath(p, _ROOT) for p in glob.glob(pattern)
-    )
+    return sorted(os.path.relpath(p, _ROOT) for p in glob.glob(pattern))
 
 
 def _compute_next_run(cron_expr: str) -> str | None:
