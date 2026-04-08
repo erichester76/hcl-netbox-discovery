@@ -1343,8 +1343,12 @@ class Engine:
                 payload.get("assigned_object_type"),
                 payload.get("assigned_object_id"),
             )
+            if stats is not None:
+                stats.record("skipped")
             if nested_stats is not None:
                 nested_stats.record_nested_skip(f"{resource}:link_local_filtered")
+            elif stats is not None:
+                stats.record_nested_skip(f"{resource}:link_local_filtered")
             return None
         if ctx.dry_run:
             try:
@@ -1433,6 +1437,10 @@ class Engine:
                     )
                     if nested_stats is not None:
                         nested_stats.record_nested_skip(
+                            f"{resource}:link_local_duplicate_conflict"
+                        )
+                    elif stats is not None:
+                        stats.record_nested_skip(
                             f"{resource}:link_local_duplicate_conflict"
                         )
                     return None

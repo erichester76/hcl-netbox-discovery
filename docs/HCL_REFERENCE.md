@@ -310,7 +310,7 @@ collector {
   sync_inventory  = env("COLLECTOR_SYNC_INVENTORY", "true")
   sync_modules    = env("COLLECTOR_SYNC_MODULES", "true")
   use_modules     = env("COLLECTOR_USE_MODULES", "false")
-  skip_link_local_ips = env("COLLECTOR_SKIP_LINK_LOCAL_IPS", "false")
+  skip_link_local_ips = "env('COLLECTOR_SKIP_LINK_LOCAL_IPS', 'false')"
 
   iterator {
     max_workers = 2
