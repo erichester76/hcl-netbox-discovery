@@ -283,8 +283,9 @@ LOG_LEVEL=INFO
 ### Job APIs
 
 Job runs persist structured artifact JSON, masked runtime snapshots, and code
-version metadata in the SQLite jobs table and expose the artifact payload
-through the web API:
+version metadata in the SQLite jobs table. The list APIs return lightweight
+job records, while the artifact and job detail paths expose the stored runtime
+metadata:
 
 ```text
 GET /api/jobs

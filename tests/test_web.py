@@ -407,6 +407,9 @@ def test_api_running_jobs_returns_active_jobs(app):
     assert running_id in ids
     assert done_id not in ids
     assert data["count"] == 2
+    for job in data["jobs"]:
+        assert "runtime_snapshot" not in job
+        assert "code_version" not in job
 
 
 def test_api_jobs_returns_recent_jobs(app):
@@ -418,6 +421,9 @@ def test_api_jobs_returns_recent_jobs(app):
     data = resp.get_json()
     assert data["count"] >= 2
     assert [job["id"] for job in data["jobs"][:2]] == [second_id, first_id]
+    for job in data["jobs"]:
+        assert "runtime_snapshot" not in job
+        assert "code_version" not in job
 
 
 def test_api_jobs_supports_after_id_and_hcl_file_filter(app):
