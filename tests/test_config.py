@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
-import threading
 import textwrap
+import threading
 from pathlib import Path
 
 import pytest
@@ -14,11 +13,7 @@ from collector.config import (
     CollectionConfig,
     CollectorConfig,
     CollectorOptions,
-    FieldConfig,
     IteratorConfig,
-    NetBoxConfig,
-    ObjectConfig,
-    PrerequisiteConfig,
     SourceConfig,
     _bool,
     _eval_config_str,
@@ -31,7 +26,6 @@ from collector.config import (
     load_config,
 )
 from collector.db import init_db, set_setting
-
 
 # ---------------------------------------------------------------------------
 # Unit helpers
@@ -309,6 +303,21 @@ class TestLoadConfigWithObjects:
         field_cfg = cfg.objects[0].fields[0]
         assert field_cfg.name == "rack"
         assert field_cfg.update_mode == "if_missing"
+
+    def test_vmware_example_vm_platform_prereq_does_not_set_manufacturer(self):
+        mapping = Path(__file__).resolve().parents[1] / "mappings" / "vmware.hcl.example"
+        cfg = load_config(str(mapping))
+
+        vm_obj = next(obj for obj in cfg.objects if obj.name == "vm")
+        platform_prereqs = [
+            prereq
+            for prereq in vm_obj.prerequisites
+            if prereq.name == "platform" and prereq.method == "ensure_platform"
+        ]
+
+        assert len(platform_prereqs) == 1
+        assert "manufacturer_name" not in platform_prereqs[0].args
+        assert "manufacturer" not in platform_prereqs[0].args
 
     def test_parses_rest_collection_blocks(self, tmp_path):
         path = _write_hcl(tmp_path, """
