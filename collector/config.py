@@ -588,7 +588,8 @@ def build_source_groups(cfg: CollectorConfig) -> list[tuple[list[SourceConfig], 
                 for i in range(n)
             ]
             groups.append((rows, max(1, iterator.max_workers)))
-        return groups
+        if groups:
+            return groups
 
     if cfg.source.api_type != "snmp":
         urls = _split_csv_values(cfg.source.url)
@@ -629,8 +630,6 @@ def build_source_config(
         "username",
         "password",
         "verify_ssl",
-        "auth",
-        "auth_header",
         "max_workers",
     }
     raw_collections = source_body.get("collection", [])
@@ -654,7 +653,7 @@ def build_source_config(
         extra={
             k: _eval(v)
             for k, v in source_body.items()
-            if k not in _SOURCE_SCALAR_KEYS and k not in {"collection", "max_workers"}
+            if k not in _SOURCE_SCALAR_KEYS and k != "collection"
         },
         collections=collections,
     )

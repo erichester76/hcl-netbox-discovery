@@ -948,6 +948,50 @@ class TestLoadConfigIterator:
         assert len(rows) == 1
         assert rows[0].url == "10.0.0.1,10.0.0.2"
 
+    def test_empty_iterator_rows_fall_back_to_single_source_default(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+            collector {
+              iterator {
+                max_workers = 2
+                VCENTER_URL = []
+              }
+            }
+        """)
+        cfg = load_config(path)
+        groups = build_source_groups(cfg)
+
+        assert len(groups) == 1
+        rows, max_workers = groups[0]
+        assert len(rows) == 1
+        assert rows[0].url == "vc.example.com"
+        assert max_workers == 1
+
+    def test_rest_auth_fields_remain_in_source_extra(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "rest" {
+              api_type    = "rest"
+              url         = "https://api.example.com"
+              auth        = "bearer"
+              auth_header = "Authorization"
+            }
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+        """)
+        cfg = load_config(path)
+
+        assert cfg.source.extra["auth"] == "bearer"
+        assert cfg.source.extra["auth_header"] == "Authorization"
+
 
 class TestXClarityMappings:
     PATHS = [
