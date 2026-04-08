@@ -1907,7 +1907,9 @@ class TestProcessModulesPowerInput:
 
         engine._process_modules(obj_cfg, parent_nb_obj, ctx)
 
-        module_type_upsert = nb.upsert.call_args_list[3]
+        module_type_upsert = next(
+            call for call in nb.upsert.call_args_list if call[0][0] == "dcim.module_types"
+        )
         payload = module_type_upsert[0][1]
         assert payload["attributes"] == {}
         profile_schema_call = next(

@@ -956,8 +956,12 @@ class PrerequisiteRunner:
             )
             return None
         # Step 1: create/update the module type with the profile assigned.
-        # ``attributes`` is intentionally omitted here so that the profile is
-        # committed to NetBox before attributes are applied in step 2.
+        # ``attributes`` is still omitted in the normal case so the profile is
+        # committed to NetBox before populated attributes are applied in step 2.
+        # The one exception is schema-backed module types whose declared
+        # attribute set resolved entirely empty for this source row: in that
+        # case an empty object is seeded above so NetBox does not validate a
+        # legacy/null attributes payload against the assigned profile schema.
         obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
         module_type_id = extract_id(obj)
 
