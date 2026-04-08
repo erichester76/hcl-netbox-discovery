@@ -943,9 +943,9 @@ class TestNetboxToNetboxDeviceMapping:
         device = self._device_object()
         prereq = next((p for p in device.prerequisites if p.name == "device_type"), None)
         assert prereq is not None
-        assert prereq.args["part_number"] == "source('device_type.part_number') or None"
+        assert prereq.args["part_number"] == "source('device_type.part_number') or ''"
         assert prereq.args["u_height"] == "source('device_type.u_height')"
-        assert prereq.args["description"] == "source('device_type.description') or None"
+        assert prereq.args["description"] == "source('device_type.description') or ''"
 
     def test_device_maps_description_field(self):
         device = self._device_object()

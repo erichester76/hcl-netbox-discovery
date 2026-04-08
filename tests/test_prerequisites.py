@@ -862,3 +862,22 @@ class TestEnsureDeviceTypePayload:
         assert payload["part_number"] == "7Z73A00XNA"
         assert payload["u_height"] == 2
         assert payload["description"] == "2U rack server"
+
+    def test_includes_blank_fields_to_clear_existing_metadata(self):
+        nb = MagicMock()
+        nb.upsert.return_value = MagicMock(id=22)
+        runner = PrerequisiteRunner(nb)
+
+        runner._ensure_device_type(
+            {
+                "model": "ThinkSystem SR650 V2",
+                "manufacturer": 7,
+                "part_number": "",
+                "description": "   ",
+            },
+            dry_run=False,
+        )
+
+        payload = nb.upsert.call_args[0][1]
+        assert payload["part_number"] == ""
+        assert payload["description"] == ""
