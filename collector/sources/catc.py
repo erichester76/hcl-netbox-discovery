@@ -575,8 +575,8 @@ class CatalystCenterSource(DataSource):
         if fetcher is None:
             return None
 
-        roots = self._select_assignment_roots(sites)
-        if not roots:
+        root_groups = self._select_assignment_root_groups(sites)
+        if not root_groups:
             return None
 
         assignments: dict[str, str] = {}
@@ -585,68 +585,86 @@ class CatalystCenterSource(DataSource):
             for site in sites
             if _safe_get(site, "id", "")
         }
-        for root in roots:
-            root_id = _safe_get(root, "id", "") or ""
-            if not root_id:
-                continue
+        for depth, roots in root_groups:
+            logger.debug(
+                "CatalystCenter: trying %d subtree assignment roots at hierarchy depth %d",
+                len(roots), depth,
+            )
+            assignments_before_depth = len(assignments)
 
-            offset = 1
-            limit = 500
-            while True:
-                try:
-                    resp = self._call_with_rate_limit_backoff(
-                        fetcher,
-                        f"site assignment root={root_id} offset={offset}",
-                        site_id=root_id,
-                        offset=offset,
-                        limit=limit,
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "CatalystCenter: bulk site assignment fetch failed for root %s: %s",
-                        root_id, exc,
-                    )
-                    return None
+            for root in roots:
+                root_id = _safe_get(root, "id", "") or ""
+                if not root_id:
+                    continue
 
-                batch = _response_items(resp)
-                if not batch:
-                    logger.debug(
-                        "CatalystCenter: empty site assignment batch root=%s offset=%d "
-                        "response_shape=%s",
-                        root_id,
-                        offset,
-                        _payload_shape(resp),
-                    )
-                    break
+                offset = 1
+                limit = 500
+                while True:
+                    try:
+                        resp = self._call_with_rate_limit_backoff(
+                            fetcher,
+                            f"site assignment root={root_id} offset={offset}",
+                            site_id=root_id,
+                            offset=offset,
+                            limit=limit,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "CatalystCenter: bulk site assignment fetch failed for root %s: %s",
+                            root_id, exc,
+                        )
+                        return None
 
-                parsed_in_batch = 0
-                for assignment in batch:
-                    device_id, site_hierarchy = _extract_site_assignment(
-                        assignment,
-                        site_hierarchy_by_id,
-                    )
-                    if device_id and site_hierarchy:
-                        assignments[device_id] = site_hierarchy
-                        parsed_in_batch += 1
+                    batch = _response_items(resp)
+                    if not batch:
+                        logger.debug(
+                            "CatalystCenter: empty site assignment batch root=%s offset=%d "
+                            "response_shape=%s",
+                            root_id,
+                            offset,
+                            _payload_shape(resp),
+                        )
+                        break
 
-                if parsed_in_batch == 0:
-                    logger.debug(
-                        "CatalystCenter: unparsed site assignment batch root=%s offset=%d "
-                        "response_shape=%s sample=%s",
-                        root_id,
-                        offset,
-                        _payload_shape(resp),
-                        _payload_preview(batch[0]),
-                    )
+                    parsed_in_batch = 0
+                    for assignment in batch:
+                        device_id, site_hierarchy = _extract_site_assignment(
+                            assignment,
+                            site_hierarchy_by_id,
+                        )
+                        if device_id and site_hierarchy:
+                            assignments[device_id] = site_hierarchy
+                            parsed_in_batch += 1
 
-                if len(batch) < limit:
-                    break
-                offset += limit
+                    if parsed_in_batch == 0:
+                        logger.debug(
+                            "CatalystCenter: unparsed site assignment batch root=%s offset=%d "
+                            "response_shape=%s sample=%s",
+                            root_id,
+                            offset,
+                            _payload_shape(resp),
+                            _payload_preview(batch[0]),
+                        )
+
+                    if len(batch) < limit:
+                        break
+                    offset += limit
+
+            if len(assignments) > assignments_before_depth:
+                return assignments
 
         return assignments
 
     def _select_assignment_roots(self, sites: list[Any]) -> list[Any]:
         """Return the smallest disjoint set of root sites for subtree membership queries."""
+        root_groups = self._select_assignment_root_groups(sites)
+        if not root_groups:
+            return []
+        _depth, roots = root_groups[0]
+        return roots
+
+    def _select_assignment_root_groups(self, sites: list[Any]) -> list[tuple[int, list[Any]]]:
+        """Return assignment roots grouped by hierarchy depth, shallowest first."""
         candidates: list[tuple[int, Any]] = []
         for site in sites:
             site_id = _safe_get(site, "id", "") or ""
@@ -659,13 +677,17 @@ class CatalystCenterSource(DataSource):
         if not candidates:
             return []
 
-        min_depth = min(depth for depth, _site in candidates)
-        roots = [site for depth, site in candidates if depth == min_depth]
+        grouped: list[tuple[int, list[Any]]] = []
+        for depth in sorted({depth for depth, _site in candidates}):
+            roots = [site for item_depth, site in candidates if item_depth == depth]
+            grouped.append((depth, roots))
+
+        first_depth, first_roots = grouped[0]
         logger.debug(
             "CatalystCenter: selected %d subtree assignment roots at hierarchy depth %d",
-            len(roots), min_depth,
+            len(first_roots), first_depth,
         )
-        return roots
+        return grouped
 
     def _call_with_rate_limit_backoff(self, fn: Any, operation: str, **kwargs: Any) -> Any:
         """Call *fn* and retry 429 failures with exponential backoff."""
