@@ -943,12 +943,12 @@ class PrerequisiteRunner:
         profile_name = args.get("profile")
         raw_attrs = args.get("attributes")
         attrs: dict[str, Any] = raw_attrs or {}
-        attribute_names = [name for name in (args.get("attribute_names") or []) if name]
+        configured_attr_names = list(dict.fromkeys(args.get("attribute_names") or []))
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
         if profile_name is not None:
-            attr_names = attribute_names or list(attrs.keys())
+            attr_names = configured_attr_names or list(attrs.keys())
             profile_id = self._ensure_module_type_profile(
                 {"name": profile_name, "attribute_names": attr_names}, dry_run
             )
