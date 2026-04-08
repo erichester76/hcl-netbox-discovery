@@ -1024,6 +1024,86 @@ class TestCatalystBulkAssignments:
         assert src._client.sites.get_membership.called
         src._client.site_design.get_site_assigned_network_devices.assert_called_once()
 
+    def test_bulk_site_assignment_uses_site_lookup_when_hierarchy_missing(self):
+        src = self._connected_source()
+
+        root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
+        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        assignment = {
+            "deviceId": "device-uuid-1",
+            "siteId": "site-1",
+        }
+
+        src._client.sites.get_site.side_effect = [
+            SimpleNamespace(response=[root_site, child_site]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.devices.get_device_list.side_effect = [
+            SimpleNamespace(response=[device]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.site_design.get_site_assigned_network_devices.return_value = SimpleNamespace(
+            response={"response": [assignment]}
+        )
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert result[0]["deviceId"] == "device-uuid-1"
+        assert result[0]["site_name"] == "Clemson"
+
+    def test_bulk_site_assignment_parses_nested_device_and_site_shapes(self):
+        src = self._connected_source()
+
+        root_site = SimpleNamespace(id="area-1", siteNameHierarchy="Global/US")
+        child_site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01.clemson.edu",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        assignment = {
+            "device": {"id": "device-uuid-1"},
+            "site": {"id": "site-1"},
+        }
+
+        src._client.sites.get_site.side_effect = [
+            SimpleNamespace(response=[root_site, child_site]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.devices.get_device_list.side_effect = [
+            SimpleNamespace(response=[device]),
+            SimpleNamespace(response=[]),
+        ]
+        src._client.site_design.get_site_assigned_network_devices.return_value = SimpleNamespace(
+            response=[assignment]
+        )
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert result[0]["deviceId"] == "device-uuid-1"
+        assert result[0]["site_name"] == "Clemson"
+
     def test_select_assignment_roots_uses_shallowest_non_global_hierarchy(self):
         src = self._connected_source()
         sites = [

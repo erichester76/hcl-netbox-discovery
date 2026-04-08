@@ -249,6 +249,39 @@ def _payload_preview(payload: Any) -> str:
         if value is not None:
             preview[key] = value
     return repr(preview or payload)
+
+
+def _extract_site_assignment(
+    assignment: Any,
+    site_hierarchy_by_id: dict[str, str],
+) -> tuple[str, str]:
+    """Return ``(device_id, site_hierarchy)`` from common assignment row shapes."""
+    device_obj = _safe_get(assignment, "device")
+    site_obj = _safe_get(assignment, "site")
+
+    device_id = (
+        _safe_get(assignment, "deviceId", "")
+        or _safe_get(assignment, "networkDeviceId", "")
+        or _safe_get(device_obj, "id", "")
+        or _safe_get(device_obj, "deviceId", "")
+        or _safe_get(device_obj, "networkDeviceId", "")
+        or ""
+    )
+    site_hierarchy = (
+        _safe_get(assignment, "siteNameHierarchy", "")
+        or _safe_get(site_obj, "siteNameHierarchy", "")
+        or _safe_get(site_obj, "nameHierarchy", "")
+        or ""
+    )
+    if site_hierarchy:
+        return device_id, site_hierarchy
+
+    site_id = (
+        _safe_get(assignment, "siteId", "")
+        or _safe_get(site_obj, "id", "")
+        or ""
+    )
+    return device_id, site_hierarchy_by_id.get(site_id, "")
 # ---------------------------------------------------------------------------
 # CatalystCenterSource
 # ---------------------------------------------------------------------------
@@ -547,6 +580,11 @@ class CatalystCenterSource(DataSource):
             return None
 
         assignments: dict[str, str] = {}
+        site_hierarchy_by_id = {
+            (_safe_get(site, "id", "") or ""): (_safe_get(site, "siteNameHierarchy", "") or "")
+            for site in sites
+            if _safe_get(site, "id", "")
+        }
         for root in roots:
             root_id = _safe_get(root, "id", "") or ""
             if not root_id:
@@ -583,8 +621,10 @@ class CatalystCenterSource(DataSource):
 
                 parsed_in_batch = 0
                 for assignment in batch:
-                    device_id = _safe_get(assignment, "deviceId", "") or ""
-                    site_hierarchy = _safe_get(assignment, "siteNameHierarchy", "") or ""
+                    device_id, site_hierarchy = _extract_site_assignment(
+                        assignment,
+                        site_hierarchy_by_id,
+                    )
                     if device_id and site_hierarchy:
                         assignments[device_id] = site_hierarchy
                         parsed_in_batch += 1
