@@ -1889,52 +1889,43 @@ class TestProcessModulesPowerInput:
         assert attrs_payload["cores"] == 16
         assert attrs_payload["speed"] == 2.5
 
-    def test_declared_attribute_names_forwarded_when_values_resolve_empty(self):
-        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
-
+    def test_configured_attribute_names_forwarded_when_values_are_none(self):
         engine = self._make_engine()
         source_obj = {
-            "raidSettings": [
+            "processors": [
                 {
-                    "diskDrives": [
-                        {
-                            "name": "Disk 1",
-                            "model": "MTFDDAV480TGA-1BC16A",
-                            "serialNumber": "SSD001",
-                            "manufacturer": "Micron",
-                            "capacity": None,
-                            "rpm": None,
-                            "mediaType": None,
-                        }
-                    ]
+                    "socket": "CPU Socket 1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "cores": None,
+                    "speed": None,
                 }
             ]
         }
         ctx = self._make_ctx(source_obj)
         nb = ctx.nb
         nb.upsert.side_effect = [
-            MagicMock(id=1),   # ensure_manufacturer
-            MagicMock(id=99),  # ensure_module_type_profile
-            MagicMock(id=10),  # ensure_module_bay_template
-            MagicMock(id=20),  # ensure_module_bay
-            MagicMock(id=30),  # ensure_module_type
-            MagicMock(id=40),  # upsert module
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=50),
         ]
-        nb.get.return_value = {"id": 99}
-        nb.update.return_value = MagicMock(id=99)
+
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
 
         mod_cfg = ModuleConfig(
-            source_items="raidSettings[*].diskDrives",
-            profile="Hard disk",
+            source_items="processors",
+            profile="CPU",
             fields=[
-                FieldConfig(name="bay_name", value="source('name')"),
-                FieldConfig(name="model", value="source('model')"),
+                FieldConfig(name="bay_name", value="source('socket')"),
+                FieldConfig(name="model", value="source('displayName')"),
                 FieldConfig(name="serial", value="str(source('serialNumber'))"),
                 FieldConfig(name="manufacturer", value="source('manufacturer')"),
             ],
             attributes=[
-                FieldConfig(name="size", value="source('capacity')"),
-                FieldConfig(name="type", value="source('mediaType')"),
+                FieldConfig(name="cores", value="source('cores')"),
+                FieldConfig(name="speed", value="source('speed')"),
             ],
         )
         obj_cfg = ObjectConfig(
@@ -1944,20 +1935,16 @@ class TestProcessModulesPowerInput:
             modules=[mod_cfg],
         )
         parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        with patch.object(
+            PrerequisiteRunner,
+            "_ensure_module_type",
+            return_value=40,
+        ) as ensure_module_type:
+            engine._process_modules(obj_cfg, parent_nb_obj, ctx)
 
-        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
-
-        module_type_upsert = next(
-            call for call in nb.upsert.call_args_list if call[0][0] == "dcim.module_types"
-        )
-        payload = module_type_upsert[0][1]
-        assert "attributes" not in payload
-        profile_schema_call = next(
-            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_type_profiles"
-        )
-        schema_props = profile_schema_call[0][2]["schema"]["properties"]
-        assert "size" in schema_props
-        assert "type" in schema_props
+        call_args = ensure_module_type.call_args[0][0]
+        assert call_args["attribute_names"] == ["cores", "speed"]
+        assert call_args["attributes"] is None
 
     def test_high_wattage_psu_gets_c20_port(self):
         engine = self._make_engine()

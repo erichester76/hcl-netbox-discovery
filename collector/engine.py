@@ -2412,7 +2412,7 @@ class Engine:
                     # These are applied to the ModuleType record (not the Module
                     # instance) after the profile has been committed to NetBox.
                     attrs: dict[str, Any] = {}
-                    attr_names: list[str] = [attr_cfg.name for attr_cfg in mod_cfg.attributes]
+                    configured_attr_names = [attr_cfg.name for attr_cfg in mod_cfg.attributes]
                     for attr_cfg in mod_cfg.attributes:
                         try:
                             val = self._eval_field(attr_cfg, mod_resolver, nested_ctx)
@@ -2429,7 +2429,7 @@ class Engine:
                             "model": model,
                             "manufacturer": manufacturer_id,
                             "profile": mod_cfg.profile,
-                            "attribute_names": attr_names,
+                            "attribute_names": configured_attr_names or None,
                             "attributes": attrs if attrs else None,
                         },
                         dry_run=False,
