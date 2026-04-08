@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 from .db import finish_job
 from .job_log_handler import JobLogHandler, job_context
+
+# Module-level lock and reference count for concurrent debug-capture contexts.
+# Only the first debug-capturing job raises the root logger to DEBUG; only the
+# last one restores it, so concurrent jobs don't race on the root level.
+_debug_capture_lock: threading.Lock = threading.Lock()
+_debug_capture_refcount: int = 0
+_debug_capture_saved_level: int = logging.WARNING
 
 
 def summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
@@ -58,9 +66,15 @@ def build_job_artifact(
 
 @contextmanager
 def captured_job_logging(job_id: int, *, capture_debug_logs: bool) -> Iterator[None]:
-    """Attach the DB log handler and restore the root logger afterwards."""
+    """Attach the DB log handler and restore the root logger afterwards.
+
+    Thread-safe: multiple concurrent debug-capture contexts share a reference
+    count so the root logger level is only raised on the first entry and only
+    restored on the last exit.  Non-debug contexts never touch the root level.
+    """
+    global _debug_capture_refcount, _debug_capture_saved_level  # noqa: PLW0603
+
     root_logger = logging.getLogger()
-    original_root_level = root_logger.level
     handler = JobLogHandler(
         job_id,
         min_level=logging.DEBUG if capture_debug_logs else logging.INFO,
@@ -68,15 +82,25 @@ def captured_job_logging(job_id: int, *, capture_debug_logs: bool) -> Iterator[N
     handler.setFormatter(
         logging.Formatter("%(asctime)s [%(threadName)s] [%(levelname)s] %(message)s")
     )
+
     if capture_debug_logs:
-        root_logger.setLevel(logging.DEBUG)
+        with _debug_capture_lock:
+            if _debug_capture_refcount == 0:
+                _debug_capture_saved_level = root_logger.level
+                root_logger.setLevel(logging.DEBUG)
+            _debug_capture_refcount += 1
+
     root_logger.addHandler(handler)
     try:
         with job_context(job_id):
             yield
     finally:
         root_logger.removeHandler(handler)
-        root_logger.setLevel(original_root_level)
+        if capture_debug_logs:
+            with _debug_capture_lock:
+                _debug_capture_refcount -= 1
+                if _debug_capture_refcount == 0:
+                    root_logger.setLevel(_debug_capture_saved_level)
 
 
 def persist_job_result(
