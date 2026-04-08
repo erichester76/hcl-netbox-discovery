@@ -889,6 +889,14 @@ class TestXClarityMappings:
             assert site_field.update_mode == "if_missing"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_device_objects_lookup_by_serial_and_name(self, mapping_path):
+        cfg = load_config(mapping_path)
+        for name in self.OBJECT_NAMES:
+            obj = next((o for o in cfg.objects if o.name == name), None)
+            assert obj is not None, f"missing object {name} in {mapping_path}"
+            assert obj.lookup_by == ["serial", "name"]
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
     def test_node_status_normalizes_power_status(self, mapping_path):
         cfg = load_config(mapping_path)
         node = next((o for o in cfg.objects if o.name == "node"), None)
