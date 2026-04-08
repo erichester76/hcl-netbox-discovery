@@ -336,8 +336,7 @@ class TestXclarityModulesHcl:
         field = next(f for f in mod.fields if f.name == field_name)
         return field.value
 
-    def _eval_module_attr(self, profile: str, attr_name: str, source_obj):
-        """Evaluate a module attribute expression against a source object."""
+    def _make_resolver(self, source_obj):
         from collector.config import CollectorOptions
         from collector.context import RunContext
         from collector.field_resolvers import Resolver
@@ -358,33 +357,23 @@ class TestXclarityModulesHcl:
             parent_nb_obj=None,
             dry_run=False,
         )
+        return Resolver(ctx)
+
+    def _eval_module_attr(self, profile: str, attr_name: str, source_obj):
+        """Evaluate a module attribute expression against a source object."""
         expr = self._get_module_attr_expr(profile, attr_name)
-        return Resolver(ctx).evaluate_strict(expr, label=f"{profile}.{attr_name}")
+        return self._make_resolver(source_obj).evaluate_strict(
+            expr,
+            label=f"{profile}.{attr_name}",
+        )
 
     def _eval_module_field(self, profile: str, field_name: str, source_obj):
         """Evaluate a module field expression against a source object."""
-        from collector.config import CollectorOptions
-        from collector.context import RunContext
-        from collector.field_resolvers import Resolver
-
-        opts = CollectorOptions(
-            max_workers=1,
-            dry_run=False,
-            sync_tag="test",
-            regex_dir="/tmp/regex",
-        )
-        ctx = RunContext(
-            nb=None,
-            source_adapter=None,
-            collector_opts=opts,
-            regex_dir="/tmp/regex",
-            prereqs={},
-            source_obj=source_obj,
-            parent_nb_obj=None,
-            dry_run=False,
-        )
         expr = self._get_module_field_expr(profile, field_name)
-        return Resolver(ctx).evaluate_strict(expr, label=f"{profile}.{field_name}")
+        return self._make_resolver(source_obj).evaluate_strict(
+            expr,
+            label=f"{profile}.{field_name}",
+        )
 
     def _eval_disk_type(self, source_obj):
         return self._eval_module_attr("Hard disk", "type", source_obj)

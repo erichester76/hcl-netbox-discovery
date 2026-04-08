@@ -292,7 +292,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer') or 'Lenovo'"
+      value = "source('manufacturer')"
     }
 
     attribute "cores" {
@@ -331,7 +331,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer') or 'Lenovo'"
+      value = "source('manufacturer')"
     }
 
     attribute "size" {
@@ -379,7 +379,7 @@ object "node" {
     }
 
     field "manufacturer" {
-      value = "source('manufacturer') or 'Lenovo'"
+      value = "source('manufacturer')"
     }
 
     attribute "size" {
