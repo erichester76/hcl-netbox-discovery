@@ -1021,5 +1021,9 @@ class TestVmwareMappings:
         interface = vm.interfaces[0]
         assert interface.tagged_vlans, "vm interface should define tagged_vlans"
         vlan = interface.tagged_vlans[0]
-        field_values = {f.name: f.value for f in vlan.fields}
-        assert field_values["site"] == "regex_file(source('runtime.host.parent.name'), 'cluster_to_site')"
+        assert vlan.source_items == "[{**v, 'site_name': regex_file(source('runtime.host.parent.name'), 'cluster_to_site')} for v in (source('_vlans') or [])]"
+        site_field = next((f for f in vlan.fields if f.name == "site"), None)
+        assert site_field is not None, "tagged_vlan should define site"
+        assert site_field.type == "fk"
+        assert site_field.resource == "dcim.sites"
+        assert site_field.lookup == {"name": "source('site_name')"}
