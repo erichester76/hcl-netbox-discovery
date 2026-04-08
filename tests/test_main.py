@@ -113,6 +113,24 @@ def _fake_stat():
     return s
 
 
+def test_summary_from_stats_builds_expected_payload():
+    from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
+
+    summary, has_errors = summary_from_stats([_fake_stat()])
+
+    assert has_errors is False
+    assert summary == {
+        "devices": {
+            "processed": 5,
+            "created": 1,
+            "updated": 3,
+            "skipped": 1,
+            "errored": 0,
+            "nested_skipped": {},
+        }
+    }
+
+
 def _wait_for_job_completion(job_id: int, db_module_ref, timeout: float = 5.0) -> None:
     import time as _time  # noqa: PLC0415
 
@@ -195,7 +213,7 @@ def test_main_uses_collector_run_token_env(tmp_path, tmp_db, monkeypatch):
 
 
 def test_summary_from_stats_includes_nested_skips():
-    from main import _summary_from_stats  # noqa: PLC0415
+    from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
 
     stat = _fake_stat()
     stat.nested_skipped = {
@@ -203,7 +221,7 @@ def test_summary_from_stats_includes_nested_skips():
         "virtualization.virtual_disks:virtual_machine": 7,
     }
 
-    summary, has_errors = _summary_from_stats([stat])
+    summary, has_errors = summary_from_stats([stat])
 
     assert has_errors is False
     assert summary["devices"]["nested_skipped"] == {
@@ -652,6 +670,57 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
         )
     finally:
         patcher.stop()
+
+
+def test_captured_job_logging_keeps_root_debug_until_last_overlap_exits(tmp_db):
+    """Concurrent debug capture contexts must not restore root level too early."""
+    import collector.db as db_module  # noqa: PLC0415
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+    from collector.job_lifecycle import captured_job_logging  # noqa: PLC0415
+
+    root_logger = logging.getLogger()
+    original_level = logging.INFO
+    root_logger.setLevel(original_level)
+    job_lifecycle._debug_capture_refcount = 0
+    job_lifecycle._saved_root_level = logging.NOTSET
+
+    entered = threading.Barrier(2)
+    first_exited = threading.Event()
+    release_second = threading.Event()
+    results: dict[str, int] = {}
+
+    def worker(name: str, wait_to_exit: threading.Event | None = None) -> None:
+        job_id = db_module.create_job(f"/tmp/{name}.hcl", debug_mode=True)
+        with captured_job_logging(job_id, capture_debug_logs=True):
+            entered.wait()
+            if wait_to_exit is not None:
+                wait_to_exit.wait(timeout=2)
+            results[f"{name}_inside"] = root_logger.level
+        results[f"{name}_after"] = root_logger.level
+        if name == "first":
+            first_exited.set()
+
+    first = threading.Thread(target=worker, args=("first",))
+    second = threading.Thread(target=worker, args=("second", release_second))
+    first.start()
+    second.start()
+
+    assert first_exited.wait(timeout=2), "first debug capture context did not exit"
+    assert root_logger.level == logging.DEBUG
+    release_second.set()
+
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert results["first_inside"] == logging.DEBUG
+    assert results["second_inside"] == logging.DEBUG
+    assert results["first_after"] == logging.DEBUG
+    assert results["second_after"] == original_level
+    assert root_logger.level == original_level
+    assert job_lifecycle._debug_capture_refcount == 0
+    assert job_lifecycle._saved_root_level == logging.NOTSET
 
 
 def test_cli_debug_level_captures_debug_logs(tmp_path, tmp_db):
