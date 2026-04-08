@@ -235,6 +235,57 @@ Follow this workflow by default unless the user explicitly overrides it:
      - new artifact bundles
    - Resume the loop from new artifacts as they arrive.
 
+## Remote Job API Workflow
+
+Use the deployed web API as the default artifact/log retrieval path before
+falling back to manual file sync.
+
+### Current deployment
+
+- Current Clemson deployment base URL:
+  `http://4gk-mon-p-dkr01.server.clemson.edu:5000`
+- API authentication is token-based for `/api/*`.
+- The token is stored in the DB-backed `WEB_API_TOKEN` setting.
+- **Never** commit the live token value into the repository or documentation.
+  Get the current token from the operator or the deployed settings store at
+  runtime.
+
+### Required endpoints
+
+- `GET /api/jobs`
+  - Use for completed/recent job discovery.
+  - Supports:
+    - `limit`
+    - `after_id`
+    - `status`
+    - `hcl_file`
+- `GET /api/running-jobs`
+  - Use only for active-job discovery.
+- `GET /api/jobs/<id>/artifact`
+  - Use for structured artifact retrieval after a job reaches terminal state.
+- `GET /api/jobs/<id>/logs?after_id=<n>`
+  - Use for token-authenticated log polling and live triage.
+
+### Default polling loop
+
+1. Poll `/api/jobs?after_id=<last_seen_id>&limit=<n>` for newly completed jobs.
+2. For each new terminal job:
+   - inspect `status`
+   - fetch `/api/jobs/<id>/artifact`
+3. If a job is still active and live evidence is needed:
+   - poll `/api/jobs/<id>/logs?after_id=<last_log_id>`
+4. Prefer completed-job polling over `running-jobs` for fast sources such as
+   `azure` and `jnsu`, because they can finish between polls.
+
+### Runtime notes
+
+- Use `Authorization: Bearer <token>` or `X-API-Key: <token>` for `/api/*`.
+- `/api/jobs` may include inline `artifact` content, but the canonical detailed
+  artifact retrieval route is still `/api/jobs/<id>/artifact`.
+- When triaging live runs, create issues from API log/artifact evidence instead
+  of waiting for manual artifact sync if the API already exposes the needed
+  data.
+
 ## Codebase Landmarks
 
 - `collector/config.py`: HCL parsing and config dataclasses
