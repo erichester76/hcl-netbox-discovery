@@ -970,6 +970,31 @@ class TestEnsureModuleType:
         )
         nb.update.assert_not_called()
 
+    def test_empty_schema_backed_attributes_seed_empty_object_on_upsert(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=50)]
+        nb.get.return_value = {"id": 99}
+        nb.update.return_value = MagicMock(id=99)
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "Micron SSD",
+                "profile": "Hard disk",
+                "attributes": {},
+                "attribute_names": ["size", "type"],
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        module_type_upsert = nb.upsert.call_args_list[1]
+        assert module_type_upsert[0][1]["attributes"] == {}
+        module_type_updates = [
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_types"
+        ]
+        assert module_type_updates == []
+
     def test_none_attribute_values_filtered_out(self):
         """Attribute keys with None values should be excluded from the PATCH."""
         nb = MagicMock()
@@ -1823,6 +1848,76 @@ class TestProcessModulesPowerInput:
         attrs_payload = module_type_attr_calls[0][0][2]["attributes"]
         assert attrs_payload["cores"] == 16
         assert attrs_payload["speed"] == 2.5
+
+    def test_declared_attribute_names_forwarded_when_values_resolve_empty(self):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "raidSettings": [
+                {
+                    "diskDrives": [
+                        {
+                            "name": "Disk 1",
+                            "model": "MTFDDAV480TGA-1BC16A",
+                            "serialNumber": "SSD001",
+                            "manufacturer": "Micron",
+                            "capacity": None,
+                            "rpm": None,
+                            "mediaType": None,
+                        }
+                    ]
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),   # ensure_manufacturer
+            MagicMock(id=99),  # ensure_module_type_profile
+            MagicMock(id=10),  # ensure_module_bay_template
+            MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=30),  # ensure_module_type
+            MagicMock(id=40),  # upsert module
+        ]
+        nb.get.return_value = {"id": 99}
+        nb.update.return_value = MagicMock(id=99)
+
+        mod_cfg = ModuleConfig(
+            source_items="raidSettings[*].diskDrives",
+            profile="Hard disk",
+            fields=[
+                FieldConfig(name="bay_name", value="source('name')"),
+                FieldConfig(name="model", value="source('model')"),
+                FieldConfig(name="serial", value="str(source('serialNumber'))"),
+                FieldConfig(name="manufacturer", value="source('manufacturer')"),
+            ],
+            attributes=[
+                FieldConfig(name="size", value="source('capacity')"),
+                FieldConfig(name="type", value="source('mediaType')"),
+            ],
+        )
+        obj_cfg = ObjectConfig(
+            name="node",
+            source_collection="nodes",
+            netbox_resource="dcim.devices",
+            modules=[mod_cfg],
+        )
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_type_upsert = next(
+            call for call in nb.upsert.call_args_list if call[0][0] == "dcim.module_types"
+        )
+        payload = module_type_upsert[0][1]
+        assert payload["attributes"] == {}
+        profile_schema_call = next(
+            call for call in nb.update.call_args_list if call[0][0] == "dcim.module_type_profiles"
+        )
+        schema_props = profile_schema_call[0][2]["schema"]["properties"]
+        assert "size" in schema_props
+        assert "type" in schema_props
 
     def test_high_wattage_psu_gets_c20_port(self):
         engine = self._make_engine()

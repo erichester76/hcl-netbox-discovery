@@ -2457,7 +2457,8 @@ class Engine:
                             "model": model,
                             "manufacturer": manufacturer_id,
                             "profile": mod_cfg.profile,
-                            "attributes": attrs if attrs else None,
+                            "attributes": attrs,
+                            "attribute_names": [attr_cfg.name for attr_cfg in mod_cfg.attributes],
                         },
                         dry_run=False,
                     )

@@ -933,17 +933,21 @@ class PrerequisiteRunner:
         slug = slugify(model)
         manufacturer_id = args.get("manufacturer")
         profile_name = args.get("profile")
-        attrs: dict[str, Any] = args.get("attributes") or {}
+        raw_attrs = args.get("attributes")
+        attrs: dict[str, Any] = raw_attrs or {}
+        attribute_names = [name for name in (args.get("attribute_names") or []) if name]
         payload: dict[str, Any] = {"model": model, "slug": slug}
         if manufacturer_id is not None:
             payload["manufacturer"] = manufacturer_id
         if profile_name is not None:
-            attr_names = list(attrs.keys()) if attrs else []
+            attr_names = attribute_names or list(attrs.keys())
             profile_id = self._ensure_module_type_profile(
                 {"name": profile_name, "attribute_names": attr_names}, dry_run
             )
             if profile_id is not None:
                 payload["profile"] = profile_id
+            if raw_attrs is not None and not attrs and attr_names:
+                payload["attributes"] = {}
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
         if dry_run:
             logger.info(
@@ -952,8 +956,12 @@ class PrerequisiteRunner:
             )
             return None
         # Step 1: create/update the module type with the profile assigned.
-        # ``attributes`` is intentionally omitted here so that the profile is
-        # committed to NetBox before attributes are applied in step 2.
+        # ``attributes`` is still omitted in the normal case so the profile is
+        # committed to NetBox before populated attributes are applied in step 2.
+        # The one exception is schema-backed module types whose declared
+        # attribute set resolved entirely empty for this source row: in that
+        # case an empty object is seeded above so NetBox does not validate a
+        # legacy/null attributes payload against the assigned profile schema.
         obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
         module_type_id = extract_id(obj)
 
