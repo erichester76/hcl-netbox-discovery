@@ -320,6 +320,18 @@ class TestXclarityModulesHcl:
         names = {o.name for o in cfg.objects}
         assert {"node", "chassis", "switch", "storage"} <= names
 
+    def test_all_device_objects_lookup_by_serial_and_name(self):
+        cfg = load_config(self.HCL_PATH)
+        for obj_name in ("node", "chassis", "switch", "storage"):
+            obj = next(o for o in cfg.objects if o.name == obj_name)
+            assert obj.lookup_by == ["serial", "name"]
+
+    def test_non_module_xclarity_device_objects_lookup_by_serial_and_name(self):
+        cfg = load_config("mappings/xclarity.hcl.example")
+        for obj_name in ("node", "chassis", "switch", "storage"):
+            obj = next(o for o in cfg.objects if o.name == obj_name)
+            assert obj.lookup_by == ["serial", "name"]
+
     def _get_module_attr_expr(self, profile: str, attr_name: str):
         """Return an attribute expression from a module block in the example mapping."""
         cfg = load_config(self.HCL_PATH)
