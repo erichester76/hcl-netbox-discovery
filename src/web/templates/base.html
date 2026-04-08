@@ -131,11 +131,11 @@
       <a class="nav-link" href="/settings">Settings</a>
       {% endif %}
       {% if web_auth_enabled and web_authenticated %}
-      <span class="navbar-text text-white-50 small me-2">{{ web_username }}</span>
       <form method="POST" action="/logout" class="ms-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <button type="submit" class="btn btn-sm btn-outline-light">Log Out</button>
       </form>
+      <span class="navbar-text text-white-50 small ms-2">{{ web_username }}</span>
       {% endif %}
       <!-- Dark mode toggle icon -- 2026-03-31 -->
       <button id="dark-mode-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
