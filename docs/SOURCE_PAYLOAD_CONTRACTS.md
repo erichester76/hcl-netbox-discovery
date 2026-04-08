@@ -24,9 +24,9 @@ Use these names when a source can expose placement context:
 Current contract expectations:
 
 - Catalyst Center adapters emit `site_name` and `location_name`.
-- XClarity mappings forward `site_candidate`, `location_candidate`, and
-  `datacenter_candidate` into `resolve_placement` so fallback logs can name the
-  unresolved source inputs.
+- XClarity node mappings may forward `site_candidate`,
+  `location_candidate`, and `datacenter_candidate` into
+  `resolve_placement` so fallback logs can name unresolved source inputs.
 
 ## Identity fields
 

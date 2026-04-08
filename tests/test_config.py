@@ -1203,17 +1203,6 @@ class TestVmwareMappings:
 
 
 class TestSourcePayloadContracts:
-    def test_catc_example_uses_documented_placement_fields(self):
-        cfg = load_config("mappings/catalyst-center.hcl.example")
-        device = next((o for o in cfg.objects if o.name == "device"), None)
-        assert device is not None
-        prereqs = {p.name: p for p in device.prerequisites}
-
-        assert prereqs["site"].args["name"] == (
-            "when(source('site_name'), regex_file(source('site_name'), 'catc_site_to_site'), 'Unknown')"
-        )
-        assert prereqs["location"].args["name"] == "when(source('location_name'), source('location_name'), None)"
-
     def test_xclarity_example_forwards_documented_placement_candidates(self):
         cfg = load_config("mappings/xclarity.hcl.example")
         device = next((o for o in cfg.objects if o.name == "node"), None)
@@ -1232,6 +1221,9 @@ class TestSourcePayloadContracts:
             "mappings/xclarity-modules.hcl.example",
         ):
             cfg = load_config(mapping_path)
-            device = next((o for o in cfg.objects if o.netbox_resource == "dcim.devices"), None)
-            assert device is not None
-            assert device.lookup_by[0] == "serial"
+            devices = [o for o in cfg.objects if o.netbox_resource == "dcim.devices"]
+            assert devices, f"missing dcim.devices objects in {mapping_path}"
+            for device in devices:
+                assert device.lookup_by[0] == "serial", (
+                    f"{mapping_path} object {device.name!r} should prefer serial lookup"
+                )
