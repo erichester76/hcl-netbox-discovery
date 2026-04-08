@@ -300,7 +300,6 @@ object "vm" {
     method   = "ensure_platform"
     args     = {
        name              = "source('config.product.fullName') or 'Unknown'"
-       manufacturer_name = "split(source('config.product.fullName') or 'Unknown')[0]"
     }
     optional = true
   }
