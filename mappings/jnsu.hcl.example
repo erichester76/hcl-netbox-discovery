@@ -116,7 +116,7 @@ object "ip_address" {
   #
   # Regex escape note: '\\\\1' in HCL → Python string '\\1' → regex replacement \1
   field "description" {
-    value = "when(source('DirXMLjnsuStaticAddrs'), truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), '[\\r\\n]|[ ]{2,}', ' '), 64), truncate(regex_replace(upper(coalesce(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1'), source('DirXMLjnsuUserDN'), 'UNKNOWN')) + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + source('DirXMLjnsuDescription'), '[\\r\\n]|[ ]{2,}', ' '), 64))"
+    value = "truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), '[\\r\\n ]{2,}|[\\r\\n]', ' '), 64) if source('DirXMLjnsuStaticAddrs') else truncate(regex_replace(upper(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1') or source('DirXMLjnsuUserDN') or 'UNKNOWN') + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + (source('DirXMLjnsuDescription') or ''), '[\\r\\n ]{2,}|[\\r\\n]', ' '), 64)"
   }
 
   # MAC address — uppercase, sourced from DirXMLjnsuHWAddress

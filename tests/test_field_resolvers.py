@@ -448,6 +448,14 @@ _DISK_DESC_EXPR = (
     " 200)"
 )
 
+_JNSU_DESC_EXPR = (
+    "truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), "
+    "'[\\\\r\\\\n ]{2,}|[\\\\r\\\\n]', ' '), 64) if source('DirXMLjnsuStaticAddrs') else "
+    "truncate(regex_replace(upper(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1') "
+    "or source('DirXMLjnsuUserDN') or 'UNKNOWN') + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + "
+    "(source('DirXMLjnsuDescription') or ''), '[\\\\r\\\\n ]{2,}|[\\\\r\\\\n]', ' '), 64)"
+)
+
 
 class TestVMwareDiskDescription:
     """Tests for the disk description expression used in mappings/vmware.hcl."""
@@ -527,6 +535,41 @@ class TestVMwareDiskDescription:
         r = _make_resolver(disk)
         result = r.evaluate(_DISK_DESC_EXPR)
         assert len(result) == 200
+
+
+class TestJNSUDescriptionExpression:
+    def test_static_entry_description_is_cleaned(self):
+        r = _make_resolver(
+            {
+                "DirXMLjnsuStaticAddrs": ["172.19.1.10"],
+                "DirXMLjnsuDescription": "Connected to AP-01\r\n  Closet",
+            }
+        )
+        assert r.evaluate_strict(_JNSU_DESC_EXPR, label="description") == "AP-01 Closet"
+
+    def test_dynamic_entry_description_is_nil_safe(self):
+        r = _make_resolver(
+            {
+                "DirXMLjnsuStaticAddrs": [],
+                "DirXMLjnsuDescription": None,
+                "DirXMLjnsuUserDN": None,
+            }
+        )
+        assert r.evaluate_strict(_JNSU_DESC_EXPR, label="description") == "UNKNOWN@CLEMSON.EDU: "
+
+    def test_dynamic_entry_extracts_cn_when_present(self):
+        r = _make_resolver(
+            {
+                "DirXMLjnsuStaticAddrs": [],
+                "DirXMLjnsuDescription": "Printer in Lab",
+                "DirXMLjnsuUserDN": "cn=lab-printer,ou=Devices,dc=example,dc=org",
+            }
+        )
+        assert r.evaluate_strict(_JNSU_DESC_EXPR, label="description") == (
+            "LAB-PRINTER@CLEMSON.EDU: Printer in Lab"
+        )
+
+
 # Resolver – mask_to_prefix()
 # ---------------------------------------------------------------------------
 
