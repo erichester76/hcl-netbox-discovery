@@ -102,7 +102,7 @@ object "ip_address" {
   #
   # Static branch (true):
   #   1. strip "Connected to " prefix from the raw description
-  #   2. collapse CR/LF and runs of spaces into a single space
+  #   2. collapse whitespace into a single space
   #   3. truncate to 64 characters
   #
   # DHCP branch (false):
@@ -111,12 +111,12 @@ object "ip_address" {
   #      or "UNKNOWN" when the DN is empty
   #   2. upper-case the CN and append '@<LDAP_UPN_DOMAIN>' (default CLEMSON.EDU)
   #   3. concatenate with the raw description: "<UPN>@<DOMAIN>: <description>"
-  #   4. collapse CR/LF and runs of spaces into a single space
+  #   4. collapse whitespace into a single space
   #   5. truncate to 64 characters
   #
   # Regex escape note: '\\\\1' in HCL → Python string '\\1' → regex replacement \1
   field "description" {
-    value = "truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), '[\\r\\n ]{2,}|[\\r\\n]', ' '), 64) if source('DirXMLjnsuStaticAddrs') else truncate(regex_replace(upper(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1') or source('DirXMLjnsuUserDN') or 'UNKNOWN') + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + (source('DirXMLjnsuDescription') or ''), '[\\r\\n ]{2,}|[\\r\\n]', ' '), 64)"
+    value = "truncate(regex_replace(regex_replace(source('DirXMLjnsuDescription'), '^Connected to ', ''), '\\s+', ' '), 64) if source('DirXMLjnsuStaticAddrs') else truncate(regex_replace(upper(regex_replace(source('DirXMLjnsuUserDN'), '^cn=(.+?),.*$', '\\\\1') or source('DirXMLjnsuUserDN') or 'UNKNOWN') + '@' + env('LDAP_UPN_DOMAIN', 'CLEMSON.EDU') + ': ' + (source('DirXMLjnsuDescription') or ''), '\\s+', ' '), 64)"
   }
 
   # MAC address — uppercase, sourced from DirXMLjnsuHWAddress
