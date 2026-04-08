@@ -1835,9 +1835,9 @@ class TestProcessModulesPowerInput:
         nb = ctx.nb
         nb.upsert.side_effect = [
             MagicMock(id=1),   # ensure_manufacturer
-            MagicMock(id=99),  # ensure_module_type_profile
             MagicMock(id=10),  # ensure_module_bay_template
             MagicMock(id=20),  # ensure_module_bay
+            MagicMock(id=99),  # ensure_module_type_profile
             MagicMock(id=30),  # ensure_module_type
             MagicMock(id=40),  # upsert module
         ]

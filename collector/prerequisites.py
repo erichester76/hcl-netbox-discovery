@@ -922,9 +922,17 @@ class PrerequisiteRunner:
     def _ensure_module_type(self, args: dict, dry_run: bool) -> int | None:
         """Ensure a ModuleType exists (model + optional manufacturer + optional profile).
 
+        Expected inputs in *args*:
+
+        - ``attributes``: dict of resolved module attribute values to PATCH onto
+          the module type after the profile exists.
+        - ``attribute_names``: list of configured module attribute names to use
+          when seeding the module-type profile schema, even if all resolved
+          values in ``attributes`` are currently ``None``.
+
         When *args* includes an ``attributes`` dict the values are applied to
         the module-type record via a dedicated PATCH **after** the profile has
-        been committed.  NetBox validates attribute values against the profile's
+        been committed. NetBox validates attribute values against the profile's
         JSON Schema; sending both ``profile`` and ``attributes`` in a single
         request causes attributes to be silently ignored on some NetBox
         versions, so the two-step approach is mandatory.
