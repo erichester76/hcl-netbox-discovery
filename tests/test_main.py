@@ -672,6 +672,57 @@ def test_run_queued_job_debug_mode_restores_root_level(tmp_path, tmp_db):
         patcher.stop()
 
 
+def test_captured_job_logging_keeps_root_debug_until_last_overlap_exits(tmp_db):
+    """Concurrent debug capture contexts must not restore root level too early."""
+    import collector.db as db_module  # noqa: PLC0415
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+    from collector.job_lifecycle import captured_job_logging  # noqa: PLC0415
+
+    root_logger = logging.getLogger()
+    original_level = logging.INFO
+    root_logger.setLevel(original_level)
+    job_lifecycle._debug_capture_refcount = 0
+    job_lifecycle._saved_root_level = logging.NOTSET
+
+    entered = threading.Barrier(2)
+    first_exited = threading.Event()
+    release_second = threading.Event()
+    results: dict[str, int] = {}
+
+    def worker(name: str, wait_to_exit: threading.Event | None = None) -> None:
+        job_id = db_module.create_job(f"/tmp/{name}.hcl", debug_mode=True)
+        with captured_job_logging(job_id, capture_debug_logs=True):
+            entered.wait()
+            if wait_to_exit is not None:
+                wait_to_exit.wait(timeout=2)
+            results[f"{name}_inside"] = root_logger.level
+        results[f"{name}_after"] = root_logger.level
+        if name == "first":
+            first_exited.set()
+
+    first = threading.Thread(target=worker, args=("first",))
+    second = threading.Thread(target=worker, args=("second", release_second))
+    first.start()
+    second.start()
+
+    assert first_exited.wait(timeout=2), "first debug capture context did not exit"
+    assert root_logger.level == logging.DEBUG
+    release_second.set()
+
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert results["first_inside"] == logging.DEBUG
+    assert results["second_inside"] == logging.DEBUG
+    assert results["first_after"] == logging.DEBUG
+    assert results["second_after"] == original_level
+    assert root_logger.level == original_level
+    assert job_lifecycle._debug_capture_refcount == 0
+    assert job_lifecycle._saved_root_level == logging.NOTSET
+
+
 def test_cli_debug_level_captures_debug_logs(tmp_path, tmp_db):
     """Manual CLI runs with --log-level DEBUG should persist DEBUG records."""
     import collector.db as db_module  # noqa: PLC0415

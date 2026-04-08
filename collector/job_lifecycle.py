@@ -91,7 +91,6 @@ def captured_job_logging(job_id: int, *, capture_debug_logs: bool) -> Iterator[N
                 _debug_capture_saved_level = root_logger.level
                 root_logger.setLevel(logging.DEBUG)
             _debug_capture_refcount += 1
-
     root_logger.addHandler(handler)
     try:
         with job_context(job_id):
@@ -103,6 +102,7 @@ def captured_job_logging(job_id: int, *, capture_debug_logs: bool) -> Iterator[N
                 _debug_capture_refcount -= 1
                 if _debug_capture_refcount == 0:
                     root_logger.setLevel(_debug_capture_saved_level)
+                    _debug_capture_saved_level = logging.NOTSET
 
 
 def persist_job_result(
