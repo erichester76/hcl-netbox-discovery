@@ -23,19 +23,60 @@ _debug_capture_saved_level: int = logging.NOTSET
 
 def summary_from_stats(all_stats: list[Any]) -> tuple[dict[str, Any], bool]:
     """Build the persisted summary payload and partial-run flag."""
-    summary = {
-        s.object_name: {
-            "processed": s.processed,
-            "created": s.created,
-            "updated": s.updated,
-            "skipped": s.skipped,
-            "errored": s.errored,
-            "nested_skipped": dict(sorted(s.nested_skipped.items())),
-        }
-        for s in all_stats
-    }
+    summary: dict[str, dict[str, Any]] = {}
+    for stat in all_stats:
+        bucket = summary.setdefault(
+            stat.object_name,
+            {
+                "processed": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "errored": 0,
+                "nested_skipped": {},
+            },
+        )
+        _accumulate_stat_bucket(bucket, stat)
+
     has_errors = any(s.errored > 0 for s in all_stats)
     return summary, has_errors
+
+
+def _accumulate_stat_bucket(bucket: dict[str, Any], stat: Any) -> None:
+    """Accumulate counters from one stats object into *bucket*."""
+    bucket["processed"] += stat.processed
+    bucket["created"] += stat.created
+    bucket["updated"] += stat.updated
+    bucket["skipped"] += stat.skipped
+    bucket["errored"] += stat.errored
+    for reason, count in stat.nested_skipped.items():
+        bucket["nested_skipped"][reason] = bucket["nested_skipped"].get(reason, 0) + count
+    bucket["nested_skipped"] = dict(sorted(bucket["nested_skipped"].items()))
+
+
+def iterations_from_stats(all_stats: list[Any]) -> dict[str, dict[str, Any]]:
+    """Build per-source summary breakdown keyed by source URL."""
+    per_source: dict[str, dict[str, Any]] = {}
+    for stat in all_stats:
+        source_url = getattr(stat, "source_url", None)
+        if not isinstance(source_url, str) or not source_url:
+            continue
+
+        entry = per_source.setdefault(source_url, {"summary": {}})
+        bucket = entry["summary"].setdefault(
+            stat.object_name,
+            {
+                "processed": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+                "errored": 0,
+                "nested_skipped": {},
+            },
+        )
+        _accumulate_stat_bucket(bucket, stat)
+
+    return per_source
 
 
 def build_job_artifact(
@@ -47,12 +88,14 @@ def build_job_artifact(
     success: bool,
     has_errors: bool,
     summary: dict[str, Any] | None,
+    all_stats: list[Any] | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
     """Build the persisted artifact payload for a job run."""
     status = "failed"
     if success:
         status = "partial" if has_errors else "success"
+
     return {
         "job_id": job_id,
         "hcl_file": hcl_file,
@@ -62,6 +105,7 @@ def build_job_artifact(
         "status": status,
         "has_errors": has_errors,
         "summary": summary or {},
+        "iterations": iterations_from_stats(all_stats or []),
         "error": error,
     }
 

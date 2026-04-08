@@ -168,7 +168,6 @@ def _run_queued_job(job: dict[str, Any]) -> None:
         job_already_started=True,
     )
 
-
 def _execute_job(
     job_id: int,
     hcl_file: str,
@@ -209,12 +208,14 @@ def _execute_job(
                 success=False,
                 has_errors=False,
                 summary=None,
+                all_stats=None,
                 error=f"Mapping file not found: {hcl_file}",
             ),
         )
         return False
 
     summary: dict[str, Any] = {}
+    all_stats: list[Any] = []
     success = False
     has_errors = False
     error_message: str | None = None
@@ -252,6 +253,7 @@ def _execute_job(
                 success=success,
                 has_errors=has_errors,
                 summary=summary if summary else None,
+                all_stats=all_stats,
                 error=error_message,
             ),
             forced_status="stopped" if stopped and success else None,

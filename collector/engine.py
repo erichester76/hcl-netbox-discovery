@@ -221,6 +221,7 @@ class RunStats:
 
     def __init__(self, object_name: str) -> None:
         self.object_name = object_name
+        self.source_url: str | None = None
         self.processed = 0
         self.created = 0
         self.updated = 0
@@ -992,6 +993,7 @@ class Engine:
                 if self._should_stop(base_ctx):
                     break
                 stats = self._process_object(obj_cfg, base_ctx)
+                stats.source_url = source_cfg.url
                 pass_stats.append(stats)
                 stats.log_summary()
         finally:
