@@ -10,7 +10,7 @@ The modular collector is a declarative, source-agnostic framework for syncing ex
 
 The engine reads the HCL file, connects to both systems, and orchestrates the full sync — including prerequisite creation, field evaluation, parallel threading, tag management, and error isolation — without any source-specific code.
 
-The web UI (`web_server.py`) provides a real-time dashboard for monitoring jobs, managing schedules, editing configuration settings, and controlling the NetBox cache. The unattended scheduler itself runs in `main.py --run-scheduler`. All job history, logs, schedules, and DB-backed config overrides are stored in a local SQLite database.
+The web UI (`src/web/web_server.py`) provides a real-time dashboard for monitoring jobs, managing schedules, editing configuration settings, and controlling the NetBox cache. The unattended scheduler itself runs in `main.py --run-scheduler`. All job history, logs, schedules, and DB-backed config overrides are stored in a local SQLite database.
 
 Adapter-to-mapping payload contracts for placement and identity are documented
 in `docs/SOURCE_PAYLOAD_CONTRACTS.md`.
@@ -21,7 +21,7 @@ in `docs/SOURCE_PAYLOAD_CONTRACTS.md`.
 
 ```
 hcl-netbox-discovery/
-├── collector/
+├── src/collector/
 │   ├── __init__.py
 │   ├── engine.py                  # Top-level orchestrator
 │   ├── config.py                  # HCL parser + config model
@@ -43,7 +43,7 @@ hcl-netbox-discovery/
 │       ├── snmp.py                # SNMP adapter (pysnmp ≥ 7.1, vendor-agnostic)
 │       ├── tenable.py             # Tenable One / Nessus adapter
 │       └── netbox.py              # NetBox-to-NetBox source adapter
-├── web/
+├── src/web/
 │   ├── __init__.py
 │   ├── app.py                     # Flask application factory + all route handlers
 │   └── templates/
@@ -77,10 +77,9 @@ hcl-netbox-discovery/
 │   ├── ARCHITECTURE.md            # This document
 │   └── HCL_REFERENCE.md          # HCL mapping file syntax reference
 ├── main.py                        # CLI entry point (manual run + scheduler loop)
-├── web_server.py                  # Web UI entry point
+├── src/web/web_server.py          # Web UI entry point
 ├── Dockerfile
 ├── docker-compose.yml
-└── requirements.txt
 ```
 
 ---
@@ -108,7 +107,7 @@ Polls the database every 60 seconds for cron schedules that are due and fires th
 ### Web UI
 
 ```
-python web_server.py [--port PORT] [--host HOST] [--debug]
+python -m web.web_server [--port PORT] [--host HOST] [--debug]
 ```
 
 Serves the Flask dashboard on port 5000 (default). The web server and the scheduler process share the same SQLite database, so jobs started from either surface appear together in the dashboard.
@@ -119,7 +118,7 @@ The web UI does not execute collector code directly. It queues jobs in the datab
 
 ## SQLite Database
 
-`collector/db.py` owns the single SQLite file (`data/collector_jobs.sqlite3` by default, overridden by `COLLECTOR_DB_PATH`). It is opened in **WAL mode** with **foreign key enforcement** enabled on every connection. A module-level `threading.Lock` serialises writes from the multi-threaded engine and from concurrent web requests.
+`src/collector/db.py` owns the single SQLite file (`data/collector_jobs.sqlite3` by default, overridden by `COLLECTOR_DB_PATH`). It is opened in **WAL mode** with **foreign key enforcement** enabled on every connection. A module-level `threading.Lock` serialises writes from the multi-threaded engine and from concurrent web requests.
 
 The path is created automatically (`os.makedirs`) on first use.
 
@@ -212,7 +211,7 @@ CREATE TABLE config_settings (
 );
 ```
 
-### Public API (`collector/db.py`)
+### Public API (`src/collector/db.py`)
 
 | Function | Description |
 |---|---|
@@ -243,7 +242,7 @@ CREATE TABLE config_settings (
 
 ## Web UI
 
-`web/app.py` is a Flask application factory (`create_app()`). It imports `collector.db` directly for all data access. On-demand runs triggered from the UI are queued in the DB, and the scheduler worker in `main.py` executes them asynchronously.
+`src/web/app.py` is a Flask application factory (`create_app()`). It imports `collector.db` directly for all data access. On-demand runs triggered from the UI are queued in the DB, and the scheduler worker in `main.py` executes them asynchronously.
 
 ### Routes
 
@@ -359,7 +358,7 @@ The framework calls this exclusively for all NetBox writes. No direct `pynetbox`
 
 ---
 
-### `collector/config.py`
+### `src/collector/config.py`
 
 Parses HCL files using `python-hcl2` and produces a validated `CollectorConfig` dataclass tree:
 
@@ -386,7 +385,7 @@ CollectorConfig
 
 ---
 
-### `collector/field_resolvers.py`
+### `src/collector/field_resolvers.py`
 
 Evaluates field expressions at runtime against a source object and an execution context. Expressions are written as Python-evaluable strings using a small DSL of helper functions. The resolver exposes those helpers as a safe eval scope:
 
@@ -419,7 +418,7 @@ Path traversal in `source()` supports:
 
 ---
 
-### `collector/prerequisites.py`
+### `src/collector/prerequisites.py`
 
 Evaluates `prerequisite` blocks in declaration order before the main field payload is built. Each prerequisite maps to a `pynetbox2` `ensure_*` or `upsert` call:
 
@@ -443,7 +442,7 @@ Resolved IDs are stored in the execution context and made available to field exp
 
 ---
 
-### `collector/engine.py`
+### `src/collector/engine.py`
 
 Top-level orchestrator per HCL file:
 
@@ -461,19 +460,19 @@ Dry-run mode (when `collector.dry_run = true`) logs the payloads that *would* be
 
 ---
 
-### `collector/db.py`
+### `src/collector/db.py`
 
 See [SQLite Database](#sqlite-database) above for the full schema and public API reference.
 
 ---
 
-### `collector/job_log_handler.py`
+### `src/collector/job_log_handler.py`
 
 A `logging.Handler` subclass that writes formatted log records to the `job_logs` table via `db.add_log()`. It is attached to the root logger for the duration of each job run (CLI or web-triggered) and removed immediately afterwards so logs from other concurrent jobs are not cross-contaminated.
 
 ---
 
-### `collector/sources/base.py`
+### `src/collector/sources/base.py`
 
 Minimal interface every source adapter must implement:
 
@@ -489,7 +488,7 @@ class DataSource:
 
 ---
 
-### `collector/sources/vmware.py`
+### `src/collector/sources/vmware.py`
 
 Wraps `pyVmomi`'s `SmartConnect`/`Disconnect` lifecycle. Implements `get_objects` for:
 
@@ -503,7 +502,7 @@ Returns raw pyVmomi managed objects. The field resolver's `source()` function ha
 
 ---
 
-### `collector/sources/azure.py`
+### `src/collector/sources/azure.py`
 
 Uses the Azure SDK (`azure-identity`, `azure-mgmt-compute`, `azure-mgmt-network`, `azure-mgmt-subscription`) to enumerate resources across one or more Azure subscriptions.
 
@@ -513,7 +512,7 @@ Implements `get_objects` for collections: `"subscriptions"`, `"virtual_machines"
 
 ---
 
-### `collector/sources/ldap.py`
+### `src/collector/sources/ldap.py`
 
 Generic LDAP adapter using `ldap3`. Supports any collection name; maps it to an LDAP search using `extra.search_base`, `extra.search_filter`, and `extra.attributes`. Returns raw LDAP entry dicts.
 
@@ -521,7 +520,7 @@ Because Active Directory exposes its data over the standard LDAP protocol, `api_
 
 ---
 
-### `collector/sources/catc.py`
+### `src/collector/sources/catc.py`
 
 Cisco Catalyst Center (DNA Center) adapter using `dnacentersdk`. Authenticates with user credentials and wraps the Device Inventory API.
 
@@ -529,7 +528,7 @@ Implements `get_objects` for collection `"devices"`. Device inventory is fetched
 
 ---
 
-### `collector/sources/nexus.py`
+### `src/collector/sources/nexus.py`
 
 Cisco Nexus Dashboard Fabric Controller (NDFC) adapter. Uses token-based authentication (tries `/login` then the NDFC API token endpoint). Optionally fetches per-switch interface lists when `fetch_interfaces = "true"` and embeds them in each switch record.
 
@@ -537,7 +536,7 @@ Implements `get_objects` for collection `"switches"`.
 
 ---
 
-### `collector/sources/f5.py`
+### `src/collector/sources/f5.py`
 
 F5 BIG-IP iControl REST adapter. Authenticates with user credentials and fetches device identity from `sys/hardware` (with fallback to `identified-devices`), software version from `sys/version`, and management IP from `sys/management-ip`. Optionally fetches physical interfaces and self-IPs.
 
@@ -545,7 +544,7 @@ Implements `get_objects` for collection `"devices"`.
 
 ---
 
-### `collector/sources/prometheus.py`
+### `src/collector/sources/prometheus.py`
 
 Prometheus HTTP API adapter. Queries `node_uname_info` to enumerate Linux hosts, then enriches each with `node_dmi_info`, `node_memory_MemTotal_bytes`, and `node_cpu_seconds_total`. Optionally fetches `node_network_info` for interface data.
 
@@ -553,7 +552,7 @@ Implements `get_objects` for collection `"nodes"`.
 
 ---
 
-### `collector/sources/snmp.py`
+### `src/collector/sources/snmp.py`
 
 Vendor-agnostic SNMP adapter using `pysnmp ≥ 7.1` async API (via `asyncio.run()`). Polls a comma-separated list of hosts from `url`/`SNMP_HOSTS`. Supports SNMPv2c (community string = `username`) and SNMPv3 (parameters from `extra`). Exposes `sys_object_id` and `if_type` (raw integers) so vendor-specific logic can live entirely in HCL.
 
@@ -567,7 +566,7 @@ Included example mappings:
 
 ---
 
-### `collector/sources/tenable.py`
+### `src/collector/sources/tenable.py`
 
 Tenable One (cloud) and Nessus (on-premise) adapter. Supports `api_type = "tenable"`.
 
@@ -587,7 +586,7 @@ The `extra.date_range` key (default `30`) limits results to the last N days. Use
 
 ---
 
-### `collector/sources/rest.py`
+### `src/collector/sources/rest.py`
 
 Generic HTTP/REST adapter.  **No Python code is required per source** — all
 configuration comes from `collection {}` sub-blocks in the HCL `source` block.
@@ -634,7 +633,7 @@ the web dashboard always shows a unified history regardless of how a job was sta
 
 ---
 
-### `web_server.py`
+### `src/web/web_server.py`
 
 Thin entry-point wrapper for the Flask web UI. Parses `--port`, `--host`, `--debug`, and
 `--log-level` options (or their environment variable equivalents: `WEB_PORT`, `WEB_HOST`,
@@ -681,7 +680,7 @@ main.py (--mapping or --run-scheduler)
 ### Web UI request flow
 
 ```
-Browser → Flask (web/app.py)
+Browser → Flask (src/web/app.py)
               │
               ├── GET  /              → render_template("index.html",
               │                           running=get_running_jobs(),

@@ -27,9 +27,14 @@ ENV POETRY_VIRTUALENVS_IN_PROJECT=1 \
     POETRY_NO_INTERACTION=1
 
 # Dependency source of truth: pyproject.toml (and poetry.lock when present)
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml poetry.lock* README.md ./
 
 RUN poetry install --only main --no-root
+
+# Copy application packages and install the project itself from src/.
+COPY src/ src/
+
+RUN poetry install --only main
 
 # ---------------------------------------------------------------------------
 # Stage 2 – lean runtime image
@@ -54,12 +59,10 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application source
-COPY collector/ collector/
 COPY mappings/  mappings/
 COPY regex/     regex/
-COPY web/       web/
+COPY src/       src/
 COPY main.py    .
-COPY web_server.py .
 
 # Run as a non-root user
 RUN useradd -r -u 1001 -g root appuser

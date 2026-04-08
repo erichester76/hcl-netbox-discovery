@@ -1,5 +1,5 @@
 """
-File: collector/sources/utils.py
+File: src/collector/sources/utils.py
 Purpose: Shared utility helpers used across source adapters.
 Created: 2026-03-30
 Last Changed: Copilot Issue: #cleanup
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -44,7 +44,7 @@ def safe_get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def parse_speed_mbps(speed_str: str, *, numeric_is_bps: bool = False) -> Optional[int]:
+def parse_speed_mbps(speed_str: str, *, numeric_is_bps: bool = False) -> int | None:
     """Parse a speed string into Mbps.
 
     Handles human-readable formats such as ``"10G"``, ``"10GBPS"``,
@@ -90,7 +90,7 @@ def disable_ssl_warnings() -> None:
 
 
 def close_http_session(
-    session: Optional[requests.Session],
+    session: requests.Session | None,
     source_name: str = "",
 ) -> None:
     """Close *session* with standard error handling and return ``None``.
