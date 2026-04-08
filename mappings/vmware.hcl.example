@@ -296,14 +296,6 @@ object "vm" {
     value = "source('config.hardware.memoryMB')"
   }
 
-  prerequisite "platform" {
-    method   = "ensure_platform"
-    args     = {
-       name              = "source('config.product.fullName') or 'Unknown'"
-    }
-    optional = true
-  }
-
   field "tags" {
     type  = "tags"
     value = "['vmware-sync']"
