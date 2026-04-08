@@ -757,7 +757,7 @@ def get_jobs_filtered(
         params.append(hcl_file)
     params.append(limit)
     query = (
-        "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+        "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode "
         f"FROM jobs WHERE {' AND '.join(clauses)} ORDER BY id DESC LIMIT ?"
     )
     with _conn() as con:
@@ -769,7 +769,7 @@ def get_running_jobs() -> list[dict[str, Any]]:
     """Return all queued and running jobs, newest first, without heavy detail fields."""
     with _conn() as con:
         rows = con.execute(
-            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode, artifact_json "
+            "SELECT id, hcl_file, run_token, status, stop_requested, created_at, started_at, finished_at, summary, dry_run, debug_mode "
             "FROM jobs WHERE status IN ('queued', 'running') ORDER BY id DESC"
         ).fetchall()
     return [_row_to_job_summary(r) for r in rows]
@@ -873,18 +873,12 @@ def _row_to_job_summary(row: tuple) -> dict[str, Any]:
         "summary": None,
         "dry_run": bool(row[9]) if len(row) > 9 else False,
         "debug_mode": bool(row[10]) if len(row) > 10 else False,
-        "artifact": None,
     }
     if row[8]:
         try:
             job["summary"] = json.loads(row[8])
         except (json.JSONDecodeError, TypeError):
             job["summary"] = row[8]
-    if len(row) > 11 and row[11]:
-        try:
-            job["artifact"] = json.loads(row[11])
-        except (json.JSONDecodeError, TypeError):
-            job["artifact"] = row[11]
     return job
 
 
