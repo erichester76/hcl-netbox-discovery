@@ -121,6 +121,13 @@ Do not use a single generic branch namespace for unrelated work. The branch
 name should make it obvious how the change should flow through `dev`,
 `release/<version>`, and `main`.
 
+Container publishing follows the same flow:
+
+- `dev` pushes publish a `:dev` image for code-bearing merges
+- `docs/*` and `chore/*` merges into `dev` do not publish a `:dev` image
+- `main` publishes production images
+- `v*` tags publish release images
+
 ## 3b. Versioning
 
 Releases follow semantic versioning from `1.0.0` onward:
