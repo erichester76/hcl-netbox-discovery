@@ -99,7 +99,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     (
         "COLLECTOR_DB_PATH",
         "",
-        "Path for the SQLite job-tracking database (default: ./collector_jobs.sqlite3)",
+        "Path for the SQLite job-tracking database (default: data/collector_jobs.sqlite3)",
         "Web UI",
     ),
     (
