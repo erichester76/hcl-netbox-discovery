@@ -16,7 +16,7 @@ Read these first:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/HCL_REFERENCE.md`
-4. `docs/DEVELOPER_ONBOARDING.md`
+4. `docs/REPOSITORY_GUIDE.md`
 
 ## Local Setup
 
@@ -97,10 +97,66 @@ poetry run python web_server.py
 ## Development Workflow
 
 1. Read the relevant docs and tests first.
-2. Make the smallest change that solves the problem.
-3. Run focused tests locally.
-4. Update docs if behavior or usage changed.
-5. Run `poetry run ruff check .` and `poetry run ruff format .` before opening a PR.
+2. Start from the correct long-lived branch:
+   - feature and bugfix branches branch from `origin/dev`
+   - stabilization branches target the active `release/<version>` branch
+   - production promotions target `main`
+3. Make the smallest change that solves the problem.
+4. Run focused tests locally.
+5. Update docs if behavior or usage changed.
+6. Run `poetry run ruff check .` and `poetry run ruff format .` before opening a PR.
+
+## Branching And Release Flow
+
+This repository uses three long-lived branches:
+
+- `dev`
+  - integration branch for day-to-day feature and bugfix work
+  - all normal feature/bug branches should start from `origin/dev`
+  - all routine PRs should target `dev`
+- `release/<version>`
+  - versioned stabilization branch for the next production cut
+  - promote work from `dev` into the active release branch in controlled batches
+  - use this branch for final verification, documentation cleanup, and release notes
+- `main`
+  - production branch only
+  - only release promotions and production hotfixes should land here
+  - container/image builds and release tags should be treated as `main` artifacts
+
+Recommended flow:
+
+1. branch from `origin/dev`
+2. open PR into `dev`
+3. merge reviewed work into `dev`
+4. periodically promote `dev` into the active `release/<version>` branch
+5. validate that release branch
+6. promote `release/<version>` into `main`
+7. create version tags from a clean checkout of `origin/main`
+
+Hotfix rule:
+
+- if production needs an urgent fix, branch from `origin/main`
+- merge the fix into `main`
+- immediately back-merge or cherry-pick it into the active `release/<version>` branch and `dev` so the branches do not drift
+
+## Versioning Rules
+
+Version tags follow semantic versioning:
+
+- `MAJOR`
+  - breaking changes only
+  - examples: incompatible HCL semantics, removed settings, removed or changed
+    API contracts, schema changes requiring operator action
+- `MINOR`
+  - backward-compatible features
+- `PATCH`
+  - backward-compatible fixes only
+
+Before creating a release tag, explicitly classify the change set:
+
+- if it contains any breaking change, bump `MAJOR`
+- if it adds features without breaking compatibility, bump `MINOR`
+- if it only fixes bugs or docs without breaking compatibility, bump `PATCH`
 
 ## Choosing Tests
 
@@ -121,7 +177,7 @@ When a change affects behavior, update the matching docs in the same branch:
 - `README.md`: user-visible commands and operational behavior
 - `docs/ARCHITECTURE.md`: runtime model, components, DB design
 - `docs/HCL_REFERENCE.md`: HCL syntax and supported options
-- `docs/DEVELOPER_ONBOARDING.md`: contributor workflow and codebase orientation
+- `docs/REPOSITORY_GUIDE.md`: contributor workflow and codebase orientation
 
 ## Pull Requests
 
@@ -138,6 +194,14 @@ Include:
 - why it changed
 - how you tested it
 - any env var, schema, or Docker impact
+
+Target branches:
+
+- normal feature/bug PRs: `dev`
+- stabilization/promote PRs: active `release/<version>` branch
+- production promotion PRs: `main`
+
+Do not open routine feature work directly against `main`.
 
 ## When In Doubt
 

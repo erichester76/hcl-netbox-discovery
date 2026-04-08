@@ -512,7 +512,8 @@ hcl-netbox-discovery/
 ├── docs/
 │   ├── ARCHITECTURE.md            # Framework design and data flow
 │   ├── HCL_REFERENCE.md           # Full HCL language specification
-│   └── DEVELOPER_ONBOARDING.md    # New-developer orientation guide
+│   ├── REPOSITORY_GUIDE.md        # Repo-specific developer guide
+│   └── DEVELOPER_ONBOARDING.md    # Redirect to repository guide
 
 ├── CONTRIBUTING.md                # Local setup, workflow, and PR guidance
 
@@ -524,9 +525,45 @@ hcl-netbox-discovery/
 ## Further Documentation
 
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — Local setup, development workflow, testing, and PR expectations
-- **[`docs/DEVELOPER_ONBOARDING.md`](docs/DEVELOPER_ONBOARDING.md)** — Codebase tour and first-day developer guide
+- **[`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md)** — Repository-specific codebase tour, setup, and workflow guide
 - **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — Full framework architecture, component roles, data flow, and design goals
 - **[`docs/HCL_REFERENCE.md`](docs/HCL_REFERENCE.md)** — Complete HCL language specification with all blocks, attributes, and expression helpers
 - **[`docs/ENGINEERING_AUDIT.md`](docs/ENGINEERING_AUDIT.md)** — Current refactor candidates and code-quality audit notes
 - **[`SUPPORT.md`](SUPPORT.md)** — Where to ask for help, file bugs, and request new source support
 - **[`SECURITY.md`](SECURITY.md)** — How to report security issues privately
+
+## Branching And Releases
+
+This repository uses a three-stage promotion model:
+
+- `dev`: daily integration branch for feature and bugfix work
+- `release/<version>`: versioned stabilization branch for the next production cut
+- `main`: production branch only
+
+Routine feature and bugfix branches should start from `origin/dev` and target
+`dev`. Promote tested batches from `dev` to the active `release/<version>`
+branch, then promote `release/<version>` to `main` for production. Create
+release tags only from a clean checkout of current `origin/main`.
+
+Current release branch:
+
+- `release/1.0.0`
+
+## Versioning Policy
+
+This repository uses semantic versioning once `1.0.0` is established:
+
+- `MAJOR`
+  - breaking changes only
+  - examples: incompatible HCL behavior changes, removed settings, removed API
+    fields/routes, schema changes requiring operator intervention
+- `MINOR`
+  - backward-compatible features
+  - examples: new adapters, new HCL options, new UI or API endpoints that do
+    not break existing usage
+- `PATCH`
+  - backward-compatible fixes only
+  - examples: bug fixes, documentation corrections, internal refactors with no
+    contract change
+
+Breaking changes must only be released in a major version.
