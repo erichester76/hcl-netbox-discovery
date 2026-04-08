@@ -347,6 +347,9 @@ class TestEngineUpsertReporting:
         nb.upsert_with_outcome.side_effect = Exception(
             "The request failed with code 400 Bad Request: {'address': ['Duplicate IP address found in global table: 169.254.1.1/16']}"
         )
+        engine._normalize_duplicate_ip_host_route = MagicMock(
+            side_effect=AssertionError("normalization should not run for link-local duplicates")
+        )
 
         with caplog.at_level(logging.WARNING):
             result = engine._upsert(

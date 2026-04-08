@@ -1422,6 +1422,20 @@ class Engine:
                 if nested_stats is not None:
                     nested_stats.record_nested_skip(f"{resource}:ambiguous_lookup")
             elif _is_duplicate_ip_conflict(resource, exc):
+                if _is_link_local_ip(payload.get("address")):
+                    logger.warning(
+                        "Skipping link-local duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
+                        resource,
+                        payload.get("address"),
+                        payload.get("assigned_object_type"),
+                        payload.get("assigned_object_id"),
+                        exc,
+                    )
+                    if nested_stats is not None:
+                        nested_stats.record_nested_skip(
+                            f"{resource}:link_local_duplicate_conflict"
+                        )
+                    return None
                 try:
                     normalized = self._normalize_duplicate_ip_host_route(ctx, payload)
                 except Exception as normalize_exc:
@@ -1453,20 +1467,6 @@ class Engine:
                     except Exception as retry_exc:
                         exc = retry_exc
             if _is_duplicate_ip_conflict(resource, exc):
-                if _is_link_local_ip(payload.get("address")):
-                    logger.warning(
-                        "Skipping link-local duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
-                        resource,
-                        payload.get("address"),
-                        payload.get("assigned_object_type"),
-                        payload.get("assigned_object_id"),
-                        exc,
-                    )
-                    if nested_stats is not None:
-                        nested_stats.record_nested_skip(
-                            f"{resource}:link_local_duplicate_conflict"
-                        )
-                    return None
                 logger.error(
                     "Duplicate IP conflict  resource=%s  address=%r  assigned_object_type=%r  assigned_object_id=%r: %s",
                     resource,
