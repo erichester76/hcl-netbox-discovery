@@ -183,6 +183,7 @@ The web monitor provides a browser-based interface to:
 - **Stop queued or running jobs** from the dashboard or job detail page and persist a terminal `stopped` status with the partial summary collected so far
 - **Browse previous job logs** with colour-coded log levels
 - **Inspect sync summaries** (processed / created / updated / skipped / errored per object type, including `partial` runs)
+- **Inspect runtime snapshots** for each job, including the masked effective runtime config and code version metadata used for that run
 - **Fetch persisted job artifacts as JSON** for automation or remote triage
 - **Queue new sync runs** by selecting an HCL mapping file with optional dry-run and debug-log capture flags
 - **Manage cron schedules** for unattended runs
@@ -281,8 +282,10 @@ LOG_LEVEL=INFO
 
 ### Job APIs
 
-Job runs persist structured artifact JSON in the SQLite jobs table and expose
-that payload through the web API:
+Job runs persist structured artifact JSON, masked runtime snapshots, and code
+version metadata in the SQLite jobs table. The list APIs return lightweight
+job records without embedded artifact or runtime metadata, while the artifact
+and job detail paths expose the stored runtime metadata:
 
 ```text
 GET /api/jobs

@@ -10,6 +10,7 @@ import pytest
 
 import collector.db as db_module
 from collector.db import get_jobs, init_db
+from collector.job_lifecycle import _mask_sensitive_values, capture_job_runtime_metadata
 from main import _parse_args, _setup_logging
 
 
@@ -113,6 +114,29 @@ def _fake_stat():
     return s
 
 
+def _minimal_mapping() -> str:
+    return """
+source "rest" {
+  api_type = "rest"
+  url = "https://source.example.com"
+  username = "operator"
+  password = "super-secret"
+}
+
+netbox {
+  url = "https://netbox.example.com"
+  token = "netbox-secret"
+}
+
+collector {}
+
+object "device" {
+  source_collection = "devices"
+  netbox_resource = "dcim.devices"
+}
+""".strip()
+
+
 def test_summary_from_stats_builds_expected_payload():
     from collector.job_lifecycle import summary_from_stats  # noqa: PLC0415
 
@@ -151,7 +175,7 @@ def _wait_for_job_completion(job_id: int, db_module_ref, timeout: float = 5.0) -
 def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     """main() must create a DB job row and mark it success for a good mapping."""
     hcl = tmp_path / "test.hcl"
-    hcl.write_text("")  # file just needs to exist
+    hcl.write_text(_minimal_mapping())
 
     fake_engine = MagicMock()
     fake_engine.run.return_value = [_fake_stat()]
@@ -171,6 +195,89 @@ def test_main_creates_db_job_on_success(tmp_path, tmp_db, monkeypatch):
     assert job["artifact"] is not None
     assert job["artifact"]["status"] == "success"
     assert job["artifact"]["summary"]["devices"]["created"] == 1
+    assert job["runtime_snapshot"] is not None
+    assert job["runtime_snapshot"]["config"]["source"]["password"] == "********"
+    assert job["runtime_snapshot"]["config"]["netbox"]["token"] == "********"
+    assert job["runtime_snapshot"]["config"]["source"]["url"] == "https://source.example.com"
+    assert job["code_version"] is not None
+    assert job["artifact"]["runtime_snapshot"] == job["runtime_snapshot"]
+    assert job["artifact"]["code_version"] == job["code_version"]
+
+
+def test_main_runtime_snapshot_sanitizes_urls(tmp_path, tmp_db):
+    hcl = tmp_path / "test.hcl"
+    hcl.write_text(
+        """
+source "rest" {
+  api_type = "rest"
+  url = "https://api-user:api-pass@source.example.com/path?api_token=top-secret&mode=full"
+  username = "operator"
+  password = "super-secret"
+}
+
+netbox {
+  url = "https://netbox.example.com"
+  token = "netbox-secret"
+}
+
+collector {}
+
+object "device" {
+  source_collection = "devices"
+  netbox_resource = "dcim.devices"
+}
+""".strip()
+    )
+
+    fake_engine = MagicMock()
+    fake_engine.run.return_value = [_fake_stat()]
+
+    with patch("collector.engine.Engine", return_value=fake_engine):
+        from main import main  # noqa: PLC0415
+        rc = main(["--mapping", str(hcl)])
+
+    assert rc == 0
+    job = get_jobs()[0]
+    assert job["runtime_snapshot"]["config"]["source"]["url"] == (
+        "https://api-user:********@source.example.com/path?api_token=********&mode=full"
+    )
+    assert job["runtime_snapshot"]["execution_plan"]["source_groups"][0]["source_urls"] == [
+        "https://api-user:********@source.example.com/path?api_token=********&mode=full"
+    ]
+
+
+def test_mask_sensitive_values_masks_sensitive_lists():
+    payload = {"tokens": ["one", "two"], "secrets": ["a"], "nested": {"api_key": ["x"]}}
+    masked = _mask_sensitive_values(payload)
+    assert masked["tokens"] == ["********", "********"]
+    assert masked["secrets"] == ["********"]
+    assert masked["nested"]["api_key"] == ["********"]
+
+
+def test_mask_sensitive_values_preserves_ipv6_url_brackets():
+    masked = _mask_sensitive_values(
+        {"url": "https://api-user:api-pass@[2001:db8::1]:8443/path?api_token=top-secret"}
+    )
+    assert masked["url"] == "https://api-user:********@[2001:db8::1]:8443/path?api_token=********"
+
+
+def test_capture_job_runtime_metadata_redacts_config_error_details(tmp_path):
+    hcl = tmp_path / "broken.hcl"
+    hcl.write_text("broken")
+
+    with patch(
+        "collector.job_lifecycle.load_config",
+        side_effect=RuntimeError("token=super-secret parse exploded"),
+    ):
+        runtime_snapshot, _code_version = capture_job_runtime_metadata(
+            hcl_file=str(hcl),
+            dry_run=False,
+            debug_mode=False,
+            run_token=None,
+        )
+
+    assert runtime_snapshot["config_error"] == "Configuration loading failed (RuntimeError)"
+    assert "super-secret" not in runtime_snapshot["config_error"]
 
 
 def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):

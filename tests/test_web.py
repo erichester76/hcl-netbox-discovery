@@ -15,6 +15,7 @@ from collector.db import (
     init_db,
     set_setting,
     start_job,
+    update_job_runtime_metadata,
 )
 
 
@@ -258,6 +259,22 @@ def test_job_detail_found(app):
     assert b"Sync started for test" in resp.data
 
 
+def test_job_detail_shows_runtime_snapshot_modal(app):
+    job_id = create_job("mappings/test.hcl")
+    update_job_runtime_metadata(
+        job_id,
+        runtime_snapshot={"config": {"source": {"password": "********"}}},
+        code_version={"version": "0.1.0", "git_commit": "abc123"},
+    )
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b"Runtime Snapshot" in resp.data
+    assert b"runtimeSnapshotModal" in resp.data
+    assert b"abc123" in resp.data
+
+
 def test_job_detail_partial_status(app):
     """A job finished with has_errors=True should show 'partial' badge."""
     job_id = create_job("mappings/test.hcl")
@@ -390,6 +407,10 @@ def test_api_running_jobs_returns_active_jobs(app):
     assert running_id in ids
     assert done_id not in ids
     assert data["count"] == 2
+    for job in data["jobs"]:
+        assert "artifact" not in job
+        assert "runtime_snapshot" not in job
+        assert "code_version" not in job
 
 
 def test_api_jobs_returns_recent_jobs(app):
@@ -401,6 +422,10 @@ def test_api_jobs_returns_recent_jobs(app):
     data = resp.get_json()
     assert data["count"] >= 2
     assert [job["id"] for job in data["jobs"][:2]] == [second_id, first_id]
+    for job in data["jobs"]:
+        assert "artifact" not in job
+        assert "runtime_snapshot" not in job
+        assert "code_version" not in job
 
 
 def test_api_jobs_supports_after_id_and_hcl_file_filter(app):
