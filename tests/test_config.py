@@ -997,3 +997,13 @@ class TestNetboxToNetboxDeviceMapping:
         device = self._device_object()
         fields = {field.name: field.value for field in device.fields}
         assert fields["description"] == "source('description') or ''"
+
+
+class TestNetboxToNetboxContactMapping:
+    MAPPING_PATH = "mappings/netbox-to-netbox.hcl.example"
+
+    def test_contact_lookup_is_strengthened_with_email(self):
+        cfg = load_config(self.MAPPING_PATH)
+        contact = next((o for o in cfg.objects if o.name == "contact"), None)
+        assert contact is not None, "missing contact object in netbox-to-netbox mapping"
+        assert contact.lookup_by == ["name", "email"]

@@ -150,7 +150,7 @@ object "tenant" {
 object "contact" {
   source_collection = "tenancy.contacts"
   netbox_resource   = "tenancy.contacts"
-  lookup_by         = ["name"]
+  lookup_by         = ["name", "email"]
   max_workers       = 4
 
   prerequisite "group" {
