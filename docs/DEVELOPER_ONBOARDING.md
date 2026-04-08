@@ -62,6 +62,29 @@ poetry run ruff check .
 poetry run ruff format . --check
 ```
 
+## 3a. Branching Model
+
+Use the long-lived branches intentionally:
+
+- `dev`
+  - default base for routine features and bug fixes
+- `release/<version>`
+  - versioned stabilization branch for the next production release
+- `main`
+  - production-only branch
+
+Normal workflow:
+
+1. `git fetch origin`
+2. branch from `origin/dev`
+3. open PR into `dev`
+4. promote vetted batches from `dev` into the active `release/<version>` branch
+5. promote `release/<version>` into `main`
+6. create release tags from a clean checkout of `origin/main`
+
+Only branch directly from `origin/main` for true production hotfixes, and back-port
+those fixes to the active `release/<version>` branch and `dev` immediately after merge.
+
 ## 4. Where Things Live
 
 ### Core runtime

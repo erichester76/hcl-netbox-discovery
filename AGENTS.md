@@ -196,13 +196,16 @@ Follow this workflow by default unless the user explicitly overrides it:
    - Use the open issues as the authoritative work queue.
 
 3. **Branching discipline**
-   - **Always** start new branches from the current remote `origin/main`, not
-     from the local workspace branch.
+   - **Always** start new feature and bugfix branches from the current remote
+     `origin/dev`, not from the local workspace branch.
    - Before creating a branch:
      - `git fetch origin`
-     - branch from `origin/main`
-   - If `main` moves while a PR is open, rebase or merge the latest
-     `origin/main` before attempting merge.
+     - branch from the correct promotion branch:
+       - `origin/dev` for normal work
+       - active `origin/release/<version>` for release-only fixes
+       - `origin/main` only for production hotfixes
+   - If the target long-lived branch moves while a PR is open, rebase or merge
+     the latest target branch before attempting merge.
 
 4. **Parallel execution**
    - Work the queue in priority order.
@@ -223,13 +226,21 @@ Follow this workflow by default unless the user explicitly overrides it:
 
 6. **Merge criteria**
    - Merge only after:
-     - the PR is up to date with current `origin/main`
+     - the PR is up to date with its current target branch
      - CI is green
      - Copilot review is clean or any actionable comments are addressed
-   - Treat comments about stale branch bases, drift from `main`, or missing
-     regression coverage as actionable by default.
+   - Treat comments about stale branch bases, drift from the target branch, or
+     missing regression coverage as actionable by default.
 
-7. **Idle behavior**
+7. **Promotion model**
+   - Treat `dev` as the integration branch for routine work.
+   - Promote vetted batches from `dev` to the active `release/<version>` branch.
+   - Promote `release/<version>` to `main` for production.
+   - Create version tags only from a clean checkout of current `origin/main`.
+   - If a hotfix lands in `main`, ensure it is merged or cherry-picked back
+     into the active `release/<version>` branch and `dev`.
+
+8. **Idle behavior**
    - When otherwise waiting, the next checks should be:
      - open PR status
      - new artifact bundles

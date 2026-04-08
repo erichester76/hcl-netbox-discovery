@@ -530,3 +530,20 @@ hcl-netbox-discovery/
 - **[`docs/ENGINEERING_AUDIT.md`](docs/ENGINEERING_AUDIT.md)** — Current refactor candidates and code-quality audit notes
 - **[`SUPPORT.md`](SUPPORT.md)** — Where to ask for help, file bugs, and request new source support
 - **[`SECURITY.md`](SECURITY.md)** — How to report security issues privately
+
+## Branching And Releases
+
+This repository uses a three-stage promotion model:
+
+- `dev`: daily integration branch for feature and bugfix work
+- `release/<version>`: versioned stabilization branch for the next production cut
+- `main`: production branch only
+
+Routine feature and bugfix branches should start from `origin/dev` and target
+`dev`. Promote tested batches from `dev` to the active `release/<version>`
+branch, then promote `release/<version>` to `main` for production. Create
+release tags only from a clean checkout of current `origin/main`.
+
+Current release branch:
+
+- `release/1.0.0`
