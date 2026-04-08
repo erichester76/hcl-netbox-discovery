@@ -10,7 +10,7 @@ import pytest
 
 import collector.db as db_module
 from collector.db import get_jobs, init_db
-from collector.job_lifecycle import _mask_sensitive_values
+from collector.job_lifecycle import _mask_sensitive_values, capture_job_runtime_metadata
 from main import _parse_args, _setup_logging
 
 
@@ -259,6 +259,25 @@ def test_mask_sensitive_values_preserves_ipv6_url_brackets():
         {"url": "https://api-user:api-pass@[2001:db8::1]:8443/path?api_token=top-secret"}
     )
     assert masked["url"] == "https://api-user:********@[2001:db8::1]:8443/path?api_token=********"
+
+
+def test_capture_job_runtime_metadata_redacts_config_error_details(tmp_path):
+    hcl = tmp_path / "broken.hcl"
+    hcl.write_text("broken")
+
+    with patch(
+        "collector.job_lifecycle.load_config",
+        side_effect=RuntimeError("token=super-secret parse exploded"),
+    ):
+        runtime_snapshot, _code_version = capture_job_runtime_metadata(
+            hcl_file=str(hcl),
+            dry_run=False,
+            debug_mode=False,
+            run_token=None,
+        )
+
+    assert runtime_snapshot["config_error"] == "Configuration loading failed (RuntimeError)"
+    assert "super-secret" not in runtime_snapshot["config_error"]
 
 
 def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):

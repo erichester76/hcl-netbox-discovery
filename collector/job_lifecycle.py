@@ -171,7 +171,8 @@ def _build_runtime_snapshot(
         cfg = load_config(hcl_file)
         source_groups = build_source_groups(cfg)
     except Exception as exc:
-        snapshot["config_error"] = str(exc)
+        logging.exception("Failed to load or build configuration for runtime snapshot: %s", hcl_file)
+        snapshot["config_error"] = f"Configuration loading failed ({type(exc).__name__})"
         return snapshot
 
     snapshot["config"] = _mask_sensitive_values(
