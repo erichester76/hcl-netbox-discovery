@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
 
 import tomllib
 
@@ -185,7 +186,7 @@ def _build_runtime_snapshot(
         "source_groups": [
             {
                 "max_workers": max_workers,
-                "source_urls": [source.url for source in sources],
+                "source_urls": [_sanitize_url(source.url) for source in sources],
             }
             for sources, max_workers in source_groups
         ]
@@ -236,10 +237,48 @@ def _mask_sensitive_values(value: Any, key: str | None = None) -> Any:
             for item_key, item_value in value.items()
         }
     if isinstance(value, list):
-        return [_mask_sensitive_values(item) for item in value]
+        return [_mask_sensitive_values(item, key) for item in value]
     if key and any(fragment in key.lower() for fragment in _SENSITIVE_KEY_FRAGMENTS):
         return _MASKED if value not in (None, "") else value
+    if isinstance(value, str) and key == "url":
+        return _sanitize_url(value)
     return value
+
+
+def _sanitize_url(value: str) -> str:
+    """Redact userinfo and obvious secret query params from URLs."""
+    try:
+        parts = urlsplit(value)
+    except Exception:
+        return value
+
+    if not parts.scheme or not parts.netloc:
+        return value
+
+    hostname = parts.hostname or ""
+    port = f":{parts.port}" if parts.port is not None else ""
+    userinfo = ""
+    if parts.username:
+        userinfo = parts.username
+        if parts.password is not None:
+            userinfo += f":{_MASKED}"
+        userinfo += "@"
+
+    query_pairs = [
+        (
+            key,
+            _MASKED
+            if any(fragment in key.lower() for fragment in _SENSITIVE_KEY_FRAGMENTS)
+            else val,
+        )
+        for key, val in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    query = "&".join(
+        f"{quote(key, safe='')}={quote(val, safe='*')}"
+        for key, val in query_pairs
+    )
+
+    return urlunsplit((parts.scheme, f"{userinfo}{hostname}{port}", parts.path, query, parts.fragment))
 
 
 @contextmanager

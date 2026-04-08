@@ -141,6 +141,24 @@ def test_update_job_runtime_metadata_persists_snapshot_and_code_version():
     assert job["code_version"] == code_version
 
 
+def test_update_job_runtime_metadata_only_updates_requested_field():
+    job_id = create_job("mappings/test.hcl", dry_run=True, debug_mode=True, run_token="run-123")
+    runtime_snapshot = {"job": {"hcl_file": "mappings/test.hcl"}}
+    code_version = {"version": "0.1.0", "git_commit": "abc123"}
+
+    update_job_runtime_metadata(
+        job_id,
+        runtime_snapshot=runtime_snapshot,
+        code_version=code_version,
+    )
+    update_job_runtime_metadata(job_id, runtime_snapshot={"job": {"hcl_file": "mappings/next.hcl"}})
+
+    job = get_job(job_id)
+    assert job is not None
+    assert job["runtime_snapshot"] == {"job": {"hcl_file": "mappings/next.hcl"}}
+    assert job["code_version"] == code_version
+
+
 def test_finish_job_failed():
     job_id = create_job("mappings/test.hcl")
     start_job(job_id)

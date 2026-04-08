@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 # Default DB path. Keep it under ``data/`` so the container can persist the
 # SQLite file without requiring a writable repo root.
@@ -601,16 +602,29 @@ def finish_job(
 def update_job_runtime_metadata(
     job_id: int,
     *,
-    runtime_snapshot: dict[str, Any] | None = None,
-    code_version: dict[str, Any] | None = None,
+    runtime_snapshot: dict[str, Any] | None | object = _UNSET,
+    code_version: dict[str, Any] | None | object = _UNSET,
 ) -> None:
     """Persist runtime snapshot metadata for a job before execution finishes."""
-    runtime_snapshot_json = json.dumps(runtime_snapshot) if runtime_snapshot is not None else None
-    code_version_json = json.dumps(code_version) if code_version is not None else None
+    updates: list[str] = []
+    params: list[Any] = []
+
+    if runtime_snapshot is not _UNSET:
+        updates.append("runtime_snapshot_json=?")
+        params.append(json.dumps(runtime_snapshot) if runtime_snapshot is not None else None)
+
+    if code_version is not _UNSET:
+        updates.append("code_version_json=?")
+        params.append(json.dumps(code_version) if code_version is not None else None)
+
+    if not updates:
+        return
+
+    params.append(job_id)
     with _conn() as con:
         con.execute(
-            "UPDATE jobs SET runtime_snapshot_json=?, code_version_json=? WHERE id=?",
-            (runtime_snapshot_json, code_version_json, job_id),
+            f"UPDATE jobs SET {', '.join(updates)} WHERE id=?",
+            params,
         )
 
 
