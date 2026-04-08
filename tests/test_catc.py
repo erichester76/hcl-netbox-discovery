@@ -73,11 +73,11 @@ class TestHierarchyPart:
     def test_level_0_is_global(self):
         assert _hierarchy_part("Global/US/Southeast/Clemson/Library", 0) == "Global"
 
-    def test_level_3_is_site(self):
-        assert _hierarchy_part("Global/US/Southeast/Clemson/Library", 3) == "Clemson"
+    def test_level_2_is_site(self):
+        assert _hierarchy_part("Global/US/Southeast/Clemson/Library", 2) == "Southeast"
 
-    def test_level_4_is_building(self):
-        assert _hierarchy_part("Global/US/Southeast/Clemson/Library", 4) == "Library"
+    def test_level_3_is_building(self):
+        assert _hierarchy_part("Global/US/Southeast/Clemson/Library", 3) == "Clemson"
 
     def test_missing_level_returns_empty(self):
         assert _hierarchy_part("Global/US", 5) == ""
@@ -258,7 +258,7 @@ class TestCatalystGetObjects:
         assert d["manufacturer"] == "Cisco"
         assert d["serial"] == "FOC12345678"
         assert d["status"] == "active"
-        assert d["site_name"] == "Clemson"
+        assert d["site_name"] == "Southeast"
 
     def test_get_devices_preserves_floor_as_location(self):
         src = self._connected_source()
@@ -285,8 +285,8 @@ class TestCatalystGetObjects:
 
         result = src.get_objects("devices")
 
-        assert result[0]["site_name"] == "Watt"
-        assert result[0]["location_name"] == "First Floor"
+        assert result[0]["site_name"] == "Southeast"
+        assert result[0]["location_name"] == "Watt"
 
     def test_deduplicates_by_serial(self):
         src = self._connected_source()
@@ -423,8 +423,8 @@ class TestCatalystEnrichDevice:
             family="Unified AP",
         )
         result = src._enrich_device(device, "Global/US/Southeast/watt/first floor")
-        assert result["site_name"] == "Watt"
-        assert result["location_name"] == "First Floor"
+        assert result["site_name"] == "Southeast"
+        assert result["location_name"] == "Watt"
 
 
 # ---------------------------------------------------------------------------
@@ -934,7 +934,7 @@ class TestCatalystBulkAssignments:
 
         assert len(result) == 1
         assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
+        assert result[0]["site_name"] == "Southeast"
         src._client.site_design.get_site_assigned_network_devices.assert_called_once_with(
             site_id="area-1",
             offset=1,
@@ -1062,7 +1062,7 @@ class TestCatalystBulkAssignments:
 
         assert len(result) == 1
         assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
+        assert result[0]["site_name"] == "Southeast"
 
     def test_bulk_site_assignment_parses_nested_device_and_site_shapes(self):
         src = self._connected_source()
@@ -1102,7 +1102,7 @@ class TestCatalystBulkAssignments:
 
         assert len(result) == 1
         assert result[0]["deviceId"] == "device-uuid-1"
-        assert result[0]["site_name"] == "Clemson"
+        assert result[0]["site_name"] == "Southeast"
 
     def test_select_assignment_roots_uses_shallowest_non_global_hierarchy(self):
         src = self._connected_source()
