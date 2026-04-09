@@ -25,6 +25,9 @@ Source HCL block example::
       # Comma-separated list of LDAP attributes to fetch.
       # Omit (or leave empty) to fetch all non-operational attributes ("*").
       attributes    = "cn,mail,memberOf"
+      # Optional page size for ldap3 paged search. Non-integer, zero, or
+      # negative values fall back to the default of 1000.
+      page_size     = 1000
     }
 
 Each returned dict has LDAP attribute names as keys.  Single-value attributes
@@ -198,6 +201,8 @@ class LDAPSource(DataSource):
         try:
             page_size = int(page_size_raw)
         except (TypeError, ValueError):
+            page_size = 1000
+        if page_size <= 0:
             page_size = 1000
 
         paged_search = getattr(
