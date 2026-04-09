@@ -435,15 +435,22 @@ def test_sensitive_setting_is_encrypted_at_rest(monkeypatch):
     monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
 
     set_setting("VCENTER_PASS", "super-secret")
+    set_setting("TENABLE_ACCESS_KEY", "access-secret")
 
     with sqlite3.connect(db_module._db_path()) as con:
         stored = con.execute(
             "SELECT value FROM config_settings WHERE key='VCENTER_PASS'"
         ).fetchone()[0]
+        access_key_stored = con.execute(
+            "SELECT value FROM config_settings WHERE key='TENABLE_ACCESS_KEY'"
+        ).fetchone()[0]
 
     assert stored != "super-secret"
     assert stored.startswith("enc:v1:")
+    assert access_key_stored != "access-secret"
+    assert access_key_stored.startswith("enc:v1:")
     assert get_config("VCENTER_PASS", "") == "super-secret"
+    assert get_config("TENABLE_ACCESS_KEY", "") == "access-secret"
 
 
 def test_sensitive_setting_requires_bootstrap_key_for_decryption(monkeypatch):
@@ -472,6 +479,27 @@ def test_non_secret_key_setting_does_not_require_encryption_bootstrap(monkeypatc
     set_setting("NETBOX_CACHE_KEY_PREFIX", "myapp:")
 
     assert get_config("NETBOX_CACHE_KEY_PREFIX", "") == "myapp:"
+
+
+def test_init_db_backfills_plaintext_sensitive_overrides(monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
+
+    with sqlite3.connect(db_module._db_path()) as con:
+        con.execute(
+            "UPDATE config_settings SET value=?, created_at=?, updated_at=? WHERE key='VCENTER_PASS'",
+            ("legacy-secret", "2026-01-01T00:00:00", "2026-01-02T00:00:00"),
+        )
+
+    init_db()
+
+    with sqlite3.connect(db_module._db_path()) as con:
+        stored = con.execute(
+            "SELECT value FROM config_settings WHERE key='VCENTER_PASS'"
+        ).fetchone()[0]
+
+    assert stored != "legacy-secret"
+    assert stored.startswith("enc:v1:")
+    assert get_config("VCENTER_PASS", "") == "legacy-secret"
 
 
 def test_catc_runtime_settings_are_seeded():

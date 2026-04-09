@@ -195,7 +195,7 @@ def test_api_job_logs_allows_token_auth(secured_app):
     assert resp.get_json()["logs"][0]["message"] == "first"
 
 
-def test_settings_page_decrypts_sensitive_db_overrides(app, monkeypatch):
+def test_settings_page_masks_sensitive_db_overrides(app, monkeypatch):
     monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "web-test-db-key")
     set_setting("VCENTER_PASS", "super-secret")
 
@@ -203,7 +203,8 @@ def test_settings_page_decrypts_sensitive_db_overrides(app, monkeypatch):
 
     assert resp.status_code == 200
     assert b"VCENTER_PASS" in resp.data
-    assert b"super-secret" in resp.data
+    assert b"super-secret" not in resp.data
+    assert b"(stored override)" in resp.data
 
 
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):

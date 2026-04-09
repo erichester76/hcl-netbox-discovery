@@ -71,6 +71,31 @@ def _decrypt_setting_value(key: str, value: str | None) -> str | None:
         ) from exc
 
 
+def _backfill_sensitive_setting_encryption(con: sqlite3.Connection) -> None:
+    """Encrypt legacy plaintext secret overrides when a bootstrap key is available."""
+    rows = con.execute("SELECT key, value FROM config_settings WHERE value IS NOT NULL").fetchall()
+    fernet = _settings_fernet()
+    warned_missing_key = False
+    for key, value in rows:
+        if not _is_sensitive_setting_key(key):
+            continue
+        if not isinstance(value, str) or value.startswith(_ENCRYPTED_VALUE_PREFIX):
+            continue
+        if fernet is None:
+            if not warned_missing_key:
+                logger.warning(
+                    "Sensitive DB overrides remain in plaintext because %s is not set.",
+                    _DB_ENCRYPTION_KEY_ENV,
+                )
+                warned_missing_key = True
+            continue
+        token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+        con.execute(
+            "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
+            (f"{_ENCRYPTED_VALUE_PREFIX}{token}", _now(), key),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -578,6 +603,8 @@ def init_db() -> None:
                 " SET default_value=?, description=?, group_name=? WHERE key=?",
                 (default_value, description, group_name, key),
             )
+
+        _backfill_sensitive_setting_encryption(con)
 
 
 def create_job(
@@ -1163,7 +1190,15 @@ def _row_to_schedule(row: tuple) -> dict[str, Any]:
 #
 # Keep this matcher narrow. Configuration keys like NETBOX_CACHE_KEY_PREFIX are
 # not secrets and must not require DB encryption bootstrap state.
-_SENSITIVE_PATTERNS = ("PASS", "PASSWORD", "TOKEN", "CLIENT_SECRET", "SECRET")
+_SENSITIVE_PATTERNS = (
+    "PASS",
+    "PASSWORD",
+    "TOKEN",
+    "CLIENT_SECRET",
+    "SECRET",
+    "ACCESS_KEY",
+    "API_KEY",
+)
 
 
 def get_config(key: str, default: str = "") -> str:
@@ -1248,7 +1283,8 @@ def _row_to_setting(row: tuple) -> dict[str, Any]:
         "description": row[4] or "",
         "group_name": row[5] or "General",
         "updated_at": row[6],
-        "effective_value": effective,
+        "effective_value": "" if is_sensitive else effective,
         "is_sensitive": is_sensitive,
         "is_overridden": db_value is not None,
+        "has_sensitive_value": is_sensitive and bool(effective),
     }
