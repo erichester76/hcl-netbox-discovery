@@ -132,3 +132,16 @@ class TestVMwareExampleVmMetadataMapping:
         assert fields["device"].lookup == {
             "name": "replace(source('runtime.host.name'), '.clemson.edu', '')"
         }
+
+    def test_vm_tagged_vlans_reuse_resolved_vm_site(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        vm_obj = next(o for o in cfg.objects if o.name == "vm")
+        interface = vm_obj.interfaces[0]
+        vlan = interface.tagged_vlans[0]
+
+        assert vlan.source_items == "_vlans"
+        site_field = next(f for f in vlan.fields if f.name == "site")
+        assert site_field.value == "prereq('site')"
+        assert site_field.type == "scalar"
+        assert site_field.resource is None
+        assert site_field.lookup is None
