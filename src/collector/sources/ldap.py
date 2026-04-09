@@ -41,7 +41,7 @@ Micro Focus IDM DHCP-lease schema.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from .base import DataSource
 
@@ -89,6 +89,27 @@ def _entry_to_dict(entry: Any) -> dict:
     return result
 
 
+def _attributes_to_dict(attributes: dict[str, Any]) -> dict:
+    """Normalize an LDAP attribute dict into the adapter's return shape."""
+    result: dict[str, Any] = {}
+    for attr_name, value in attributes.items():
+        if value is None:
+            result[attr_name] = ""
+            continue
+        if isinstance(value, list):
+            raw_values = [str(v) for v in value if str(v).strip()]
+        else:
+            raw_values = [str(value)] if str(value).strip() else []
+
+        if len(raw_values) == 0:
+            result[attr_name] = ""
+        elif len(raw_values) == 1:
+            result[attr_name] = raw_values[0]
+        else:
+            result[attr_name] = raw_values
+    return result
+
+
 # ---------------------------------------------------------------------------
 # LDAPSource
 # ---------------------------------------------------------------------------
@@ -97,8 +118,8 @@ class LDAPSource(DataSource):
     """ldap3-backed generic source adapter for LDAP/AD directories."""
 
     def __init__(self) -> None:
-        self._conn: Optional[Any] = None
-        self._config: Optional[Any] = None
+        self._conn: Any | None = None
+        self._config: Any | None = None
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -160,6 +181,7 @@ class LDAPSource(DataSource):
         search_base   = extra.get("search_base", "")
         search_filter = extra.get("search_filter", "(objectClass=*)")
         attrs_raw     = extra.get("attributes", "")
+        page_size_raw = extra.get("page_size", 1000)
 
         if not search_base:
             raise ValueError(
@@ -172,6 +194,37 @@ class LDAPSource(DataSource):
             attributes: Any = [a.strip() for a in str(attrs_raw).split(",") if a.strip()]
         else:
             attributes = ["*"]
+
+        try:
+            page_size = int(page_size_raw)
+        except (TypeError, ValueError):
+            page_size = 1000
+
+        paged_search = getattr(
+            getattr(getattr(self._conn, "extend", None), "standard", None),
+            "paged_search",
+            None,
+        )
+        if callable(paged_search) and page_size > 0:
+            logger.info(
+                "LDAP paged search base=%s filter=%s page_size=%d",
+                search_base,
+                search_filter,
+                page_size,
+            )
+            records: list[dict] = []
+            for entry in paged_search(
+                search_base=search_base,
+                search_filter=search_filter,
+                attributes=attributes,
+                paged_size=page_size,
+                generator=True,
+            ):
+                if not isinstance(entry, dict) or entry.get("type") != "searchResEntry":
+                    continue
+                records.append(_attributes_to_dict(entry.get("attributes", {})))
+            logger.debug("LDAP: returning %d paged records", len(records))
+            return records
 
         logger.info("LDAP search base=%s filter=%s", search_base, search_filter)
         self._conn.search(
