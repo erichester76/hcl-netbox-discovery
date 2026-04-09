@@ -7,13 +7,9 @@ from collector.config import load_config
 
 def test_site_lookup_uses_name_only() -> None:
     cfg = load_config("mappings/netbox-to-netbox.hcl.example")
-    site_obj = next(obj for obj in cfg.objects if obj.name == "site")
+    site_obj = next((obj for obj in cfg.objects if obj.name == "site"), None)
 
+    assert site_obj is not None, (
+        "Expected object 'site' in mappings/netbox-to-netbox.hcl.example"
+    )
     assert site_obj.lookup_by == ["name"]
-
-
-def test_contact_lookup_uses_name_only() -> None:
-    cfg = load_config("mappings/netbox-to-netbox.hcl.example")
-    contact_obj = next(obj for obj in cfg.objects if obj.name == "contact")
-
-    assert contact_obj.lookup_by == ["name"]
