@@ -446,9 +446,9 @@ def test_sensitive_setting_is_encrypted_at_rest(monkeypatch):
         ).fetchone()[0]
 
     assert stored != "super-secret"
-    assert stored.startswith("enc:v1:")
+    assert stored.startswith("enc:v2:")
     assert access_key_stored != "access-secret"
-    assert access_key_stored.startswith("enc:v1:")
+    assert access_key_stored.startswith("enc:v2:")
     assert get_config("VCENTER_PASS", "") == "super-secret"
     assert get_config("TENABLE_ACCESS_KEY", "") == "access-secret"
 
@@ -498,7 +498,7 @@ def test_init_db_backfills_plaintext_sensitive_overrides(monkeypatch):
         ).fetchone()[0]
 
     assert stored != "legacy-secret"
-    assert stored.startswith("enc:v1:")
+    assert stored.startswith("enc:v2:")
     assert get_config("VCENTER_PASS", "") == "legacy-secret"
 
 

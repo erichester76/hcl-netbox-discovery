@@ -7,7 +7,7 @@ import logging
 import os
 import sqlite3
 import threading
-from base64 import urlsafe_b64encode
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -15,10 +15,12 @@ from hashlib import sha256
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 logger = logging.getLogger(__name__)
 _UNSET = object()
-_ENCRYPTED_VALUE_PREFIX = "enc:v1:"
+_ENCRYPTED_VALUE_PREFIX = "enc:v2:"
 _DB_ENCRYPTION_KEY_ENV = "COLLECTOR_DB_ENCRYPTION_KEY"
 
 # Default DB path. Keep it under ``data/`` so the container can persist the
@@ -38,31 +40,48 @@ def _settings_fernet() -> Fernet | None:
     raw_key = os.environ.get(_DB_ENCRYPTION_KEY_ENV, "").strip()
     if not raw_key:
         return None
-    derived_key = urlsafe_b64encode(sha256(raw_key.encode("utf-8")).digest())
+    legacy_key = urlsafe_b64encode(sha256(raw_key.encode("utf-8")).digest())
+    return Fernet(legacy_key)
+
+
+def _settings_fernet_v2(salt: bytes) -> Fernet | None:
+    raw_key = os.environ.get(_DB_ENCRYPTION_KEY_ENV, "").strip()
+    if not raw_key:
+        return None
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=600_000,
+    )
+    derived_key = urlsafe_b64encode(kdf.derive(raw_key.encode("utf-8")))
     return Fernet(derived_key)
 
 
 def _encrypt_setting_value(key: str, value: str | None) -> str | None:
     if value is None or not _is_sensitive_setting_key(key):
         return value
-    fernet = _settings_fernet()
+    salt = os.urandom(16)
+    fernet = _settings_fernet_v2(salt)
     if fernet is None:
         raise RuntimeError(
             f"Sensitive DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
         )
     token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
-    return f"{_ENCRYPTED_VALUE_PREFIX}{token}"
+    return f"{_ENCRYPTED_VALUE_PREFIX}{urlsafe_b64encode(salt).decode('utf-8')}:{token}"
 
 
 def _decrypt_setting_value(key: str, value: str | None) -> str | None:
-    if value is None or not isinstance(value, str) or not value.startswith(_ENCRYPTED_VALUE_PREFIX):
+    if value is None or not isinstance(value, str):
         return value
-    fernet = _settings_fernet()
+    if not value.startswith(_ENCRYPTED_VALUE_PREFIX):
+        return value
+    _, _, salt_b64, token = value.split(":", 3)
+    fernet = _settings_fernet_v2(urlsafe_b64decode(salt_b64.encode("utf-8")))
     if fernet is None:
         raise RuntimeError(
             f"Encrypted DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
         )
-    token = value.removeprefix(_ENCRYPTED_VALUE_PREFIX)
     try:
         return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken as exc:
@@ -74,7 +93,8 @@ def _decrypt_setting_value(key: str, value: str | None) -> str | None:
 def _backfill_sensitive_setting_encryption(con: sqlite3.Connection) -> None:
     """Encrypt legacy plaintext secret overrides when a bootstrap key is available."""
     rows = con.execute("SELECT key, value FROM config_settings WHERE value IS NOT NULL").fetchall()
-    fernet = _settings_fernet()
+    salt = os.urandom(16)
+    fernet = _settings_fernet_v2(salt)
     warned_missing_key = False
     for key, value in rows:
         if not _is_sensitive_setting_key(key):
@@ -92,7 +112,11 @@ def _backfill_sensitive_setting_encryption(con: sqlite3.Connection) -> None:
         token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
         con.execute(
             "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
-            (f"{_ENCRYPTED_VALUE_PREFIX}{token}", _now(), key),
+            (
+                f"{_ENCRYPTED_VALUE_PREFIX}{urlsafe_b64encode(salt).decode('utf-8')}:{token}",
+                _now(),
+                key,
+            ),
         )
 
 
