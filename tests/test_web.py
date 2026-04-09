@@ -207,6 +207,18 @@ def test_settings_page_masks_sensitive_db_overrides(app, monkeypatch):
     assert b"(stored override)" in resp.data
 
 
+def test_settings_page_renders_sensitive_overrides_without_bootstrap_key(app, monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "web-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+    monkeypatch.delenv("COLLECTOR_DB_ENCRYPTION_KEY", raising=False)
+
+    resp = app.get("/settings")
+
+    assert resp.status_code == 200
+    assert b"VCENTER_PASS" in resp.data
+    assert b"(stored override)" in resp.data
+
+
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
     db_path = str(tmp_path / "test_web_invalid_auth.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)

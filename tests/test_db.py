@@ -473,6 +473,19 @@ def test_sensitive_setting_rejects_wrong_bootstrap_key(monkeypatch):
         get_config("VCENTER_PASS", "")
 
 
+def test_malformed_encrypted_setting_fails_loudly(monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
+
+    with sqlite3.connect(db_module._db_path()) as con:
+        con.execute(
+            "UPDATE config_settings SET value=? WHERE key='VCENTER_PASS'",
+            ("enc:v2:not-base64:not-a-token",),
+        )
+
+    with pytest.raises(RuntimeError, match="malformed"):
+        get_config("VCENTER_PASS", "")
+
+
 def test_non_secret_key_setting_does_not_require_encryption_bootstrap(monkeypatch):
     monkeypatch.delenv("COLLECTOR_DB_ENCRYPTION_KEY", raising=False)
 

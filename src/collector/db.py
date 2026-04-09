@@ -11,7 +11,6 @@ from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from hashlib import sha256
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -34,14 +33,6 @@ def _db_path() -> str:
 
 def _is_sensitive_setting_key(key: str) -> bool:
     return any(pat in key for pat in _SENSITIVE_PATTERNS)
-
-
-def _settings_fernet() -> Fernet | None:
-    raw_key = os.environ.get(_DB_ENCRYPTION_KEY_ENV, "").strip()
-    if not raw_key:
-        return None
-    legacy_key = urlsafe_b64encode(sha256(raw_key.encode("utf-8")).digest())
-    return Fernet(legacy_key)
 
 
 def _settings_fernet_v2(salt: bytes) -> Fernet | None:
@@ -76,8 +67,12 @@ def _decrypt_setting_value(key: str, value: str | None) -> str | None:
         return value
     if not value.startswith(_ENCRYPTED_VALUE_PREFIX):
         return value
-    _, _, salt_b64, token = value.split(":", 3)
-    fernet = _settings_fernet_v2(urlsafe_b64decode(salt_b64.encode("utf-8")))
+    try:
+        _, _, salt_b64, token = value.split(":", 3)
+        salt = urlsafe_b64decode(salt_b64.encode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Encrypted DB setting {key} is malformed.") from exc
+    fernet = _settings_fernet_v2(salt)
     if fernet is None:
         raise RuntimeError(
             f"Encrypted DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
@@ -1295,10 +1290,19 @@ def reset_setting(key: str) -> None:
 
 def _row_to_setting(row: tuple) -> dict[str, Any]:
     key = row[1]
-    db_value = _decrypt_setting_value(key, row[2])
+    raw_db_value = row[2]
     default_value = row[3] or ""
-    effective = db_value if db_value is not None else default_value
     is_sensitive = _is_sensitive_setting_key(key)
+    if is_sensitive:
+        db_value = None
+        effective = default_value
+        is_overridden = raw_db_value is not None
+        has_sensitive_value = bool(raw_db_value or default_value)
+    else:
+        db_value = _decrypt_setting_value(key, raw_db_value)
+        effective = db_value if db_value is not None else default_value
+        is_overridden = db_value is not None
+        has_sensitive_value = False
     return {
         "id": row[0],
         "key": key,
@@ -1309,6 +1313,6 @@ def _row_to_setting(row: tuple) -> dict[str, Any]:
         "updated_at": row[6],
         "effective_value": "" if is_sensitive else effective,
         "is_sensitive": is_sensitive,
-        "is_overridden": db_value is not None,
-        "has_sensitive_value": is_sensitive and bool(effective),
+        "is_overridden": is_overridden,
+        "has_sensitive_value": has_sensitive_value,
     }

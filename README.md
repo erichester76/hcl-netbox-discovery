@@ -213,7 +213,7 @@ The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job hist
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
 
 Browser login settings remain environment-only. API token authentication is DB-backed through the `WEB_API_TOKEN` runtime setting and applies only to `/api/*` routes.
-Sensitive DB-backed settings such as passwords, tokens, and client secrets are encrypted at rest when `COLLECTOR_DB_ENCRYPTION_KEY` is set. Encrypted rows cannot be read or updated without the same bootstrap key.
+Sensitive DB-backed settings such as passwords, tokens, and client secrets are encrypted at rest when `COLLECTOR_DB_ENCRYPTION_KEY` is set. Encrypted rows cannot be decrypted/read, and setting a new secret value requires the same bootstrap key. Clearing or resetting an override may still be possible without the key.
 
 ---
 
