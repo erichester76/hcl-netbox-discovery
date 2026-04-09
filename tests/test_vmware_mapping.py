@@ -65,7 +65,6 @@ class TestVMwareExampleVmkNicMapping:
         assert vmk_nic_block.ip_addresses[0].source_items == "_vnic.spec.ip"
         assert vmk_nic_block.tagged_vlans[0].source_items == "_vnic._vlans"
 
-
 class TestVMwareExampleHostClusterMapping:
     def test_vmware_example_hosts_include_cluster_assignment(self):
         cfg = load_config("mappings/vmware.hcl.example")
@@ -82,3 +81,38 @@ class TestVMwareExampleHostClusterMapping:
 
         fields = {f.name: f for f in host_obj.fields}
         assert fields["cluster"].value == "prereq('cluster')"
+
+
+class TestVMwareExampleVmMetadataMapping:
+    def test_vmware_example_vm_fields_include_device_platform_site_role_and_tenant(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        vm_obj = next(o for o in cfg.objects if o.name == "vm")
+
+        prereqs = {p.name: p for p in vm_obj.prerequisites}
+        assert prereqs["cluster"].args["name"] == "source('runtime.host.parent.name')"
+        assert (
+            prereqs["site"].args["name"]
+            == "site_name if (site_name := regex_file(source('runtime.host.parent.name'), 'cluster_to_site')) != source('runtime.host.parent.name') else None"
+        )
+        assert prereqs["platform"].args["name"] == "source('guest.guestFullName') or 'Unknown'"
+        assert (
+            prereqs["role"].args["name"]
+            == "role_name if (role_name := regex_file(source('name'), 'vm_to_role')) != source('name') else 'Virtual Machine'"
+        )
+        assert (
+            prereqs["tenant"].args["name"]
+            == "tenant_name if (tenant_name := regex_file(source('name'), 'vm_to_tenant')) != source('name') else None"
+        )
+
+        fields = {f.name: f for f in vm_obj.fields}
+        assert fields["cluster"].value == "prereq('cluster')"
+        assert fields["site"].value == "prereq('site')"
+        assert fields["platform"].value == "prereq('platform')"
+        assert fields["role"].value == "prereq('role')"
+        assert fields["tenant"].value == "prereq('tenant')"
+
+        assert fields["device"].type == "fk"
+        assert fields["device"].resource == "dcim.devices"
+        assert fields["device"].lookup == {
+            "name": "replace(source('runtime.host.name'), '.clemson.edu', '')"
+        }
