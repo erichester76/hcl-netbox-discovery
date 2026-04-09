@@ -421,7 +421,7 @@ object "node" {
     }
 
     attribute "bandwidth" {
-      value = "int(source('bandwidth')) if source('bandwidth') != None else None"
+      value = "int(source('bandwidth')) if int(source('bandwidth') or 0) > 0 else None"
     }
 
     attribute "connector_type" {
@@ -461,7 +461,7 @@ object "node" {
 
     power_input {
       name = "'Power Input ' + str(source('slot') or source('name') or source('description'))"
-      type = "when(int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) or 0) > 1800, 'iec-60320-c20', 'iec-60320-c14')"
+      type = "when(int(source('outputWatts') or 0) > 1800 or (int(source('outputWatts') or 0) <= 0 and int(source('powerAllocation.totalOutputPower') or 0) > 1800), 'iec-60320-c20', 'iec-60320-c14')"
     }
 
     attribute "hot_swappable" {
@@ -473,11 +473,11 @@ object "node" {
     }
 
     attribute "input_voltage" {
-      value = "int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) if coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage') != None else 120"
+      value = "int(source('inputVoltage')) if int(source('inputVoltage') or 0) > 0 else int(source('normalInputVoltage')) if int(source('normalInputVoltage') or 0) > 0 else int(source('nominalVoltage')) if int(source('nominalVoltage') or 0) > 0 else None"
     }
 
     attribute "wattage" {
-      value = "int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower'))) or None"
+      value = "int(source('outputWatts')) if int(source('outputWatts') or 0) > 0 else int(source('powerAllocation.totalOutputPower')) if int(source('powerAllocation.totalOutputPower') or 0) > 0 else None"
     }
   }
 

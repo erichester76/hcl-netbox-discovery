@@ -348,6 +348,14 @@ class TestXclarityModulesHcl:
         field = next(f for f in mod.fields if f.name == field_name)
         return field.value
 
+    def _get_module_power_input_expr(self, profile: str, field_name: str):
+        """Return a power_input expression from a module block in the example mapping."""
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        mod = next(m for m in node.modules if m.profile == profile)
+        assert mod.power_input is not None
+        return getattr(mod.power_input, field_name)
+
     def _make_resolver(self, source_obj):
         from collector.config import CollectorOptions
         from collector.context import RunContext
@@ -385,6 +393,14 @@ class TestXclarityModulesHcl:
         return self._make_resolver(source_obj).evaluate_strict(
             expr,
             label=f"{profile}.{field_name}",
+        )
+
+    def _eval_module_power_input(self, profile: str, field_name: str, source_obj):
+        """Evaluate a module power_input expression against a source object."""
+        expr = self._get_module_power_input_expr(profile, field_name)
+        return self._make_resolver(source_obj).evaluate_strict(
+            expr,
+            label=f"{profile}.power_input.{field_name}",
         )
 
     def _eval_disk_type(self, source_obj):
@@ -505,6 +521,98 @@ class TestXclarityModulesHcl:
             {"manufacturer": "Delta"},
         )
         assert result == "Delta"
+
+    def test_expansion_card_bandwidth_zero_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 0})
+        assert result is None
+
+    def test_expansion_card_bandwidth_missing_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {})
+        assert result is None
+
+    def test_expansion_card_bandwidth_positive_is_returned(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 16})
+        assert result == 16
+
+    def test_power_supply_input_voltage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 0})
+        assert result is None
+
+    def test_power_supply_input_voltage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {})
+        assert result is None
+
+    def test_power_supply_input_voltage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 208})
+        assert result == 208
+
+    def test_power_supply_input_voltage_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"nominalVoltage": 240},
+        )
+        assert result == 240
+
+    def test_power_supply_input_voltage_zero_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_zero_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "nominalVoltage": 240},
+        )
+        assert result == 240
+
+    def test_power_supply_wattage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 0})
+        assert result is None
+
+    def test_power_supply_wattage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {})
+        assert result is None
+
+    def test_power_supply_wattage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 1100})
+        assert result == 1100
+
+    def test_power_supply_wattage_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
+
+    def test_power_supply_wattage_zero_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
+
+    def test_power_supply_input_type_zero_output_watts_falls_back_to_total_output_power(self):
+        result = self._eval_module_power_input(
+            "Power supply",
+            "type",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 2200}},
+        )
+        assert result == "iec-60320-c20"
 
 
 # ---------------------------------------------------------------------------
