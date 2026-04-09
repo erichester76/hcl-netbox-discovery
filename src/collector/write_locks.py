@@ -20,6 +20,15 @@ def _freeze(value: Any) -> Any:
     return value
 
 
+def _extract_stable_id(value: Any) -> Any:
+    """Normalize object/dict/int references to a stable comparable identity."""
+    if isinstance(value, dict):
+        return value.get("id")
+    if hasattr(value, "id"):
+        return value.id
+    return value
+
+
 def build_hotspot_upsert_lock_key(
     resource: str,
     payload: dict[str, Any],
@@ -44,8 +53,8 @@ def build_vlan_lock_key(vlan_payload: dict[str, Any]) -> tuple[Any, ...] | None:
     return (
         "vlan",
         _freeze(vid),
-        _freeze(vlan_payload.get("site")),
-        _freeze(vlan_payload.get("group")),
+        _freeze(_extract_stable_id(vlan_payload.get("site"))),
+        _freeze(_extract_stable_id(vlan_payload.get("group"))),
     )
 
 

@@ -14,9 +14,9 @@ Covers:
 from __future__ import annotations
 
 import threading
-import time
+from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from collector.config import (
     CollectorOptions,
@@ -540,7 +540,7 @@ class TestFindOrCreateVlanMultisite:
         assert result == new_vlan
 
     def test_concurrent_same_vlan_creates_only_once(self):
-        """Concurrent callers should serialize create-by-identity for the same VLAN."""
+        """Concurrent callers should collapse duplicate VLAN creates under locking."""
 
         class FakeNB:
             def __init__(self):
@@ -549,6 +549,7 @@ class TestFindOrCreateVlanMultisite:
                 self._guard = threading.Lock()
                 self._first_create_started = threading.Event()
                 self._second_lookup_before_create = threading.Event()
+                self.overlap_observed = False
 
             def list(self, resource, **filters):
                 assert resource == "ipam.vlans"
@@ -556,6 +557,7 @@ class TestFindOrCreateVlanMultisite:
                     if self.created_ids:
                         return [_make_nb_vlan_obj(self.created_ids[0], filters["vid"], site_id=7)]
                 if self._first_create_started.is_set():
+                    self.overlap_observed = True
                     self._second_lookup_before_create.set()
                 return []
 
@@ -567,35 +569,44 @@ class TestFindOrCreateVlanMultisite:
                     self.create_calls += 1
                     if self.create_calls == 1:
                         self._first_create_started.set()
-                self._second_lookup_before_create.wait(timeout=0.2)
-                time.sleep(0.01)
+                        self._second_lookup_before_create.wait(timeout=0.2)
                 with self._guard:
                     vlan_id = 100 + len(self.created_ids)
                     self.created_ids.append(vlan_id)
                 return _make_nb_vlan(vlan_id)
 
         engine = _make_engine()
-        ctx = _make_ctx()
-        fake_nb = FakeNB()
-        ctx.nb = fake_nb
 
-        results: list[int | None] = [None, None]
+        def run_two_workers(fake_nb: FakeNB) -> tuple[list[int | None], FakeNB]:
+            ctx = _make_ctx()
+            ctx.nb = fake_nb
+            results: list[int | None] = [None, None]
 
-        def worker(index: int) -> None:
-            vlan = engine._find_or_create_vlan_multisite(
-                {"vid": 700, "name": "VLAN700", "site": 7}, ctx
-            )
-            results[index] = vlan.id if vlan is not None else None
+            def worker(index: int) -> None:
+                vlan = engine._find_or_create_vlan_multisite(
+                    {"vid": 700, "name": "VLAN700", "site": 7}, ctx
+                )
+                results[index] = vlan.id if vlan is not None else None
 
-        threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+            threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results, fake_nb
 
-        assert fake_nb.create_calls == 1
-        assert fake_nb.created_ids == [100]
-        assert results == [100, 100]
+        locked_results, locked_nb = run_two_workers(FakeNB())
+        assert locked_nb.overlap_observed is False
+        assert locked_nb.create_calls == 1
+        assert locked_nb.created_ids == [100]
+        assert locked_results == [100, 100]
+
+        with patch("collector.engine.keyed_lock", lambda _key: nullcontext()):
+            raced_results, raced_nb = run_two_workers(FakeNB())
+        assert raced_nb.overlap_observed is True
+        assert raced_nb.create_calls == 2
+        assert raced_nb.created_ids == [100, 101]
+        assert sorted(raced_results) == [100, 101]
 
     def test_site_vlan_preserves_existing_name_to_prevent_flapping(self):
         """When matching an existing site VLAN, keep its current name stable."""

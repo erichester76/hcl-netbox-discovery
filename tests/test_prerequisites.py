@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
-from unittest.mock import MagicMock
+from contextlib import nullcontext
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -758,7 +758,9 @@ class TestSerializedPrerequisiteUpserts:
                 self.create_calls = 0
                 self.created_ids: list[int] = []
                 self._guard = threading.Lock()
-                self._active_calls = 0
+                self._first_entered = threading.Event()
+                self._second_entered = threading.Event()
+                self.overlap_observed = False
 
             def upsert(self, resource, payload, *, lookup_fields):
                 assert resource == "dcim.sites"
@@ -767,35 +769,51 @@ class TestSerializedPrerequisiteUpserts:
                     self.upsert_calls += 1
                     if self.created_ids:
                         return MagicMock(id=self.created_ids[0])
-                    self._active_calls += 1
-                    overlapped = self._active_calls > 1
-                time.sleep(0.01)
+                    if not self._first_entered.is_set():
+                        self._first_entered.set()
+                        is_first = True
+                    else:
+                        self.overlap_observed = True
+                        self._second_entered.set()
+                        is_first = False
+                if is_first:
+                    self._second_entered.wait(timeout=0.2)
                 with self._guard:
-                    self._active_calls -= 1
-                    if not overlapped and self.created_ids:
+                    if self.created_ids and not self.overlap_observed:
                         return MagicMock(id=self.created_ids[0])
                     self.create_calls += 1
                     site_id = 500 + len(self.created_ids)
                     self.created_ids.append(site_id)
                     return MagicMock(id=site_id)
 
-        nb = FakeNB()
-        runner = PrerequisiteRunner(nb)
-        results: list[int | None] = [None, None]
+        def run_two_workers(fake_nb: FakeNB) -> tuple[list[int | None], FakeNB]:
+            runner = PrerequisiteRunner(fake_nb)
+            results: list[int | None] = [None, None]
 
-        def worker(index: int) -> None:
-            results[index] = runner._ensure_site({"name": "ITC"}, dry_run=False)
+            def worker(index: int) -> None:
+                results[index] = runner._ensure_site({"name": "ITC"}, dry_run=False)
 
-        threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+            threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results, fake_nb
 
-        assert nb.upsert_calls == 2
-        assert nb.create_calls == 1
-        assert nb.created_ids == [500]
-        assert results == [500, 500]
+        locked_results, locked_nb = run_two_workers(FakeNB())
+        assert locked_nb.upsert_calls == 2
+        assert locked_nb.overlap_observed is False
+        assert locked_nb.create_calls == 1
+        assert locked_nb.created_ids == [500]
+        assert locked_results == [500, 500]
+
+        with patch("collector.prerequisites.keyed_lock", lambda _key: nullcontext()):
+            raced_results, raced_nb = run_two_workers(FakeNB())
+        assert raced_nb.upsert_calls == 2
+        assert raced_nb.overlap_observed is True
+        assert raced_nb.create_calls == 2
+        assert raced_nb.created_ids == [500, 501]
+        assert sorted(raced_results) == [500, 501]
 
 
 class TestRequiredIdentityValidation:
