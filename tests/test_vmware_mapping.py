@@ -83,6 +83,22 @@ class TestVMwareExampleHostClusterMapping:
         fields = {f.name: f for f in host_obj.fields}
         assert fields["cluster"].value == "prereq('cluster')"
 
+
+class TestVMwareExampleHostTenantMapping:
+    def test_vmware_example_hosts_include_tenant_assignment(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        host_obj = next(o for o in cfg.objects if o.name == "host")
+
+        prereqs = {p.name: p for p in host_obj.prerequisites}
+        assert (
+            prereqs["tenant"].args["name"]
+            == "tenant_name if (tenant_name := regex_file(source('name'), 'host_to_tenant')) != source('name') else None"
+        )
+
+        fields = {f.name: f for f in host_obj.fields}
+        assert fields["tenant"].value == "prereq('tenant')"
+
+
 class TestVMwareExampleVmMetadataMapping:
     def test_vmware_example_vm_fields_include_device_platform_site_role_and_tenant(self):
         cfg = load_config("mappings/vmware.hcl.example")
