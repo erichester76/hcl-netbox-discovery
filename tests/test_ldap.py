@@ -311,6 +311,19 @@ class TestLDAPGetObjects:
         kwargs = paged_search.call_args.kwargs
         assert kwargs["paged_size"] == 1000
 
+    def test_valid_page_size_is_passed_through(self, ldap_config):
+        ldap_config.extra["page_size"] = 250
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(return_value=iter([]))
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        src.get_objects("users")
+
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 250
+
 
 # ---------------------------------------------------------------------------
 # close()
