@@ -154,7 +154,7 @@ object "device" {
     }
 
     field "type" {
-      value = "coalesce(source('type'), 'other')"
+      value = "when(source('type'), source('type'), 'other')"
     }
 
     field "enabled" {
@@ -162,7 +162,7 @@ object "device" {
     }
 
     field "description" {
-      value = "coalesce(source('description'), '')"
+      value = "when(source('description'), source('description'), '')"
     }
 
     field "mgmt_only" {
