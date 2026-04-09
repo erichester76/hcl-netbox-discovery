@@ -150,7 +150,7 @@ object "host" {
       type = "prereq('cluster_type')"
       site = "prereq('site')"
     }
-    optional = true
+    optional = false
   }
 
   prerequisite "platform" {
