@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=512)
-def _compile_expression(expression: str) -> Any:
+def _compile_expression(expression: str) -> types.CodeType:
     """Compile a field expression once and reuse it across evaluations."""
-    return compile(expression, "<field-expression>", "eval")
+    return compile(expression, "<field-expression>", "eval", dont_inherit=True)
 
 
 def _get_attr(obj: Any, key: str) -> Any:
@@ -184,7 +184,9 @@ class Resolver:
             compiled = _compile_expression(expression)
             return eval(compiled, {"__builtins__": {}}, self._scope)  # noqa: S307
         except Exception as exc:
-            raise ValueError(f"{label} evaluation failed: {exc}") from exc
+            raise ValueError(
+                f"{label} evaluation failed for {expression!r}: {exc}"
+            ) from exc
 
     def _build_scope(self) -> dict:
         ctx = self._ctx
