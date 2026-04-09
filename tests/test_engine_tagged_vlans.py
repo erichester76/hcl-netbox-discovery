@@ -575,6 +575,20 @@ class TestFindOrCreateVlanMultisite:
                     self.created_ids.append(vlan_id)
                 return _make_nb_vlan(vlan_id)
 
+        class FakeNBRace(FakeNB):
+            def __init__(self):
+                super().__init__()
+                self._list_barrier = threading.Barrier(2)
+
+            def list(self, resource, **filters):
+                assert resource == "ipam.vlans"
+                with self._guard:
+                    if self.created_ids:
+                        return [_make_nb_vlan_obj(self.created_ids[0], filters["vid"], site_id=7)]
+                self.overlap_observed = True
+                self._list_barrier.wait(timeout=0.2)
+                return []
+
         engine = _make_engine()
 
         def run_two_workers(fake_nb: FakeNB) -> tuple[list[int | None], FakeNB]:
@@ -602,7 +616,7 @@ class TestFindOrCreateVlanMultisite:
         assert locked_results == [100, 100]
 
         with patch("collector.engine.keyed_lock", lambda _key: nullcontext()):
-            raced_results, raced_nb = run_two_workers(FakeNB())
+            raced_results, raced_nb = run_two_workers(FakeNBRace())
         assert raced_nb.overlap_observed is True
         assert raced_nb.create_calls == 2
         assert raced_nb.created_ids == [100, 101]
