@@ -65,6 +65,7 @@ class TestVMwareExampleVmkNicMapping:
         assert vmk_nic_block.ip_addresses[0].source_items == "_vnic.spec.ip"
         assert vmk_nic_block.tagged_vlans[0].source_items == "_vnic._vlans"
 
+
 class TestVMwareExampleHostClusterMapping:
     def test_vmware_example_hosts_include_cluster_assignment(self):
         cfg = load_config("mappings/vmware.hcl.example")
@@ -81,7 +82,6 @@ class TestVMwareExampleHostClusterMapping:
 
         fields = {f.name: f for f in host_obj.fields}
         assert fields["cluster"].value == "prereq('cluster')"
-
 
 class TestVMwareExampleVmMetadataMapping:
     def test_vmware_example_vm_fields_include_device_platform_site_role_and_tenant(self):
