@@ -9,7 +9,8 @@ def _device_object(cfg):
     return next((obj for obj in cfg.objects if obj.name == "device"), None)
 
 
-def test_nexus_example_mapping_includes_interface_ip_sync():
+def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
+    monkeypatch.delenv("NDFC_FETCH_INTERFACES", raising=False)
     cfg = load_config("mappings/nexus.hcl.example")
 
     assert cfg.source.api_type == "nexus"
