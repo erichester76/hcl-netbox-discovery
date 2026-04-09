@@ -1160,7 +1160,10 @@ def _row_to_schedule(row: tuple) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 # Sensitive key name fragments – rendered as password inputs in the UI.
-_SENSITIVE_PATTERNS = ("PASS", "TOKEN", "SECRET", "KEY", "CLIENT_SECRET")
+#
+# Keep this matcher narrow. Configuration keys like NETBOX_CACHE_KEY_PREFIX are
+# not secrets and must not require DB encryption bootstrap state.
+_SENSITIVE_PATTERNS = ("PASS", "PASSWORD", "TOKEN", "CLIENT_SECRET", "SECRET")
 
 
 def get_config(key: str, default: str = "") -> str:

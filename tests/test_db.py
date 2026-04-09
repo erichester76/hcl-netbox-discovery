@@ -466,6 +466,14 @@ def test_sensitive_setting_rejects_wrong_bootstrap_key(monkeypatch):
         get_config("VCENTER_PASS", "")
 
 
+def test_non_secret_key_setting_does_not_require_encryption_bootstrap(monkeypatch):
+    monkeypatch.delenv("COLLECTOR_DB_ENCRYPTION_KEY", raising=False)
+
+    set_setting("NETBOX_CACHE_KEY_PREFIX", "myapp:")
+
+    assert get_config("NETBOX_CACHE_KEY_PREFIX", "") == "myapp:"
+
+
 def test_catc_runtime_settings_are_seeded():
     settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
 
