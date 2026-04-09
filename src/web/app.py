@@ -12,6 +12,7 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 
+from collector.cache_keys import build_effective_cache_key_prefix  # noqa: E402
 from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
@@ -423,12 +424,16 @@ def _cache_client_kwargs() -> dict[str, Any]:
     """Build kwargs for the pynetbox2 wrapper client using cache-related config settings."""
     backend = get_config("NETBOX_CACHE_BACKEND", "none")
     cache_url = get_config("NETBOX_CACHE_URL", "")
+    netbox_url = get_config("NETBOX_URL", "http://localhost:8080")
     kwargs: dict[str, Any] = dict(
-        url=get_config("NETBOX_URL", "http://localhost:8080"),
+        url=netbox_url,
         token=get_config("NETBOX_TOKEN", ""),
         cache_backend=backend,
         cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
-        cache_key_prefix=get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:"),
+        cache_key_prefix=build_effective_cache_key_prefix(
+            get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:"),
+            netbox_url=netbox_url,
+        ),
     )
     sentinel_ttl = _env_int("NETBOX_PREWARM_SENTINEL_TTL", 0)
     if sentinel_ttl:

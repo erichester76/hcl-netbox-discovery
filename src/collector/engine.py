@@ -16,6 +16,7 @@ from typing import Any
 
 from deepdiff import DeepDiff
 
+from .cache_keys import build_effective_cache_key_prefix
 from .config import (
     CollectorConfig,
     FieldConfig,
@@ -102,6 +103,10 @@ def _build_nb_client(cfg_nb: Any) -> Any:
     """Construct a pynetbox2 NetBoxAPI client from *cfg_nb* (NetBoxConfig)."""
     import pynetbox2 as pynetbox  # type: ignore[import]
 
+    effective_cache_key_prefix = build_effective_cache_key_prefix(
+        cfg_nb.cache_key_prefix,
+        netbox_url=cfg_nb.url,
+    )
     kwargs: dict[str, Any] = dict(
         url=cfg_nb.url,
         token=cfg_nb.token,
@@ -109,7 +114,7 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         rate_limit_burst=cfg_nb.rate_limit_burst,
         cache_backend=cfg_nb.cache if cfg_nb.cache in ("none", "redis", "sqlite") else "none",
         cache_ttl_seconds=cfg_nb.cache_ttl,
-        cache_key_prefix=cfg_nb.cache_key_prefix,
+        cache_key_prefix=effective_cache_key_prefix,
         retry_attempts=cfg_nb.retry_attempts,
         retry_initial_delay_seconds=cfg_nb.retry_initial_delay,
         retry_backoff_factor=cfg_nb.retry_backoff_factor,
@@ -873,7 +878,7 @@ class Engine:
             "Cache config  backend=%s  ttl=%ss  key_prefix=%s  url=%s",
             nb_cfg.cache,
             nb_cfg.cache_ttl,
-            nb_cfg.cache_key_prefix,
+            build_effective_cache_key_prefix(nb_cfg.cache_key_prefix, netbox_url=nb_cfg.url),
             nb_cfg.cache_url or "(none)",
         )
         logger.info(
