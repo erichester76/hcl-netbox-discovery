@@ -8,7 +8,7 @@ import ipaddress
 import logging
 import re as _re
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
@@ -35,6 +35,8 @@ from .prerequisites import (
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_IN_FLIGHT_FACTOR = 4
 
 # Default IEC 60320 power-port connector type used when a ``power_input`` block
 # omits a type expression or the expression resolves to a falsy value.
@@ -303,6 +305,36 @@ class Engine:
             self.stop_requested = True
             return True
         return self.stop_requested
+
+    @staticmethod
+    def _drain_bounded_futures(
+        items: Any,
+        *,
+        max_in_flight: int,
+        submit_item: Any,
+        on_complete: Any,
+    ) -> None:
+        """Submit work with a bounded in-flight future window."""
+        if max_in_flight < 1:
+            raise ValueError("max_in_flight must be >= 1")
+
+        in_flight: dict[Any, Any] = {}
+
+        for item in items:
+            while len(in_flight) >= max_in_flight:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    source_item = in_flight.pop(future)
+                    on_complete(future, source_item)
+
+            future = submit_item(item)
+            in_flight[future] = item
+
+        while in_flight:
+            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                source_item = in_flight.pop(future)
+                on_complete(future, source_item)
 
     @staticmethod
     def _nb_helper(ctx: RunContext, name: str) -> Any:
@@ -1047,17 +1079,17 @@ class Engine:
         logger.info("Fetched %d items for %r", len(items), obj_cfg.name)
 
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
+        # Allow a small queue above the worker count so submission overlaps with
+        # completion without materializing the whole collection as pending work.
+        max_in_flight = max_workers * DEFAULT_MAX_IN_FLIGHT_FACTOR
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
         with ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix=obj_cfg.name[:16],
         ) as executor:
-            futures = {}
-            for item in items:
-                if self._should_stop(ctx):
-                    break
-                future = executor.submit(
+            def submit_item(item: Any) -> Any:
+                return executor.submit(
                     # Copy the context once per item so each worker thread
                     # gets its own Context object.  A single Context cannot
                     # be entered concurrently from multiple threads, which
@@ -1070,13 +1102,26 @@ class Engine:
                     prereq_runner,
                     stats,
                 )
-                futures[future] = item
-            for future in as_completed(futures):
+
+            def on_complete(future: Any, _item: Any) -> None:
                 exc = future.exception()
                 if exc:
                     logger.error(
                         "Unhandled error processing item: %s", exc, exc_info=exc
                     )
+
+            def iter_items() -> Any:
+                for item in items:
+                    if self._should_stop(ctx):
+                        break
+                    yield item
+
+            self._drain_bounded_futures(
+                iter_items(),
+                max_in_flight=max_in_flight,
+                submit_item=submit_item,
+                on_complete=on_complete,
+            )
 
         return stats
 
