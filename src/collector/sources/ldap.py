@@ -100,9 +100,14 @@ def _attributes_to_dict(attributes: dict[str, Any]) -> dict:
             result[attr_name] = ""
             continue
         if isinstance(value, list):
-            raw_values = [str(v) for v in value if str(v).strip()]
+            raw_values = []
+            for v in value:
+                string_value = str(v)
+                if string_value.strip():
+                    raw_values.append(string_value)
         else:
-            raw_values = [str(value)] if str(value).strip() else []
+            string_value = str(value)
+            raw_values = [string_value] if string_value.strip() else []
 
         if len(raw_values) == 0:
             result[attr_name] = ""
@@ -201,8 +206,16 @@ class LDAPSource(DataSource):
         try:
             page_size = int(page_size_raw)
         except (TypeError, ValueError):
+            logger.warning(
+                "LDAPSource: invalid page_size %r; falling back to 1000",
+                page_size_raw,
+            )
             page_size = 1000
         if page_size <= 0:
+            logger.warning(
+                "LDAPSource: non-positive page_size %r; falling back to 1000",
+                page_size_raw,
+            )
             page_size = 1000
 
         paged_search = getattr(
