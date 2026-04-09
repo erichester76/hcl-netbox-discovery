@@ -25,6 +25,8 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert device.interfaces, "device should define interfaces"
     interface = device.interfaces[0]
     interface_fields = {field.name: field.value for field in interface.fields}
+    assert interface_fields["type"] == "when(source('type'), source('type'), 'other')"
+    assert interface_fields["description"] == "when(source('description'), source('description'), '')"
     assert interface_fields["mgmt_only"] == "source('mgmt_only')"
 
     assert interface.ip_addresses, "interface block must declare ip_address"
