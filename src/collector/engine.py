@@ -34,6 +34,11 @@ from .prerequisites import (
     extract_id,
     slugify,
 )
+from .write_locks import (
+    build_hotspot_upsert_lock_key,
+    build_vlan_lock_key,
+    keyed_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1450,13 +1455,15 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
-            obj, outcome, payload = self._execute_live_upsert(
-                ctx,
-                resource,
-                payload,
-                lookup_fields,
-                field_configs=field_configs,
-            )
+            lock_key = build_hotspot_upsert_lock_key(resource, payload, lookup_fields)
+            with keyed_lock(lock_key):
+                obj, outcome, payload = self._execute_live_upsert(
+                    ctx,
+                    resource,
+                    payload,
+                    lookup_fields,
+                    field_configs=field_configs,
+                )
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
             logger.info(
                 "Upserted  resource=%-30s  %s  outcome=%s",
@@ -2081,91 +2088,92 @@ class Engine:
         5. When **no VLANs** exist at all, a new record is created (with or without
            a site, depending on the payload).
         """
-        vid = vlan_payload.get("vid")
-        site_id = vlan_payload.get("site")
+        with keyed_lock(build_vlan_lock_key(vlan_payload)):
+            vid = vlan_payload.get("vid")
+            site_id = vlan_payload.get("site")
 
-        existing_vlans = ctx.nb.list("ipam.vlans", vid=vid)
+            existing_vlans = ctx.nb.list("ipam.vlans", vid=vid)
 
-        siteless_vlan = None
-        site_vlan = None
-        other_site_vlans: list[Any] = []
+            siteless_vlan = None
+            site_vlan = None
+            other_site_vlans: list[Any] = []
 
-        for existing_vlan in existing_vlans:
-            existing_site = getattr(existing_vlan, "site", None)
-            existing_site_id: int | None = None
-            if existing_site is not None:
-                if isinstance(existing_site, dict):
-                    existing_site_id = existing_site.get("id")
-                elif hasattr(existing_site, "id"):
-                    existing_site_id = existing_site.id
-                elif isinstance(existing_site, int):
-                    existing_site_id = existing_site
+            for existing_vlan in existing_vlans:
+                existing_site = getattr(existing_vlan, "site", None)
+                existing_site_id: int | None = None
+                if existing_site is not None:
+                    if isinstance(existing_site, dict):
+                        existing_site_id = existing_site.get("id")
+                    elif hasattr(existing_site, "id"):
+                        existing_site_id = existing_site.id
+                    elif isinstance(existing_site, int):
+                        existing_site_id = existing_site
 
-            if existing_site_id is None and siteless_vlan is None:
-                siteless_vlan = existing_vlan
-            elif site_id is not None and existing_site_id == site_id and site_vlan is None:
-                site_vlan = existing_vlan
-            else:
-                other_site_vlans.append(existing_vlan)
+                if existing_site_id is None and siteless_vlan is None:
+                    siteless_vlan = existing_vlan
+                elif site_id is not None and existing_site_id == site_id and site_vlan is None:
+                    site_vlan = existing_vlan
+                else:
+                    other_site_vlans.append(existing_vlan)
 
-        if siteless_vlan is not None:
-            # Update the siteless VLAN in-place; remove site so it stays siteless.
-            update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
-            update_payload.pop("site", None)
-            existing_name = getattr(siteless_vlan, "name", None)
-            if existing_name and update_payload.get("name") != existing_name:
+            if siteless_vlan is not None:
+                # Update the siteless VLAN in-place; remove site so it stays siteless.
+                update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
+                update_payload.pop("site", None)
+                existing_name = getattr(siteless_vlan, "name", None)
+                if existing_name and update_payload.get("name") != existing_name:
+                    logger.debug(
+                        "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
+                        "preserving existing name=%r over incoming name=%r",
+                        vid,
+                        update_payload.get("id"),
+                        existing_name,
+                        update_payload.get("name"),
+                    )
+                    update_payload["name"] = existing_name
+                return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+            if site_vlan is not None:
+                if other_site_vlans:
+                    logger.debug(
+                        "VLAN vid=%s exists in multiple site-scoped records; "
+                        "preserving requested site %s without promoting to siteless",
+                        vid, site_id,
+                    )
+                update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
+                if site_id is not None:
+                    update_payload["site"] = site_id
+                existing_name = getattr(site_vlan, "name", None)
+                if existing_name and update_payload.get("name") != existing_name:
+                    logger.debug(
+                        "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
+                        "preserving existing name=%r over incoming name=%r",
+                        vid,
+                        update_payload.get("id"),
+                        site_id,
+                        existing_name,
+                        update_payload.get("name"),
+                    )
+                    update_payload["name"] = existing_name
+                return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+            if site_id is None and existing_vlans:
                 logger.debug(
-                    "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
-                    "preserving existing name=%r over incoming name=%r",
+                    "VLAN vid=%s requested without a site but only site-scoped VLANs "
+                    "exist; refusing to auto-promote to siteless",
                     vid,
-                    update_payload.get("id"),
-                    existing_name,
-                    update_payload.get("name"),
                 )
-                update_payload["name"] = existing_name
-            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+                return None
 
-        if site_vlan is not None:
             if other_site_vlans:
                 logger.debug(
-                    "VLAN vid=%s exists in multiple site-scoped records; "
-                    "preserving requested site %s without promoting to siteless",
+                    "VLAN vid=%s exists at other sites but not site %s; "
+                    "creating a new site-scoped VLAN for the requested site",
                     vid, site_id,
                 )
-            update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
-            if site_id is not None:
-                update_payload["site"] = site_id
-            existing_name = getattr(site_vlan, "name", None)
-            if existing_name and update_payload.get("name") != existing_name:
-                logger.debug(
-                    "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
-                    "preserving existing name=%r over incoming name=%r",
-                    vid,
-                    update_payload.get("id"),
-                    site_id,
-                    existing_name,
-                    update_payload.get("name"),
-                )
-                update_payload["name"] = existing_name
-            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
-        if site_id is None and existing_vlans:
-            logger.debug(
-                "VLAN vid=%s requested without a site but only site-scoped VLANs "
-                "exist; refusing to auto-promote to siteless",
-                vid,
-            )
-            return None
-
-        if other_site_vlans:
-            logger.debug(
-                "VLAN vid=%s exists at other sites but not site %s; "
-                "creating a new site-scoped VLAN for the requested site",
-                vid, site_id,
-            )
-
-        # Create a new VLAN (with or without site as supplied in payload).
-        return ctx.nb.upsert("ipam.vlans", vlan_payload, lookup_fields=[])
+            # Create a new VLAN (with or without site as supplied in payload).
+            return ctx.nb.upsert("ipam.vlans", vlan_payload, lookup_fields=[])
 
     def _process_inventory_items(
         self,

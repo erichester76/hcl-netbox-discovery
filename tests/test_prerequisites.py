@@ -9,6 +9,8 @@ Covers:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -744,6 +746,59 @@ class TestEnsureCluster:
             {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
             lookup_fields=["name", "type"],
         )
+
+
+class TestSerializedPrerequisiteUpserts:
+    """High-contention prerequisite creates should serialize by lookup identity."""
+
+    def test_concurrent_same_site_creates_only_once(self):
+        class FakeNB:
+            def __init__(self):
+                self.upsert_calls = 0
+                self.create_calls = 0
+                self.created_ids: list[int] = []
+                self._guard = threading.Lock()
+                self._first_create_started = threading.Event()
+                self._second_upsert_entered = threading.Event()
+
+            def upsert(self, resource, payload, *, lookup_fields):
+                assert resource == "dcim.sites"
+                assert lookup_fields == ["name"]
+                with self._guard:
+                    self.upsert_calls += 1
+                    if self.created_ids:
+                        return MagicMock(id=self.created_ids[0])
+                    if not self._first_create_started.is_set():
+                        self._first_create_started.set()
+                    else:
+                        self._second_upsert_entered.set()
+                self._second_upsert_entered.wait(timeout=0.2)
+                time.sleep(0.01)
+                with self._guard:
+                    if self.created_ids:
+                        return MagicMock(id=self.created_ids[0])
+                    self.create_calls += 1
+                    site_id = 500
+                    self.created_ids.append(site_id)
+                    return MagicMock(id=site_id)
+
+        nb = FakeNB()
+        runner = PrerequisiteRunner(nb)
+        results: list[int | None] = [None, None]
+
+        def worker(index: int) -> None:
+            results[index] = runner._ensure_site({"name": "ITC"}, dry_run=False)
+
+        threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert nb.upsert_calls == 2
+        assert nb.create_calls == 1
+        assert nb.created_ids == [500]
+        assert results == [500, 500]
 
 
 class TestRequiredIdentityValidation:

@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from itertools import count
 from typing import Any
 
+from .write_locks import build_hotspot_upsert_lock_key, keyed_lock
+
 logger = logging.getLogger(__name__)
 _MISSING = object()
 
@@ -261,6 +263,18 @@ class PrerequisiteRunner:
                 self._dry_run_ids[key] = placeholder_id
             return placeholder_id
 
+    def _serialized_upsert(
+        self,
+        resource: str,
+        payload: dict[str, Any],
+        *,
+        lookup_fields: list[str],
+    ) -> Any:
+        """Serialize high-contention prerequisite upserts by effective identity."""
+        lock_key = build_hotspot_upsert_lock_key(resource, payload, lookup_fields)
+        with keyed_lock(lock_key):
+            return self.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+
     def _load_live_field(
         self,
         resource: str,
@@ -389,7 +403,7 @@ class PrerequisiteRunner:
         existing_id = extract_id(existing)
         if isinstance(existing_id, int):
             return existing_id
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.manufacturers",
             {"name": name, "slug": slug},
             lookup_fields=["slug"],
@@ -422,7 +436,7 @@ class PrerequisiteRunner:
                 lookup_payload["manufacturer"] = manufacturer_id
             return self._dry_run_placeholder_id("dcim.device_types", lookup_payload)
         lookup = ["manufacturer", "model"] if manufacturer_id is not None else ["model"]
-        obj = self.nb.upsert("dcim.device_types", payload, lookup_fields=lookup)
+        obj = self._serialized_upsert("dcim.device_types", payload, lookup_fields=lookup)
         return extract_id(obj)
 
     def _ensure_device_role(self, args: dict, dry_run: bool) -> int | None:
@@ -432,7 +446,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_device_role name=%s", name)
             return self._dry_run_placeholder_id("dcim.device_roles", {"slug": slug})
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.device_roles",
             {"name": name, "slug": slug, "color": color},
             lookup_fields=["slug"],
@@ -445,7 +459,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_site name=%s", name)
             return self._dry_run_placeholder_id("dcim.sites", {"name": name})
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.sites",
             {"name": name, "slug": slug},
             lookup_fields=["name"],
@@ -468,7 +482,7 @@ class PrerequisiteRunner:
             if site_id is not None:
                 lookup_payload["site"] = site_id
             return self._dry_run_placeholder_id("dcim.locations", lookup_payload)
-        obj = self.nb.upsert("dcim.locations", payload, lookup_fields=lookup)
+        obj = self._serialized_upsert("dcim.locations", payload, lookup_fields=lookup)
         return extract_id(obj)
 
     def _ensure_rack(self, args: dict, dry_run: bool) -> int | None:
@@ -489,7 +503,7 @@ class PrerequisiteRunner:
             if site_id is not None:
                 lookup_payload["site"] = site_id
             return self._dry_run_placeholder_id("dcim.racks", lookup_payload)
-        obj = self.nb.upsert("dcim.racks", payload, lookup_fields=lookup)
+        obj = self._serialized_upsert("dcim.racks", payload, lookup_fields=lookup)
         return extract_id(obj)
 
     def _ensure_platform(self, args: dict, dry_run: bool) -> int | None:
@@ -512,7 +526,7 @@ class PrerequisiteRunner:
             logger.info("[DRY-RUN] ensure_platform name=%s", name)
             return self._dry_run_placeholder_id("dcim.platforms", {"slug": slug})
         try:
-            obj = self.nb.upsert("dcim.platforms", payload, lookup_fields=["slug"])
+            obj = self._serialized_upsert("dcim.platforms", payload, lookup_fields=["slug"])
         except Exception as exc:
             # Race condition: another thread may have created the platform between
             # the GET check and our POST — fall back to a plain GET by slug.
@@ -534,7 +548,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_type name=%s", name)
             return self._dry_run_placeholder_id("virtualization.cluster_types", {"slug": slug})
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "virtualization.cluster_types",
             {"name": name, "slug": slug},
             lookup_fields=["slug"],
@@ -547,7 +561,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_cluster_group name=%s", name)
             return self._dry_run_placeholder_id("virtualization.cluster_groups", {"slug": slug})
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "virtualization.cluster_groups",
             {"name": name, "slug": slug},
             lookup_fields=["slug"],
@@ -567,7 +581,7 @@ class PrerequisiteRunner:
                 lookup_payload["type"] = payload["type"]
             return self._dry_run_placeholder_id("virtualization.clusters", lookup_payload)
         lookup_fields = ["name", "type"] if payload.get("type") is not None else ["name"]
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "virtualization.clusters",
             payload,
             lookup_fields=lookup_fields,
@@ -581,7 +595,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_inventory_item_role name=%s", name)
             return self._dry_run_placeholder_id("dcim.inventory_item_roles", {"slug": slug})
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.inventory_item_roles",
             {"name": name, "slug": slug, "color": color},
             lookup_fields=["slug"],
@@ -672,7 +686,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_tenant_group name=%s", name)
             return None
-        obj = self.nb.upsert("tenancy.tenant_groups", payload, lookup_fields=["slug"])
+        obj = self._serialized_upsert("tenancy.tenant_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
     def _ensure_contact_group(self, args: dict, dry_run: bool) -> int | None:
@@ -686,7 +700,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_contact_group name=%s", name)
             return None
-        obj = self.nb.upsert("tenancy.contact_groups", payload, lookup_fields=["slug"])
+        obj = self._serialized_upsert("tenancy.contact_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
     def _ensure_region(self, args: dict, dry_run: bool) -> int | None:
@@ -700,7 +714,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_region name=%s", name)
             return None
-        obj = self.nb.upsert("dcim.regions", payload, lookup_fields=["slug"])
+        obj = self._serialized_upsert("dcim.regions", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
     def _ensure_vlan_group(self, args: dict, dry_run: bool) -> int | None:
@@ -719,7 +733,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_vlan_group name=%s", name)
             return None
-        obj = self.nb.upsert("ipam.vlan_groups", payload, lookup_fields=["slug"])
+        obj = self._serialized_upsert("ipam.vlan_groups", payload, lookup_fields=["slug"])
         return extract_id(obj)
 
     def _ensure_vrf(self, args: dict, dry_run: bool) -> int | None:
@@ -734,7 +748,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_vrf name=%s", name)
             return None
-        obj = self.nb.upsert("ipam.vrfs", payload, lookup_fields=["name"])
+        obj = self._serialized_upsert("ipam.vrfs", payload, lookup_fields=["name"])
         return extract_id(obj)
 
     def _ensure_tenant(self, args: dict, dry_run: bool) -> int | None:
@@ -749,7 +763,7 @@ class PrerequisiteRunner:
             logger.info("[DRY-RUN] ensure_tenant name=%s", name)
             return None
         try:
-            obj = self.nb.upsert("tenancy.tenants", payload, lookup_fields=["slug"])
+            obj = self._serialized_upsert("tenancy.tenants", payload, lookup_fields=["slug"])
         except Exception as exc:
             exc_str = str(exc)
             if "400" in exc_str and "unique" in exc_str.lower():
@@ -794,7 +808,7 @@ class PrerequisiteRunner:
                 device_type_id, name,
             )
             return None
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.module_bay_templates",
             payload,
             lookup_fields=["device_type", "name"],
@@ -817,7 +831,7 @@ class PrerequisiteRunner:
                 device_id, name,
             )
             return None
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.module_bays",
             payload,
             lookup_fields=["device", "name"],
@@ -858,7 +872,7 @@ class PrerequisiteRunner:
         if dry_run:
             logger.info("[DRY-RUN] ensure_module_type_profile name=%s", name)
             return None
-        obj = self.nb.upsert(
+        obj = self._serialized_upsert(
             "dcim.module_type_profiles",
             {"name": name, "slug": slug},
             lookup_fields=["name"],
@@ -943,7 +957,7 @@ class PrerequisiteRunner:
         # attribute set resolved entirely empty for this source row: in that
         # case an empty object is seeded above so NetBox does not validate a
         # legacy/null attributes payload against the assigned profile schema.
-        obj = self.nb.upsert("dcim.module_types", payload, lookup_fields=lookup)
+        obj = self._serialized_upsert("dcim.module_types", payload, lookup_fields=lookup)
         module_type_id = extract_id(obj)
 
         # Step 2: apply attributes via a direct PATCH after the profile has
