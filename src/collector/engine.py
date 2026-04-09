@@ -1077,7 +1077,7 @@ class Engine:
         logger.info("Fetched %d items for %r", len(items), obj_cfg.name)
 
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
-        max_in_flight = max(max_workers * 4, max_workers)
+        max_in_flight = max_workers * 4
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
         with ThreadPoolExecutor(
