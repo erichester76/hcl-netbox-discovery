@@ -449,16 +449,18 @@ def _cache_client_kwargs() -> dict[str, Any]:
 
 def _base_cache_key_prefix() -> str:
     """Return the configured raw cache prefix without branch/url scoping."""
-    prefix = get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:")
+    prefix = get_config("NETBOX_CACHE_KEY_PREFIX", "") or "nbx:"
     if not prefix.endswith(":"):
         prefix = f"{prefix}:"
     return prefix
 
 
-def _current_cache_namespace() -> str:
+def _current_cache_namespace() -> str | None:
     """Return the current branch/url cache namespace suffix."""
     prefix = _base_cache_key_prefix()
     effective = _cache_client_kwargs()["cache_key_prefix"]
+    if not effective.startswith(prefix):
+        return None
     return effective[len(prefix):].rstrip(":")
 
 
@@ -541,12 +543,13 @@ def _get_redis_namespace_cache_info(
 
     client = redis.from_url(redis_url, decode_responses=True)
     try:
-        raw_keys = sorted(client.scan_iter(match=f"{base_prefix}*"))
-        sentinel_ttl_lookup = {
-            key: (ttl if isinstance(ttl := client.ttl(key), int) and ttl >= 0 else None)
-            for key in raw_keys
-            if "precache:complete:" in key
-        }
+        raw_keys: list[str] = []
+        sentinel_ttl_lookup: dict[str, int | None] = {}
+        for key in client.scan_iter(match=f"{base_prefix}*"):
+            raw_keys.append(key)
+            if "precache:complete:" in key:
+                ttl = client.ttl(key)
+                sentinel_ttl_lookup[key] = ttl if isinstance(ttl, int) and ttl >= 0 else None
         return _build_namespace_cache_info(
             raw_keys,
             base_prefix=base_prefix,
