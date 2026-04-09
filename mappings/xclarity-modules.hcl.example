@@ -473,11 +473,11 @@ object "node" {
     }
 
     attribute "input_voltage" {
-      value = "int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) if int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage') or 0) > 0 else None"
+      value = "int(source('inputVoltage')) if int(source('inputVoltage') or 0) > 0 else int(source('normalInputVoltage')) if int(source('normalInputVoltage') or 0) > 0 else int(source('nominalVoltage')) if int(source('nominalVoltage') or 0) > 0 else None"
     }
 
     attribute "wattage" {
-      value = "int(coalesce('outputWatts', 'powerAllocation.totalOutputPower')) if int(coalesce('outputWatts', 'powerAllocation.totalOutputPower') or 0) > 0 else None"
+      value = "int(source('outputWatts')) if int(source('outputWatts') or 0) > 0 else int(source('powerAllocation.totalOutputPower')) if int(source('powerAllocation.totalOutputPower') or 0) > 0 else None"
     }
   }
 

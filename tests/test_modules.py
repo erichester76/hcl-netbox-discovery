@@ -546,6 +546,22 @@ class TestXclarityModulesHcl:
         )
         assert result == 240
 
+    def test_power_supply_input_voltage_zero_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_zero_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "nominalVoltage": 240},
+        )
+        assert result == 240
+
     def test_power_supply_wattage_zero_is_suppressed(self):
         result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 0})
         assert result is None
@@ -563,6 +579,14 @@ class TestXclarityModulesHcl:
             "Power supply",
             "wattage",
             {"powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
+
+    def test_power_supply_wattage_zero_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 900}},
         )
         assert result == 900
 
