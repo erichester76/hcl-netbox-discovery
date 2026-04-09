@@ -51,3 +51,17 @@ def test_drain_bounded_futures_caps_pending_work(monkeypatch):
     assert submitted == items
     assert completed == items
     assert max_seen <= 3
+
+
+def test_drain_bounded_futures_rejects_invalid_window():
+    try:
+        Engine._drain_bounded_futures(
+            [],
+            max_in_flight=0,
+            submit_item=lambda item: item,
+            on_complete=lambda future, item: None,
+        )
+    except ValueError as exc:
+        assert "max_in_flight" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for max_in_flight < 1")

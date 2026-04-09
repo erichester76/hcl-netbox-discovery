@@ -306,18 +306,21 @@ class Engine:
 
     @staticmethod
     def _drain_bounded_futures(
-        items: list[Any],
+        items: Any,
         *,
         max_in_flight: int,
         submit_item: Any,
         on_complete: Any,
     ) -> None:
         """Submit work with a bounded in-flight future window."""
+        if max_in_flight < 1:
+            raise ValueError("max_in_flight must be >= 1")
+
         in_flight: dict[Any, Any] = {}
 
         for item in items:
             while len(in_flight) >= max_in_flight:
-                done, _ = wait(set(in_flight), return_when=FIRST_COMPLETED)
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
                 for future in done:
                     source_item = in_flight.pop(future)
                     on_complete(future, source_item)
@@ -326,7 +329,7 @@ class Engine:
             in_flight[future] = item
 
         while in_flight:
-            done, _ = wait(set(in_flight), return_when=FIRST_COMPLETED)
+            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
             for future in done:
                 source_item = in_flight.pop(future)
                 on_complete(future, source_item)
@@ -1103,14 +1106,14 @@ class Engine:
                         "Unhandled error processing item: %s", exc, exc_info=exc
                     )
 
-            bounded_items: list[Any] = []
-            for item in items:
-                if self._should_stop(ctx):
-                    break
-                bounded_items.append(item)
+            def iter_items() -> Any:
+                for item in items:
+                    if self._should_stop(ctx):
+                        break
+                    yield item
 
             self._drain_bounded_futures(
-                bounded_items,
+                iter_items(),
                 max_in_flight=max_in_flight,
                 submit_item=submit_item,
                 on_complete=on_complete,
