@@ -64,3 +64,21 @@ class TestVMwareExampleVmkNicMapping:
 
         assert vmk_nic_block.ip_addresses[0].source_items == "_vnic.spec.ip"
         assert vmk_nic_block.tagged_vlans[0].source_items == "_vnic._vlans"
+
+
+class TestVMwareExampleHostClusterMapping:
+    def test_vmware_example_hosts_include_cluster_assignment(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        host_obj = next(o for o in cfg.objects if o.name == "host")
+
+        prereqs = {p.name: p for p in host_obj.prerequisites}
+        assert prereqs["cluster_type"].args["name"] == "'VMWare'"
+        assert prereqs["cluster"].args == {
+            "name": "source('parent.name')",
+            "type": "prereq('cluster_type')",
+            "site": "prereq('site')",
+        }
+        assert prereqs["cluster"].optional is False
+
+        fields = {f.name: f for f in host_obj.fields}
+        assert fields["cluster"].value == "prereq('cluster')"

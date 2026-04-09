@@ -137,6 +137,22 @@ object "host" {
     optional = false
   }
 
+  prerequisite "cluster_type" {
+    method   = "ensure_cluster_type"
+    args     = { name = "'VMWare'" }
+    optional = false
+  }
+
+  prerequisite "cluster" {
+    method   = "ensure_cluster"
+    args     = {
+      name = "source('parent.name')"
+      type = "prereq('cluster_type')"
+      site = "prereq('site')"
+    }
+    optional = false
+  }
+
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
@@ -159,6 +175,10 @@ object "host" {
 
   field "site" {
     value = "prereq('site')"
+  }
+
+  field "cluster" {
+    value = "prereq('cluster')"
   }
 
   field "platform" {
