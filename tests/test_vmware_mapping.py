@@ -65,6 +65,7 @@ class TestVMwareExampleVmkNicMapping:
         assert vmk_nic_block.ip_addresses[0].source_items == "_vnic.spec.ip"
         assert vmk_nic_block.tagged_vlans[0].source_items == "_vnic._vlans"
 
+
 class TestVMwareExampleHostClusterMapping:
     def test_vmware_example_hosts_include_cluster_assignment(self):
         cfg = load_config("mappings/vmware.hcl.example")
