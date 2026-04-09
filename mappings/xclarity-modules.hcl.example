@@ -421,7 +421,7 @@ object "node" {
     }
 
     attribute "bandwidth" {
-      value = "int(source('bandwidth')) if source('bandwidth') != None and int(source('bandwidth')) > 0 else None"
+      value = "int(source('bandwidth')) if int(source('bandwidth') or 0) > 0 else None"
     }
 
     attribute "connector_type" {
@@ -473,11 +473,11 @@ object "node" {
     }
 
     attribute "input_voltage" {
-      value = "int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) if coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage') != None and int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) > 0 else None"
+      value = "int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage')) if int(coalesce('inputVoltage', 'normalInputVoltage', 'nominalVoltage') or 0) > 0 else None"
     }
 
     attribute "wattage" {
-      value = "int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower'))) if coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower')) != None and int(coalesce(source('outputWatts'), source('powerAllocation.totalOutputPower'))) > 0 else None"
+      value = "int(coalesce('outputWatts', 'powerAllocation.totalOutputPower')) if int(coalesce('outputWatts', 'powerAllocation.totalOutputPower') or 0) > 0 else None"
     }
   }
 

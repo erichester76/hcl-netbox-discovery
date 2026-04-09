@@ -510,6 +510,10 @@ class TestXclarityModulesHcl:
         result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 0})
         assert result is None
 
+    def test_expansion_card_bandwidth_missing_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {})
+        assert result is None
+
     def test_expansion_card_bandwidth_positive_is_returned(self):
         result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 16})
         assert result == 16
@@ -518,17 +522,49 @@ class TestXclarityModulesHcl:
         result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 0})
         assert result is None
 
+    def test_power_supply_input_voltage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {})
+        assert result is None
+
     def test_power_supply_input_voltage_positive_is_returned(self):
         result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 208})
         assert result == 208
+
+    def test_power_supply_input_voltage_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"nominalVoltage": 240},
+        )
+        assert result == 240
 
     def test_power_supply_wattage_zero_is_suppressed(self):
         result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 0})
         assert result is None
 
+    def test_power_supply_wattage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {})
+        assert result is None
+
     def test_power_supply_wattage_positive_is_returned(self):
         result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 1100})
         assert result == 1100
+
+    def test_power_supply_wattage_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
 
 
 # ---------------------------------------------------------------------------
