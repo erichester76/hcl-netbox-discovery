@@ -21,7 +21,18 @@ def _normalize_url_scope(url: str | None) -> str:
     if not url:
         return "no-url"
     parts = urlsplit(url)
-    normalized = f"{parts.scheme.lower()}://{parts.hostname or ''}:{parts.port or ''}{parts.path.rstrip('/')}"
+    scheme = parts.scheme.lower()
+    hostname = parts.hostname or ""
+    path = parts.path.rstrip("/")
+
+    port = parts.port
+    default_ports = {"http": 80, "https": 443}
+    if port is None or default_ports.get(scheme) == port:
+        netloc = hostname
+    else:
+        netloc = f"{hostname}:{port}"
+
+    normalized = f"{scheme}://{netloc}{path}"
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
 
 
