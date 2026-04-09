@@ -81,11 +81,12 @@ object "device" {
     optional = false
   }
 
-  # Fabric name is used as the NetBox site so that all switches in the same
-  # fabric are grouped together in the same site.
+  # Site/fabric membership comes from the adapter's best-available
+  # site_name derivation so NDFC environments that do not populate
+  # fabricName can still map devices into NetBox sites.
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('fabric_name'), 'Unknown')" }
+    args     = { name = "coalesce(source('site_name'), 'Unknown')" }
     optional = false
   }
 

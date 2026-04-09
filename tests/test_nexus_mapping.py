@@ -22,6 +22,9 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     field_values = {field.name: field.value for field in device.fields}
     assert field_values["primary_ip4"] == "when(source('ip_address') != '', source('ip_address'), None)"
 
+    prereq_args = {prereq.name: prereq.args for prereq in device.prerequisites}
+    assert prereq_args["site"]["name"] == "coalesce(source('site_name'), 'Unknown')"
+
     assert device.interfaces, "device should define interfaces"
     interface = device.interfaces[0]
     interface_fields = {field.name: field.value for field in interface.fields}

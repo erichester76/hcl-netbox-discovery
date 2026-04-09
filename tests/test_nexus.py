@@ -241,6 +241,7 @@ class TestNexusGetObjects:
         assert d["serial"] == "SAL1234567X"
         assert d["status"] == "active"
         assert d["fabric_name"] == "MyFabric"
+        assert d["site_name"] == "MyFabric"
         assert d["role"] == "Leaf"
         assert d["platform_name"] == "NX-OS 9.3(7)"
 
@@ -433,6 +434,57 @@ class TestNexusEnrichSwitch:
         }
         result = src._enrich_switch(sw)
         assert result["name"] == "Unknown"
+
+    def test_name_falls_back_to_switch_name(self):
+        src = NexusDashboardSource()
+        sw = {
+            "hostName": "",
+            "switchName": "nx-border-01.example.com",
+            "model": "N9K-C93180YC-EX",
+            "serialNumber": "SAL123",
+            "release": "9.3(7)",
+            "fabricName": "Fabric1",
+            "switchRole": "leaf",
+            "ipAddress": "10.0.0.1",
+            "status": "alive",
+            "systemMode": "Normal",
+        }
+        result = src._enrich_switch(sw)
+        assert result["name"] == "nx-border-01"
+
+    def test_site_name_falls_back_to_site_name(self):
+        src = NexusDashboardSource()
+        sw = {
+            "hostName": "nx-leaf-01",
+            "model": "N9K-C93180YC-EX",
+            "serialNumber": "SAL123",
+            "release": "9.3(7)",
+            "fabricName": "",
+            "siteName": "Clemson-DC",
+            "switchRole": "leaf",
+            "ipAddress": "10.0.0.1",
+            "status": "alive",
+            "systemMode": "Normal",
+        }
+        result = src._enrich_switch(sw)
+        assert result["site_name"] == "Clemson-DC"
+
+    def test_site_name_falls_back_to_hierarchy_tail(self):
+        src = NexusDashboardSource()
+        sw = {
+            "hostName": "nx-leaf-01",
+            "model": "N9K-C93180YC-EX",
+            "serialNumber": "SAL123",
+            "release": "9.3(7)",
+            "fabricName": "",
+            "siteNameHierarchy": "Global/Campus/Fabric-A",
+            "switchRole": "leaf",
+            "ipAddress": "10.0.0.1",
+            "status": "alive",
+            "systemMode": "Normal",
+        }
+        result = src._enrich_switch(sw)
+        assert result["site_name"] == "Fabric-A"
 
     def test_role_formatted_as_title_case(self):
         src = NexusDashboardSource()
