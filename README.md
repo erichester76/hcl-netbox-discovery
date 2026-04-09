@@ -547,3 +547,16 @@ This repository uses semantic versioning once `1.0.0` is established:
     contract change
 
 Breaking changes must only be released in a major version.
+
+Use the helper script to bump the Poetry version before release promotions or
+tag creation:
+
+```bash
+python scripts/bump_version.py patch
+python scripts/bump_version.py minor
+python scripts/bump_version.py major
+```
+
+Release tags must match `pyproject.toml` exactly. If the Poetry version is
+`1.1.1`, the release tag must be `v1.1.1`. The Docker publish workflow rejects
+`v*` tags that drift from the Poetry version.

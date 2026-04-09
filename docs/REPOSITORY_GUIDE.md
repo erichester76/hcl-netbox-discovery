@@ -143,6 +143,17 @@ In this repository, treat these as breaking by default:
 - removed API fields/routes or changed API response contracts
 - schema changes that require operator action or migration awareness
 
+Use the helper script to keep `pyproject.toml` and release tags aligned:
+
+```bash
+python scripts/bump_version.py patch
+python scripts/bump_version.py minor
+python scripts/bump_version.py major
+```
+
+The resulting version is the version that must be tagged on `main` as
+`vX.Y.Z`. The Docker publish workflow rejects mismatched release tags.
+
 ## 4. Where Things Live
 
 ### Core runtime
