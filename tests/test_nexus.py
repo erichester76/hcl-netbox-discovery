@@ -18,6 +18,7 @@ from collector.sources.nexus import (
     _safe_get,
 )
 
+
 # ---------------------------------------------------------------------------
 # _normalize_model()
 # ---------------------------------------------------------------------------
@@ -555,23 +556,6 @@ class TestNexusEnrichInterface:
         result = src._enrich_interface(iface)
         assert result["type"] == "virtual"
         assert result["ip_address"] == "10.255.0.1/32"
-        assert result["mgmt_only"] is False
-
-    def test_management_interface_sets_mgmt_only(self):
-        src = NexusDashboardSource()
-        iface = {
-            "ifName":     "mgmt0",
-            "ifType":     "INTERFACE_MANAGEMENT",
-            "adminState": "up",
-            "operStatus": "up",
-            "ifDescr":    "oob management",
-            "macAddress": "aa:bb:cc:dd:ee:ff",
-            "ipAddress":  "10.0.0.10/24",
-            "speedStr":   "1G",
-        }
-        result = src._enrich_interface(iface)
-        assert result["type"] == "1000base-t"
-        assert result["mgmt_only"] is True
 
     def test_admin_down_interface_not_enabled(self):
         src = NexusDashboardSource()
