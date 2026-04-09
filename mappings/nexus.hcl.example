@@ -128,6 +128,10 @@ object "device" {
     value = "source('status')"
   }
 
+  field "primary_ip4" {
+    value = "when(source('ip_address') != '', source('ip_address'), None)"
+  }
+
   field "tags" {
     type  = "tags"
     value = "['ndfc-sync']"
@@ -150,7 +154,7 @@ object "device" {
     }
 
     field "type" {
-      value = "coalesce(source('type'), 'other')"
+      value = "when(source('type'), source('type'), 'other')"
     }
 
     field "enabled" {
@@ -158,11 +162,28 @@ object "device" {
     }
 
     field "description" {
-      value = "coalesce(source('description'), '')"
+      value = "when(source('description'), source('description'), '')"
+    }
+
+    field "mgmt_only" {
+      value = "source('mgmt_only')"
     }
 
     field "mac_address" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      primary_if   = "first"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
     }
   }
 }
