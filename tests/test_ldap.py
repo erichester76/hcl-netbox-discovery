@@ -12,9 +12,9 @@ import pytest
 
 from collector.sources.ldap import (
     LDAPSource,
+    _attributes_to_dict,
     _entry_to_dict,
 )
-
 
 # ---------------------------------------------------------------------------
 # _entry_to_dict()
@@ -83,6 +83,20 @@ class TestEntryToDict:
         assert result["badAttr"] == ""
 
 
+class TestAttributesToDict:
+    def test_single_value_returned_as_string(self):
+        result = _attributes_to_dict({"cn": ["johndoe"]})
+        assert result["cn"] == "johndoe"
+
+    def test_multi_value_returned_as_list(self):
+        result = _attributes_to_dict({"memberOf": ["a", "b"]})
+        assert result["memberOf"] == ["a", "b"]
+
+    def test_none_value_returned_as_empty_string(self):
+        result = _attributes_to_dict({"mail": None})
+        assert result["mail"] == ""
+
+
 # ---------------------------------------------------------------------------
 # connect()
 # ---------------------------------------------------------------------------
@@ -125,6 +139,7 @@ class TestLDAPGetObjects:
     def _connected_source(self, ldap_config) -> LDAPSource:
         src = LDAPSource()
         src._conn = MagicMock()
+        src._conn.extend = None
         src._config = ldap_config
         return src
 
@@ -229,6 +244,85 @@ class TestLDAPGetObjects:
 
         result = src.get_objects("users")
         assert result == []
+
+    def test_uses_paged_search_when_available(self, ldap_config):
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(
+            return_value=iter(
+                [
+                    {"type": "searchResEntry", "attributes": {"cn": ["alice"], "mail": ["alice@example.com"]}},
+                    {"type": "searchResRef", "uri": "ldap://ignored"},
+                    {"type": "searchResEntry", "attributes": {"memberOf": ["a", "b"]}},
+                ]
+            )
+        )
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        result = src.get_objects("users")
+
+        assert result == [
+            {"cn": "alice", "mail": "alice@example.com"},
+            {"memberOf": ["a", "b"]},
+        ]
+        src._conn.search.assert_not_called()
+        paged_search.assert_called_once()
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 1000
+        assert kwargs["generator"] is True
+
+    def test_invalid_page_size_falls_back_to_default(self, ldap_config):
+        ldap_config.extra["page_size"] = "not-an-int"
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(return_value=iter([]))
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        src.get_objects("users")
+
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 1000
+
+    def test_zero_page_size_falls_back_to_default(self, ldap_config):
+        ldap_config.extra["page_size"] = 0
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(return_value=iter([]))
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        src.get_objects("users")
+
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 1000
+
+    def test_negative_page_size_falls_back_to_default(self, ldap_config):
+        ldap_config.extra["page_size"] = -1
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(return_value=iter([]))
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        src.get_objects("users")
+
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 1000
+
+    def test_valid_page_size_is_passed_through(self, ldap_config):
+        ldap_config.extra["page_size"] = 250
+        src = self._connected_source(ldap_config)
+        paged_search = MagicMock(return_value=iter([]))
+        src._conn.extend = SimpleNamespace(
+            standard=SimpleNamespace(paged_search=paged_search)
+        )
+
+        src.get_objects("users")
+
+        kwargs = paged_search.call_args.kwargs
+        assert kwargs["paged_size"] == 250
 
 
 # ---------------------------------------------------------------------------
