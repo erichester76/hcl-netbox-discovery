@@ -296,9 +296,33 @@ object "vm" {
     optional = false
   }
 
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = {
+      name = "site_name if (site_name := regex_file(source('runtime.host.parent.name'), 'cluster_to_site')) != source('runtime.host.parent.name') else None"
+    }
+    optional = true
+  }
+
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = { name = "source('guest.guestFullName') or 'Unknown'" }
+    optional = true
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = {
+      name = "role_name if (role_name := regex_file(source('name'), 'vm_to_role')) != source('name') else 'Virtual Machine'"
+    }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = {
+      name = "tenant_name if (tenant_name := regex_file(source('name'), 'vm_to_tenant')) != source('name') else None"
+    }
     optional = true
   }
 
@@ -308,6 +332,28 @@ object "vm" {
 
   field "cluster" {
     value = "prereq('cluster')"
+  }
+
+  field "device" {
+    type     = "fk"
+    resource = "dcim.devices"
+    lookup   = { name = "replace(source('runtime.host.name'), '.clemson.edu', '')" }
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
   }
 
   field "status" {
