@@ -634,6 +634,67 @@ def test_cache_status_page(app):
     assert b"Cache" in resp.data
 
 
+def test_cache_status_page_renders_namespaces(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "_get_cache_info",
+        lambda: {
+            "backend": "redis",
+            "entries": {"dcim.devices": {"count": 2, "sentinel_ttl": 120}},
+            "total": 3,
+            "total_all": 8,
+            "current_namespace": "dev:abc123def456",
+            "namespaces": {
+                "dev:abc123def456": {
+                    "total": 3,
+                    "entries": {"dcim.devices": {"count": 2, "sentinel_ttl": 120}},
+                },
+                "main:789xyz654uvw": {
+                    "total": 5,
+                    "entries": {"ipam.vlans": {"count": 4, "sentinel_ttl": None}},
+                },
+            },
+        },
+    )
+
+    resp = app.get("/cache")
+
+    assert resp.status_code == 200
+    assert b"Current Namespace Entries" in resp.data
+    assert b"All Namespace Entries" in resp.data
+    assert b"All Cache Namespaces" in resp.data
+    assert b"dev:abc123def456" in resp.data
+    assert b"main:789xyz654uvw" in resp.data
+
+
+def test_build_namespace_cache_info_groups_raw_keys():
+    import web.app as web_app_module  # noqa: PLC0415
+
+    namespaces = web_app_module._build_namespace_cache_info(
+        [
+            "nbx:dev:aaaa1111bbbb:dcim.devices:1",
+            "nbx:dev:aaaa1111bbbb:dcim.devices:2",
+            "nbx:dev:aaaa1111bbbb:precache:complete:devices",
+            "nbx:main:cccc2222dddd:ipam.vlans:99",
+        ],
+        base_prefix="nbx:",
+        sentinel_ttl_lookup={"nbx:dev:aaaa1111bbbb:precache:complete:devices": 42},
+        object_type_to_resource={"devices": "dcim.devices"},
+    )
+
+    assert namespaces["dev:aaaa1111bbbb"]["total"] == 3
+    assert namespaces["dev:aaaa1111bbbb"]["entries"]["dcim.devices"] == {
+        "count": 2,
+        "sentinel_ttl": 42,
+    }
+    assert namespaces["main:cccc2222dddd"]["entries"]["ipam.vlans"] == {
+        "count": 1,
+        "sentinel_ttl": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 404 handler
 # ---------------------------------------------------------------------------
