@@ -5,6 +5,8 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import sqlite3
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -445,6 +447,147 @@ def _cache_client_kwargs() -> dict[str, Any]:
     return kwargs
 
 
+def _base_cache_key_prefix() -> str:
+    """Return the configured raw cache prefix without branch/url scoping."""
+    prefix = get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:")
+    if not prefix.endswith(":"):
+        prefix = f"{prefix}:"
+    return prefix
+
+
+def _current_cache_namespace() -> str:
+    """Return the current branch/url cache namespace suffix."""
+    prefix = _base_cache_key_prefix()
+    effective = _cache_client_kwargs()["cache_key_prefix"]
+    return effective[len(prefix):].rstrip(":")
+
+
+def _parse_cache_namespace_key(full_key: str, base_prefix: str) -> tuple[str, str] | None:
+    """Split a raw backend cache key into ``(namespace, logical_key)``."""
+    if not full_key.startswith(base_prefix):
+        return None
+    remainder = full_key[len(base_prefix):]
+    namespace, sep, logical_key = remainder.partition(":")
+    if not sep or not logical_key:
+        return None
+    url_scope, sep, logical_key = logical_key.partition(":")
+    if not sep or not url_scope or not logical_key:
+        return None
+    return f"{namespace}:{url_scope}", logical_key
+
+
+def _build_namespace_cache_info(
+    raw_keys: list[str],
+    *,
+    base_prefix: str,
+    sentinel_ttl_lookup: dict[str, int | None],
+    object_type_to_resource: dict[str, str],
+) -> dict[str, Any]:
+    """Build grouped cache stats keyed by branch/url namespace."""
+    sentinel_prefix = "precache:complete:"
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for full_key in raw_keys:
+        parsed = _parse_cache_namespace_key(full_key, base_prefix)
+        if parsed is None:
+            continue
+        namespace, logical_key = parsed
+        branch, _, url_scope = namespace.partition(":")
+        namespace_info = grouped.setdefault(
+            namespace,
+            {
+                "branch": branch,
+                "url_scope": url_scope,
+                "entries": {},
+                "total": 0,
+            },
+        )
+        namespace_info["total"] += 1
+        if logical_key.startswith(sentinel_prefix):
+            object_type = logical_key[len(sentinel_prefix):]
+            resource = object_type_to_resource.get(object_type)
+            if resource is None:
+                continue
+            resource_info = namespace_info["entries"].setdefault(
+                resource,
+                {"count": 0, "sentinel_ttl": None},
+            )
+            resource_info["sentinel_ttl"] = sentinel_ttl_lookup.get(full_key)
+            continue
+
+        resource = logical_key.split(":", 1)[0]
+        if not resource:
+            continue
+        resource_info = namespace_info["entries"].setdefault(
+            resource,
+            {"count": 0, "sentinel_ttl": None},
+        )
+        resource_info["count"] += 1
+
+    for namespace_info in grouped.values():
+        namespace_info["entries"] = dict(sorted(namespace_info["entries"].items()))
+
+    return dict(sorted(grouped.items()))
+
+
+def _get_redis_namespace_cache_info(
+    redis_url: str,
+    *,
+    base_prefix: str,
+    object_type_to_resource: dict[str, str],
+) -> dict[str, Any]:
+    """Return grouped cache info directly from Redis."""
+    import redis  # noqa: PLC0415
+
+    client = redis.from_url(redis_url, decode_responses=True)
+    try:
+        raw_keys = sorted(client.scan_iter(match=f"{base_prefix}*"))
+        sentinel_ttl_lookup = {
+            key: (ttl if isinstance(ttl := client.ttl(key), int) and ttl >= 0 else None)
+            for key in raw_keys
+            if "precache:complete:" in key
+        }
+        return _build_namespace_cache_info(
+            raw_keys,
+            base_prefix=base_prefix,
+            sentinel_ttl_lookup=sentinel_ttl_lookup,
+            object_type_to_resource=object_type_to_resource,
+        )
+    finally:
+        client.close()
+
+
+def _get_sqlite_namespace_cache_info(
+    sqlite_path: str,
+    *,
+    base_prefix: str,
+    object_type_to_resource: dict[str, str],
+) -> dict[str, Any]:
+    """Return grouped cache info directly from the SQLite cache backend."""
+    now = int(time.time())
+    conn = sqlite3.connect(sqlite_path)
+    try:
+        rows = conn.execute(
+            "SELECT key, expires_at FROM cache_entries WHERE key LIKE ? AND expires_at > ?",
+            (f"{base_prefix}%", now),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    raw_keys = [str(key) for key, _ in rows]
+    sentinel_ttl_lookup = {
+        str(key): max(0, int(expires_at) - now)
+        for key, expires_at in rows
+        if "precache:complete:" in str(key)
+    }
+    return _build_namespace_cache_info(
+        raw_keys,
+        base_prefix=base_prefix,
+        sentinel_ttl_lookup=sentinel_ttl_lookup,
+        object_type_to_resource=object_type_to_resource,
+    )
+
+
 @contextmanager
 def _cache_client() -> Generator[Any | None, None, None]:
     """Context manager that yields a pynetbox2 API client configured from config settings.
@@ -470,15 +613,57 @@ def _get_cache_info() -> dict[str, Any]:
     try:
         backend = get_config("NETBOX_CACHE_BACKEND", "none")
         if backend == "none":
-            return {"backend": "none", "entries": {}, "total": 0}
+            return {
+                "backend": "none",
+                "entries": {},
+                "total": 0,
+                "current_namespace": None,
+                "namespaces": {},
+                "total_all": 0,
+            }
 
         with _cache_client() as nb:
             stats = nb.cache_stats()
+            object_type_to_resource = {
+                v: k for k, v in nb._RESOURCE_TO_PRECACHE_OBJECT_TYPE.items()
+            }
         total = stats.get("total", 0) if stats else 0
         by_resource = stats.get("by_resource", {}) if stats else {}
-        return {"backend": backend, "entries": by_resource, "total": total}
+        base_prefix = _base_cache_key_prefix()
+        namespaces: dict[str, Any] = {}
+        if backend == "redis":
+            redis_url = get_config("NETBOX_CACHE_URL", "") or "redis://localhost:6379/0"
+            namespaces = _get_redis_namespace_cache_info(
+                redis_url,
+                base_prefix=base_prefix,
+                object_type_to_resource=object_type_to_resource,
+            )
+        elif backend == "sqlite":
+            sqlite_path = get_config("NETBOX_CACHE_URL", "") or ".nbx_cache.sqlite3"
+            namespaces = _get_sqlite_namespace_cache_info(
+                sqlite_path,
+                base_prefix=base_prefix,
+                object_type_to_resource=object_type_to_resource,
+            )
+
+        return {
+            "backend": backend,
+            "entries": by_resource,
+            "total": total,
+            "current_namespace": _current_cache_namespace(),
+            "namespaces": namespaces,
+            "total_all": sum(info["total"] for info in namespaces.values()) if namespaces else total,
+        }
     except Exception as exc:
-        return {"backend": "error", "entries": {}, "total": 0, "error": str(exc)}
+        return {
+            "backend": "error",
+            "entries": {},
+            "total": 0,
+            "current_namespace": None,
+            "namespaces": {},
+            "total_all": 0,
+            "error": str(exc),
+        }
 
 
 def _flush_cache(resource: str | None) -> None:
