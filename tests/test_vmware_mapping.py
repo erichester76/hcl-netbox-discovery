@@ -43,3 +43,24 @@ class TestVMwareExamplePhysicalNicMapping:
             "map_value(source('_nic.linkSpeed.duplex'), {True: 'full', False: 'half'}, None)"
         )
         assert fields["description"].value == "join(' ', [source('_host_name'), source('_nic.device')])"
+
+
+class TestVMwareExampleVmkNicMapping:
+    def test_host_vmk_nics_include_short_host_context_for_description(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        host_obj = next(o for o in cfg.objects if o.name == "host")
+        vmk_nic_block = host_obj.interfaces[1]
+
+        assert (
+            vmk_nic_block.source_items
+            == "[{'_vnic': nic, '_host_name': replace(source('name'), '.clemson.edu', '')} for nic in (source('_enriched_vnics') or [])]"
+        )
+
+        fields = {f.name: f for f in vmk_nic_block.fields}
+        assert fields["name"].value == "source('_vnic.device')"
+        assert fields["mac_address"].value == "upper(source('_vnic.spec.mac'))"
+        assert fields["type"].value == "'virtual'"
+        assert fields["description"].value == "join(' ', [source('_host_name'), source('_vnic.device')])"
+
+        assert vmk_nic_block.ip_addresses[0].source_items == "_vnic.spec.ip"
+        assert vmk_nic_block.tagged_vlans[0].source_items == "_vnic._vlans"

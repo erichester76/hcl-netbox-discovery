@@ -210,23 +210,27 @@ object "host" {
 
   # Management / VMkernel vNICs
   interface {
-    source_items = "_enriched_vnics"
+    source_items = "[{'_vnic': nic, '_host_name': replace(source('name'), '.clemson.edu', '')} for nic in (source('_enriched_vnics') or [])]"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "source('device')"
+      value = "source('_vnic.device')"
     }
 
     field "mac_address" {
-      value = "upper(source('spec.mac'))"
+      value = "upper(source('_vnic.spec.mac'))"
     }
 
     field "type" {
       value = "'virtual'"
     }
 
+    field "description" {
+      value = "join(' ', [source('_host_name'), source('_vnic.device')])"
+    }
+
     ip_address {
-      source_items = "spec.ip"
+      source_items = "_vnic.spec.ip"
       primary_if   = "first"
 
       field "address" {
@@ -239,7 +243,7 @@ object "host" {
     }
 
     tagged_vlan {
-      source_items = "_vlans"
+      source_items = "_vnic._vlans"
 
       field "vid" {
         value = "source('id')"
