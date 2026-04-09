@@ -125,7 +125,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     (
         "NETBOX_CACHE_KEY_PREFIX",
         "nbx:",
-        "Cache key prefix used to namespace keys in redis/sqlite backends (default: nbx:)",
+        "Base cache key prefix used to namespace keys in redis/sqlite backends; the effective runtime prefix also includes branch and NetBox URL scope (default base: nbx:)",
         "NetBox",
     ),
     (
