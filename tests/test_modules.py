@@ -348,6 +348,14 @@ class TestXclarityModulesHcl:
         field = next(f for f in mod.fields if f.name == field_name)
         return field.value
 
+    def _get_module_power_input_expr(self, profile: str, field_name: str):
+        """Return a power_input expression from a module block in the example mapping."""
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        mod = next(m for m in node.modules if m.profile == profile)
+        assert mod.power_input is not None
+        return getattr(mod.power_input, field_name)
+
     def _make_resolver(self, source_obj):
         from collector.config import CollectorOptions
         from collector.context import RunContext
@@ -385,6 +393,14 @@ class TestXclarityModulesHcl:
         return self._make_resolver(source_obj).evaluate_strict(
             expr,
             label=f"{profile}.{field_name}",
+        )
+
+    def _eval_module_power_input(self, profile: str, field_name: str, source_obj):
+        """Evaluate a module power_input expression against a source object."""
+        expr = self._get_module_power_input_expr(profile, field_name)
+        return self._make_resolver(source_obj).evaluate_strict(
+            expr,
+            label=f"{profile}.power_input.{field_name}",
         )
 
     def _eval_disk_type(self, source_obj):
@@ -589,6 +605,14 @@ class TestXclarityModulesHcl:
             {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 900}},
         )
         assert result == 900
+
+    def test_power_supply_input_type_zero_output_watts_falls_back_to_total_output_power(self):
+        result = self._eval_module_power_input(
+            "Power supply",
+            "type",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 2200}},
+        )
+        assert result == "iec-60320-c20"
 
 
 # ---------------------------------------------------------------------------
