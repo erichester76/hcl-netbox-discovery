@@ -34,6 +34,7 @@ Interface dict fields (when fetch_interfaces is enabled)
   type              NetBox-compatible interface type string
   enabled           ``True`` if admin state is up
   description       Interface description
+  mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
   speed             Speed in Mbps (integer)
   ip_address        IP address with prefix length (e.g. ``"10.0.0.1/24"``)
@@ -44,7 +45,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -127,7 +128,7 @@ class NexusDashboardSource(DataSource):
     _API_BASE = "/appcenter/cisco/ndfc/api/v1"
 
     def __init__(self) -> None:
-        self._session: Optional[requests.Session] = None
+        self._session: requests.Session | None = None
         self._base_url: str = ""
         self._fetch_interfaces: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
@@ -213,7 +214,7 @@ class NexusDashboardSource(DataSource):
             ),
         ]
 
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for path, payload, token_key in auth_attempts:
             try:
                 url = self._base_url + path
@@ -357,6 +358,7 @@ class NexusDashboardSource(DataSource):
         mac_address = _safe_get(iface, "macAddress", "") or ""
         ip_address  = _safe_get(iface, "ipAddress", "") or ""
         speed_str   = _safe_get(iface, "speedStr", "") or _safe_get(iface, "speed", "") or ""
+        mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or if_name.lower().startswith("mgmt")
 
         return {
             # --- normalised convenience fields ---
@@ -364,6 +366,7 @@ class NexusDashboardSource(DataSource):
             "type":        _normalize_iface_type(if_type),
             "enabled":     admin_state.lower() == "up",
             "description": description,
+            "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
             "speed":       _parse_speed_mbps(speed_str),
@@ -383,6 +386,6 @@ class NexusDashboardSource(DataSource):
 _safe_get = safe_get
 
 
-def _parse_speed_mbps(speed_str: str) -> Optional[int]:
+def _parse_speed_mbps(speed_str: str) -> int | None:
     """Delegate to shared helper, treating bare integers as already-Mbps (Nexus)."""
     return parse_speed_mbps(speed_str)
