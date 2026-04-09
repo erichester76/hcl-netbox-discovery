@@ -1197,7 +1197,7 @@ class TestVmwareMappings:
     PATHS = ["mappings/vmware.hcl.example"]
 
     @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_vm_tagged_vlans_include_cluster_derived_site(self, mapping_path):
+    def test_vm_tagged_vlans_reuse_resolved_vm_site(self, mapping_path):
         cfg = load_config(mapping_path)
         vm = next((o for o in cfg.objects if o.name == "vm"), None)
         assert vm is not None, f"missing vm object in {mapping_path}"
@@ -1205,12 +1205,10 @@ class TestVmwareMappings:
         interface = vm.interfaces[0]
         assert interface.tagged_vlans, "vm interface should define tagged_vlans"
         vlan = interface.tagged_vlans[0]
-        assert vlan.source_items == "[{**v, 'site_name': regex_file(source('runtime.host.parent.name'), 'cluster_to_site')} for v in (source('_vlans') or [])]"
+        assert vlan.source_items == "_vlans"
         site_field = next((f for f in vlan.fields if f.name == "site"), None)
         assert site_field is not None, "tagged_vlan should define site"
-        assert site_field.type == "fk"
-        assert site_field.resource == "dcim.sites"
-        assert site_field.lookup == {"name": "source('site_name')"}
+        assert site_field.value == "prereq('site')"
 
 
 class TestSourcePayloadContracts:
