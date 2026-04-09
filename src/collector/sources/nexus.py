@@ -13,21 +13,23 @@ Each returned switch dict includes both normalised convenience fields and
 the original NDFC response attributes:
 
 Normalised fields
-  name              Hostname (domain stripped, truncated to 64 chars)
+  name              Best-available switch name (domain stripped, truncated to 64 chars)
   model             Platform model with Nexus prefix normalisation applied
   manufacturer      Always ``"Cisco"``
   role              Switch role in title-case (e.g. ``"leaf"`` → ``"Leaf"``)
   platform_name     ``"NX-OS {release}"``
   serial            Uppercase serial number
   fabric_name       Fabric name the switch belongs to
+  site_name         Best-available site/fabric label for NetBox site mapping
   ip_address        Management IP address
   status            ``"active"`` if alive, otherwise ``"offline"``
   interfaces        List of normalised interface dicts (when fetch_interfaces
                     is enabled)
 
 Raw fields (passthrough from NDFC)
-  hostName, ipAddress, rawModel, serialNumber, release, fabricName,
-  switchRole, rawStatus, systemMode
+  hostName, switchName, deviceName, logicalName, siteName,
+  siteNameHierarchy, ipAddress, rawModel, serialNumber, release,
+  fabricName, switchRole, rawStatus, systemMode
 
 Interface dict fields (when fetch_interfaces is enabled)
   name              Interface name (e.g. ``"Ethernet1/1"``)
@@ -84,6 +86,60 @@ def _normalize_model(model: str) -> str:
         if new != result:
             result = new
     return result.strip()
+
+
+def _last_hierarchy_part(value: str) -> str:
+    """Return the last non-empty segment of a slash-separated hierarchy string."""
+    if not value:
+        return ""
+    parts = [part.strip() for part in str(value).split("/") if part and part.strip()]
+    return parts[-1] if parts else ""
+
+
+def _first_non_empty(obj: Any, *keys: str) -> str:
+    """Return the first non-empty string-like field from *obj* for *keys*."""
+    for key in keys:
+        value = _safe_get(obj, key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _derive_switch_name(switch: Any) -> str:
+    """Return the best-available switch name from common NDFC inventory fields."""
+    raw_name = _first_non_empty(
+        switch,
+        "hostName",
+        "switchName",
+        "deviceName",
+        "logicalName",
+        "sysName",
+        "name",
+    )
+    if not raw_name:
+        return "Unknown"
+    return raw_name.split(".")[0][:64] or "Unknown"
+
+
+def _derive_site_name(switch: Any) -> str:
+    """Return the best-available site/fabric label from common NDFC fields."""
+    site_name = _first_non_empty(
+        switch,
+        "fabricName",
+        "fabric",
+        "siteName",
+        "site",
+        "podName",
+        "networkName",
+    )
+    if site_name:
+        return site_name
+    return _last_hierarchy_part(
+        _first_non_empty(switch, "siteNameHierarchy", "fabricNameHierarchy", "sitePath")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +323,36 @@ class NexusDashboardSource(DataSource):
         if not isinstance(data, list):
             data = []
 
+        if data and isinstance(data[0], dict):
+            first = data[0]
+            preview_keys = [
+                "hostName",
+                "switchName",
+                "deviceName",
+                "logicalName",
+                "sysName",
+                "name",
+                "fabricName",
+                "fabric",
+                "siteName",
+                "site",
+                "siteNameHierarchy",
+                "podName",
+                "networkName",
+                "ipAddress",
+                "serialNumber",
+            ]
+            preview = {
+                key: value
+                for key in preview_keys
+                if key in first and (value := first.get(key)) not in (None, "")
+            }
+            logger.debug(
+                "NDFC first switch payload keys=%s preview=%s",
+                sorted(first.keys()),
+                preview,
+            )
+
         switches: list[dict] = []
         for raw in data:
             enriched = self._enrich_switch(raw)
@@ -310,17 +396,18 @@ class NexusDashboardSource(DataSource):
 
     def _enrich_switch(self, switch: Any) -> dict:
         """Return a normalised dict for a single NDFC switch record."""
-        hostname    = _safe_get(switch, "hostName", "") or ""
+        hostname    = _first_non_empty(switch, "hostName")
         model       = _safe_get(switch, "model", "") or ""
         serial      = _safe_get(switch, "serialNumber", "") or ""
         release     = _safe_get(switch, "release", "") or ""
         fabric_name = _safe_get(switch, "fabricName", "") or ""
+        site_name   = _derive_site_name(switch)
         switch_role = _safe_get(switch, "switchRole", "") or ""
         ip_address  = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
 
-        name = (hostname.split(".")[0] if hostname else "")[:64] or "Unknown"
+        name = _derive_switch_name(switch)
 
         # NDFC uses "alive" / "unreachable" / "inactive" for status.
         status = "active" if raw_status.lower() in ("alive", "ok") else "offline"
@@ -334,10 +421,16 @@ class NexusDashboardSource(DataSource):
             "platform_name": f"NX-OS {release}".strip() if release else "NX-OS",
             "serial":       serial.upper() if serial else "",
             "fabric_name":  fabric_name,
+            "site_name":    site_name,
             "ip_address":   ip_address,
             "status":       status,
             # --- passthrough raw fields ---
             "hostName":     hostname,
+            "switchName":   _safe_get(switch, "switchName", "") or "",
+            "deviceName":   _safe_get(switch, "deviceName", "") or "",
+            "logicalName":  _safe_get(switch, "logicalName", "") or "",
+            "siteName":     _safe_get(switch, "siteName", "") or "",
+            "siteNameHierarchy": _safe_get(switch, "siteNameHierarchy", "") or "",
             "rawModel":     model,
             "serialNumber": serial,
             "release":      release,
