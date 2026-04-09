@@ -27,8 +27,9 @@ Normalised fields
                     is enabled)
 
 Raw fields (passthrough from NDFC)
-  hostName, ipAddress, rawModel, serialNumber, release, fabricName,
-  switchRole, rawStatus, systemMode
+  hostName, switchName, deviceName, logicalName, siteName,
+  siteNameHierarchy, ipAddress, rawModel, serialNumber, release,
+  fabricName, switchRole, rawStatus, systemMode
 
 Interface dict fields (when fetch_interfaces is enabled)
   name              Interface name (e.g. ``"Ethernet1/1"``)
@@ -342,9 +343,9 @@ class NexusDashboardSource(DataSource):
                 "serialNumber",
             ]
             preview = {
-                key: first.get(key)
+                key: value
                 for key in preview_keys
-                if key in first and first.get(key) not in (None, "")
+                if key in first and (value := first.get(key)) not in (None, "")
             }
             logger.debug(
                 "NDFC first switch payload keys=%s preview=%s",
