@@ -431,6 +431,41 @@ def test_runtime_config_db_override_wins():
     assert get_config("NETBOX_URL", "") == "https://netbox.example.com"
 
 
+def test_sensitive_setting_is_encrypted_at_rest(monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
+
+    set_setting("VCENTER_PASS", "super-secret")
+
+    with sqlite3.connect(db_module._db_path()) as con:
+        stored = con.execute(
+            "SELECT value FROM config_settings WHERE key='VCENTER_PASS'"
+        ).fetchone()[0]
+
+    assert stored != "super-secret"
+    assert stored.startswith("enc:v1:")
+    assert get_config("VCENTER_PASS", "") == "super-secret"
+
+
+def test_sensitive_setting_requires_bootstrap_key_for_decryption(monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+
+    monkeypatch.delenv("COLLECTOR_DB_ENCRYPTION_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="requires COLLECTOR_DB_ENCRYPTION_KEY"):
+        get_config("VCENTER_PASS", "")
+
+
+def test_sensitive_setting_rejects_wrong_bootstrap_key(monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "unit-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "wrong-db-key")
+
+    with pytest.raises(RuntimeError, match="could not be decrypted"):
+        get_config("VCENTER_PASS", "")
+
+
 def test_catc_runtime_settings_are_seeded():
     settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
 

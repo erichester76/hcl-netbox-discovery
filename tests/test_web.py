@@ -24,6 +24,7 @@ def app(tmp_path, monkeypatch):
     """Create a Flask test client backed by a temporary DB."""
     db_path = str(tmp_path / "test_web.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "test-db-encryption-key")
     monkeypatch.setenv("WEB_AUTH_ENABLED", "false")
     monkeypatch.setenv("WEB_SECRET_KEY", "test-secret-key")
     monkeypatch.setattr(db_module, "_lock", threading.Lock())
@@ -42,6 +43,7 @@ def secured_app(tmp_path, monkeypatch):
     """Create a Flask test client with web auth and CSRF enabled."""
     db_path = str(tmp_path / "test_web_secured.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "test-db-encryption-key")
     monkeypatch.setenv("WEB_AUTH_ENABLED", "true")
     monkeypatch.setenv("WEB_USERNAME", "admin")
     monkeypatch.setenv("WEB_PASSWORD", "secret")
@@ -191,6 +193,17 @@ def test_api_job_logs_allows_token_auth(secured_app):
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "running"
     assert resp.get_json()["logs"][0]["message"] == "first"
+
+
+def test_settings_page_decrypts_sensitive_db_overrides(app, monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "web-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+
+    resp = app.get("/settings")
+
+    assert resp.status_code == 200
+    assert b"VCENTER_PASS" in resp.data
+    assert b"super-secret" in resp.data
 
 
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):

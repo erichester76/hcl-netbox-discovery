@@ -209,9 +209,11 @@ The web UI listens on `http://localhost:${WEB_PORT:-5000}` and persists job hist
 | `WEB_PASSWORD` | empty | Optional plaintext fallback when `WEB_PASSWORD_HASH` is not set |
 | `WEB_SESSION_COOKIE_SECURE` | `false` | Mark session cookies secure when serving the UI over HTTPS |
 | `COLLECTOR_DB_PATH` | `<project root>/data/collector_jobs.sqlite3` | Path to the SQLite job database |
+| `COLLECTOR_DB_ENCRYPTION_KEY` | empty | Bootstrap key used to encrypt/decrypt sensitive DB-backed settings at rest |
 | `FLASK_DEBUG` | `false` | Enable Flask debug mode (never use in production) |
 
 Browser login settings remain environment-only. API token authentication is DB-backed through the `WEB_API_TOKEN` runtime setting and applies only to `/api/*` routes.
+Sensitive DB-backed settings such as passwords, tokens, and client secrets are encrypted at rest when `COLLECTOR_DB_ENCRYPTION_KEY` is set. Encrypted rows cannot be read or updated without the same bootstrap key.
 
 ---
 

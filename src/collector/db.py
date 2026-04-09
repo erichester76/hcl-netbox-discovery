@@ -7,13 +7,19 @@ import logging
 import os
 import sqlite3
 import threading
+from base64 import urlsafe_b64encode
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any
+
+from cryptography.fernet import Fernet, InvalidToken
 
 logger = logging.getLogger(__name__)
 _UNSET = object()
+_ENCRYPTED_VALUE_PREFIX = "enc:v1:"
+_DB_ENCRYPTION_KEY_ENV = "COLLECTOR_DB_ENCRYPTION_KEY"
 
 # Default DB path. Keep it under ``data/`` so the container can persist the
 # SQLite file without requiring a writable repo root.
@@ -22,6 +28,47 @@ _DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "data", "collector_j
 
 def _db_path() -> str:
     return os.environ.get("COLLECTOR_DB_PATH", os.path.normpath(_DEFAULT_DB))
+
+
+def _is_sensitive_setting_key(key: str) -> bool:
+    return any(pat in key for pat in _SENSITIVE_PATTERNS)
+
+
+def _settings_fernet() -> Fernet | None:
+    raw_key = os.environ.get(_DB_ENCRYPTION_KEY_ENV, "").strip()
+    if not raw_key:
+        return None
+    derived_key = urlsafe_b64encode(sha256(raw_key.encode("utf-8")).digest())
+    return Fernet(derived_key)
+
+
+def _encrypt_setting_value(key: str, value: str | None) -> str | None:
+    if value is None or not _is_sensitive_setting_key(key):
+        return value
+    fernet = _settings_fernet()
+    if fernet is None:
+        raise RuntimeError(
+            f"Sensitive DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
+        )
+    token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+    return f"{_ENCRYPTED_VALUE_PREFIX}{token}"
+
+
+def _decrypt_setting_value(key: str, value: str | None) -> str | None:
+    if value is None or not isinstance(value, str) or not value.startswith(_ENCRYPTED_VALUE_PREFIX):
+        return value
+    fernet = _settings_fernet()
+    if fernet is None:
+        raise RuntimeError(
+            f"Encrypted DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
+        )
+    token = value.removeprefix(_ENCRYPTED_VALUE_PREFIX)
+    try:
+        return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise RuntimeError(
+            f"Encrypted DB setting {key} could not be decrypted with {_DB_ENCRYPTION_KEY_ENV}."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +459,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
 
 _STARTUP_CONFIG_KEYS = {
     "COLLECTOR_DB_PATH",
+    _DB_ENCRYPTION_KEY_ENV,
     "FLASK_DEBUG",
     "LOG_LEVEL",
     "WEB_HOST",
@@ -1134,9 +1182,11 @@ def get_config(key: str, default: str = "") -> str:
             ).fetchone()
         if row is not None:
             if row[0] is not None:
-                return row[0]
+                return _decrypt_setting_value(key, row[0]) or ""
             if row[1] is not None:
                 return row[1]
+    except RuntimeError:
+        raise
     except Exception:
         pass  # DB not ready – fall through to explicit default
     return default
@@ -1168,10 +1218,11 @@ def set_setting(key: str, value: str | None) -> None:
     variable (same effect as ``reset_setting``).
     """
     now = _now()
+    stored_value = _encrypt_setting_value(key, value)
     with _conn() as con:
         con.execute(
             "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
-            (value, now, key),
+            (stored_value, now, key),
         )
 
 
@@ -1182,10 +1233,10 @@ def reset_setting(key: str) -> None:
 
 def _row_to_setting(row: tuple) -> dict[str, Any]:
     key = row[1]
-    db_value = row[2]
+    db_value = _decrypt_setting_value(key, row[2])
     default_value = row[3] or ""
     effective = db_value if db_value is not None else default_value
-    is_sensitive = any(pat in key for pat in _SENSITIVE_PATTERNS)
+    is_sensitive = _is_sensitive_setting_key(key)
     return {
         "id": row[0],
         "key": key,
