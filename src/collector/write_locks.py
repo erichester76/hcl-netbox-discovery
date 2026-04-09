@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from typing import Any
 
 _locks: dict[tuple[Any, ...], threading.RLock] = {}
+_lock_refcounts: dict[tuple[Any, ...], int] = {}
 _locks_guard = threading.Lock()
 
 
@@ -60,6 +61,16 @@ def keyed_lock(lock_key: tuple[Any, ...] | None):
         if lock is None:
             lock = threading.RLock()
             _locks[lock_key] = lock
+        _lock_refcounts[lock_key] = _lock_refcounts.get(lock_key, 0) + 1
 
-    with lock:
-        yield
+    try:
+        with lock:
+            yield
+    finally:
+        with _locks_guard:
+            remaining = _lock_refcounts[lock_key] - 1
+            if remaining <= 0:
+                _lock_refcounts.pop(lock_key, None)
+                _locks.pop(lock_key, None)
+            else:
+                _lock_refcounts[lock_key] = remaining

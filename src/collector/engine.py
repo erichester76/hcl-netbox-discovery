@@ -2091,8 +2091,12 @@ class Engine:
         with keyed_lock(build_vlan_lock_key(vlan_payload)):
             vid = vlan_payload.get("vid")
             site_id = vlan_payload.get("site")
+            group_id = extract_id(vlan_payload.get("group"))
+            list_filters: dict[str, Any] = {"vid": vid}
+            if group_id is not None:
+                list_filters["group"] = group_id
 
-            existing_vlans = ctx.nb.list("ipam.vlans", vid=vid)
+            existing_vlans = ctx.nb.list("ipam.vlans", **list_filters)
 
             siteless_vlan = None
             site_vlan = None
@@ -2100,7 +2104,9 @@ class Engine:
 
             for existing_vlan in existing_vlans:
                 existing_site = getattr(existing_vlan, "site", None)
+                existing_group = getattr(existing_vlan, "group", None)
                 existing_site_id: int | None = None
+                existing_group_id: int | None = None
                 if existing_site is not None:
                     if isinstance(existing_site, dict):
                         existing_site_id = existing_site.get("id")
@@ -2108,6 +2114,16 @@ class Engine:
                         existing_site_id = existing_site.id
                     elif isinstance(existing_site, int):
                         existing_site_id = existing_site
+                if existing_group is not None:
+                    if isinstance(existing_group, dict):
+                        existing_group_id = existing_group.get("id")
+                    elif hasattr(existing_group, "id"):
+                        existing_group_id = existing_group.id
+                    elif isinstance(existing_group, int):
+                        existing_group_id = existing_group
+
+                if group_id is not None and existing_group_id != group_id:
+                    continue
 
                 if existing_site_id is None and siteless_vlan is None:
                     siteless_vlan = existing_vlan

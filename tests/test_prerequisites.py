@@ -758,8 +758,7 @@ class TestSerializedPrerequisiteUpserts:
                 self.create_calls = 0
                 self.created_ids: list[int] = []
                 self._guard = threading.Lock()
-                self._first_create_started = threading.Event()
-                self._second_upsert_entered = threading.Event()
+                self._active_calls = 0
 
             def upsert(self, resource, payload, *, lookup_fields):
                 assert resource == "dcim.sites"
@@ -768,17 +767,15 @@ class TestSerializedPrerequisiteUpserts:
                     self.upsert_calls += 1
                     if self.created_ids:
                         return MagicMock(id=self.created_ids[0])
-                    if not self._first_create_started.is_set():
-                        self._first_create_started.set()
-                    else:
-                        self._second_upsert_entered.set()
-                self._second_upsert_entered.wait(timeout=0.2)
+                    self._active_calls += 1
+                    overlapped = self._active_calls > 1
                 time.sleep(0.01)
                 with self._guard:
-                    if self.created_ids:
+                    self._active_calls -= 1
+                    if not overlapped and self.created_ids:
                         return MagicMock(id=self.created_ids[0])
                     self.create_calls += 1
-                    site_id = 500
+                    site_id = 500 + len(self.created_ids)
                     self.created_ids.append(site_id)
                     return MagicMock(id=site_id)
 
