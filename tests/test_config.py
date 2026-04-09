@@ -1186,11 +1186,11 @@ class TestNetboxToNetboxDeviceMapping:
 class TestNetboxToNetboxContactMapping:
     MAPPING_PATH = "mappings/netbox-to-netbox.hcl.example"
 
-    def test_contact_lookup_is_strengthened_with_email(self):
+    def test_contact_lookup_uses_name_only(self):
         cfg = load_config(self.MAPPING_PATH)
         contact = next((o for o in cfg.objects if o.name == "contact"), None)
         assert contact is not None, "missing contact object in netbox-to-netbox mapping"
-        assert contact.lookup_by == ["name", "email"]
+        assert contact.lookup_by == ["name"]
 
 
 class TestVmwareMappings:
