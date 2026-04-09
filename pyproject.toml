@@ -28,6 +28,7 @@ azure-identity = ">=1.15.0"
 azure-mgmt-compute = ">=30.0.0"
 azure-mgmt-network = ">=25.0.0"
 azure-mgmt-subscription = ">=3.1.1"
+cryptography = ">=46,<47"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"

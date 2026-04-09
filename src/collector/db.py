@@ -7,13 +7,20 @@ import logging
 import os
 import sqlite3
 import threading
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 logger = logging.getLogger(__name__)
 _UNSET = object()
+_ENCRYPTED_VALUE_PREFIX = "enc:v2:"
+_DB_ENCRYPTION_KEY_ENV = "COLLECTOR_DB_ENCRYPTION_KEY"
 
 # Default DB path. Keep it under ``data/`` so the container can persist the
 # SQLite file without requiring a writable repo root.
@@ -22,6 +29,90 @@ _DEFAULT_DB = os.path.join(os.path.dirname(__file__), "..", "data", "collector_j
 
 def _db_path() -> str:
     return os.environ.get("COLLECTOR_DB_PATH", os.path.normpath(_DEFAULT_DB))
+
+
+def _is_sensitive_setting_key(key: str) -> bool:
+    return any(pat in key for pat in _SENSITIVE_PATTERNS)
+
+
+def _settings_fernet_v2(salt: bytes) -> Fernet | None:
+    raw_key = os.environ.get(_DB_ENCRYPTION_KEY_ENV, "").strip()
+    if not raw_key:
+        return None
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=600_000,
+    )
+    derived_key = urlsafe_b64encode(kdf.derive(raw_key.encode("utf-8")))
+    return Fernet(derived_key)
+
+
+def _encrypt_setting_value(key: str, value: str | None) -> str | None:
+    if value is None or not _is_sensitive_setting_key(key):
+        return value
+    salt = os.urandom(16)
+    fernet = _settings_fernet_v2(salt)
+    if fernet is None:
+        raise RuntimeError(
+            f"Sensitive DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
+        )
+    token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+    return f"{_ENCRYPTED_VALUE_PREFIX}{urlsafe_b64encode(salt).decode('utf-8')}:{token}"
+
+
+def _decrypt_setting_value(key: str, value: str | None) -> str | None:
+    if value is None or not isinstance(value, str):
+        return value
+    if not value.startswith(_ENCRYPTED_VALUE_PREFIX):
+        return value
+    try:
+        _, _, salt_b64, token = value.split(":", 3)
+        salt = urlsafe_b64decode(salt_b64.encode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Encrypted DB setting {key} is malformed.") from exc
+    fernet = _settings_fernet_v2(salt)
+    if fernet is None:
+        raise RuntimeError(
+            f"Encrypted DB setting {key} requires {_DB_ENCRYPTION_KEY_ENV} to be set."
+        )
+    try:
+        return fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise RuntimeError(
+            f"Encrypted DB setting {key} could not be decrypted with {_DB_ENCRYPTION_KEY_ENV}."
+        ) from exc
+
+
+def _backfill_sensitive_setting_encryption(con: sqlite3.Connection) -> None:
+    """Encrypt legacy plaintext secret overrides when a bootstrap key is available."""
+    rows = con.execute("SELECT key, value FROM config_settings WHERE value IS NOT NULL").fetchall()
+    salt = os.urandom(16)
+    fernet = _settings_fernet_v2(salt)
+    warned_missing_key = False
+    for key, value in rows:
+        if not _is_sensitive_setting_key(key):
+            continue
+        if not isinstance(value, str) or value.startswith(_ENCRYPTED_VALUE_PREFIX):
+            continue
+        if fernet is None:
+            if not warned_missing_key:
+                logger.warning(
+                    "Sensitive DB overrides remain in plaintext because %s is not set.",
+                    _DB_ENCRYPTION_KEY_ENV,
+                )
+                warned_missing_key = True
+            continue
+        token = fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+        con.execute(
+            "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
+            (
+                f"{_ENCRYPTED_VALUE_PREFIX}{urlsafe_b64encode(salt).decode('utf-8')}:{token}",
+                _now(),
+                key,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +503,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
 
 _STARTUP_CONFIG_KEYS = {
     "COLLECTOR_DB_PATH",
+    _DB_ENCRYPTION_KEY_ENV,
     "FLASK_DEBUG",
     "LOG_LEVEL",
     "WEB_HOST",
@@ -530,6 +622,8 @@ def init_db() -> None:
                 " SET default_value=?, description=?, group_name=? WHERE key=?",
                 (default_value, description, group_name, key),
             )
+
+        _backfill_sensitive_setting_encryption(con)
 
 
 def create_job(
@@ -1112,7 +1206,18 @@ def _row_to_schedule(row: tuple) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 # Sensitive key name fragments – rendered as password inputs in the UI.
-_SENSITIVE_PATTERNS = ("PASS", "TOKEN", "SECRET", "KEY", "CLIENT_SECRET")
+#
+# Keep this matcher narrow. Configuration keys like NETBOX_CACHE_KEY_PREFIX are
+# not secrets and must not require DB encryption bootstrap state.
+_SENSITIVE_PATTERNS = (
+    "PASS",
+    "PASSWORD",
+    "TOKEN",
+    "CLIENT_SECRET",
+    "SECRET",
+    "ACCESS_KEY",
+    "API_KEY",
+)
 
 
 def get_config(key: str, default: str = "") -> str:
@@ -1134,9 +1239,11 @@ def get_config(key: str, default: str = "") -> str:
             ).fetchone()
         if row is not None:
             if row[0] is not None:
-                return row[0]
+                return _decrypt_setting_value(key, row[0]) or ""
             if row[1] is not None:
                 return row[1]
+    except RuntimeError:
+        raise
     except Exception:
         pass  # DB not ready – fall through to explicit default
     return default
@@ -1168,10 +1275,11 @@ def set_setting(key: str, value: str | None) -> None:
     variable (same effect as ``reset_setting``).
     """
     now = _now()
+    stored_value = _encrypt_setting_value(key, value)
     with _conn() as con:
         con.execute(
             "UPDATE config_settings SET value=?, updated_at=? WHERE key=?",
-            (value, now, key),
+            (stored_value, now, key),
         )
 
 
@@ -1182,10 +1290,19 @@ def reset_setting(key: str) -> None:
 
 def _row_to_setting(row: tuple) -> dict[str, Any]:
     key = row[1]
-    db_value = row[2]
+    raw_db_value = row[2]
     default_value = row[3] or ""
-    effective = db_value if db_value is not None else default_value
-    is_sensitive = any(pat in key for pat in _SENSITIVE_PATTERNS)
+    is_sensitive = _is_sensitive_setting_key(key)
+    if is_sensitive:
+        db_value = None
+        effective = default_value
+        is_overridden = raw_db_value is not None
+        has_sensitive_value = bool(raw_db_value or default_value)
+    else:
+        db_value = _decrypt_setting_value(key, raw_db_value)
+        effective = db_value if db_value is not None else default_value
+        is_overridden = db_value is not None
+        has_sensitive_value = False
     return {
         "id": row[0],
         "key": key,
@@ -1194,7 +1311,8 @@ def _row_to_setting(row: tuple) -> dict[str, Any]:
         "description": row[4] or "",
         "group_name": row[5] or "General",
         "updated_at": row[6],
-        "effective_value": effective,
+        "effective_value": "" if is_sensitive else effective,
         "is_sensitive": is_sensitive,
-        "is_overridden": db_value is not None,
+        "is_overridden": is_overridden,
+        "has_sensitive_value": has_sensitive_value,
     }
