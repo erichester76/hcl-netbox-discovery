@@ -36,6 +36,8 @@ from .prerequisites import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MAX_IN_FLIGHT_FACTOR = 4
+
 # Default IEC 60320 power-port connector type used when a ``power_input`` block
 # omits a type expression or the expression resolves to a falsy value.
 _DEFAULT_POWER_PORT_TYPE = "iec-60320-c14"
@@ -1077,7 +1079,9 @@ class Engine:
         logger.info("Fetched %d items for %r", len(items), obj_cfg.name)
 
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
-        max_in_flight = max_workers * 4
+        # Allow a small queue above the worker count so submission overlaps with
+        # completion without materializing the whole collection as pending work.
+        max_in_flight = max_workers * DEFAULT_MAX_IN_FLIGHT_FACTOR
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
         with ThreadPoolExecutor(
