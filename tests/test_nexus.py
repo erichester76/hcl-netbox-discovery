@@ -941,6 +941,23 @@ class TestNexusEnrichInterface:
         assert result["lag_name"] == "port-channel15"
         assert result["vpc_name"] == "vpc101"
 
+    @pytest.mark.parametrize("pcid_key", ["peer1Pcid", "peer2Pcid"])
+    def test_vpc_interface_derives_parent_lag_from_peer_pcid(self, pcid_key):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "vpc28",
+            "nvPairs": {
+                "ifType": "INTERFACE_ST",
+                pcid_key: "28",
+                "vpcId": "28",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["lag_name"] == "port-channel28"
+        assert result["vpc_name"] == "vpc28"
+
     def test_nvpair_speed_sets_speed_and_physical_type(self):
         src = NexusDashboardSource()
         iface = {
