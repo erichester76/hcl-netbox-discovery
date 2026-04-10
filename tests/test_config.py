@@ -534,6 +534,7 @@ class TestLoadConfigNetBoxOptions:
             monkeypatch,
             NETBOX_CACHE_BACKEND="sqlite",
             NETBOX_CACHE_TTL="9999",
+            NETBOX_USE_TURBOBULK="true",
         )
 
         path = _write_hcl(tmp_path, """
@@ -546,12 +547,14 @@ class TestLoadConfigNetBoxOptions:
               token     = "tok"
               cache     = "redis"
               cache_ttl = 600
+              use_turbobulk = false
             }
         """)
         cfg = load_config(path)
         # HCL wins over DB-backed runtime settings
         assert cfg.netbox.cache == "redis"
         assert cfg.netbox.cache_ttl == 600
+        assert cfg.netbox.use_turbobulk is False
 
     def test_rate_limit_fallback_to_runtime_config(self, tmp_path, monkeypatch):
         """rate_limit and rate_limit_burst omitted from HCL should fall back to DB-backed runtime settings."""

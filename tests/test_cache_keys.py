@@ -64,6 +64,29 @@ def test_web_cache_client_kwargs_uses_effective_prefix(monkeypatch) -> None:
     assert kwargs["turbobulk_export_for_prewarm"] is True
 
 
+def test_web_cache_client_kwargs_accepts_truthy_turbobulk_values(monkeypatch) -> None:
+    config_values = {
+        "NETBOX_CACHE_BACKEND": "redis",
+        "NETBOX_CACHE_URL": "redis://redis:6379/0",
+        "NETBOX_URL": "https://netbox.example.com",
+        "NETBOX_TOKEN": "token",
+        "NETBOX_CACHE_KEY_PREFIX": "nbx:",
+        "NETBOX_CACHE_TTL": "300",
+        "NETBOX_PREWARM_SENTINEL_TTL": "",
+        "NETBOX_USE_TURBOBULK": "yes",
+    }
+
+    monkeypatch.setattr("web.app.get_config", lambda key, default="": config_values.get(key, default))
+    monkeypatch.setattr(
+        "collector.cache_keys.get_code_version",
+        lambda: {"git_branch": "dev"},
+    )
+
+    kwargs = _cache_client_kwargs()
+
+    assert kwargs["turbobulk_export_for_prewarm"] is True
+
+
 def test_engine_build_nb_client_uses_effective_prefix(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

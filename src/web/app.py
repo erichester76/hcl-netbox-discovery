@@ -422,6 +422,22 @@ def _env_int(name: str, default: int) -> int:
     return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Return *name* from config (DB then env) as bool, falling back to *default*."""
+    raw = get_config(name, "")
+    if not raw:
+        return default
+
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+
+    logger.warning("Invalid boolean value for %s=%r; using default %s", name, raw, default)
+    return default
+
+
 def _cache_client_kwargs() -> dict[str, Any]:
     """Build kwargs for the pynetbox2 wrapper client using cache-related config settings."""
     backend = get_config("NETBOX_CACHE_BACKEND", "none")
@@ -432,9 +448,7 @@ def _cache_client_kwargs() -> dict[str, Any]:
         token=get_config("NETBOX_TOKEN", ""),
         cache_backend=backend,
         cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
-        turbobulk_export_for_prewarm=(
-            get_config("NETBOX_USE_TURBOBULK", "false").strip().lower() == "true"
-        ),
+        turbobulk_export_for_prewarm=_env_bool("NETBOX_USE_TURBOBULK", False),
         cache_key_prefix=build_effective_cache_key_prefix(
             get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:"),
             netbox_url=netbox_url,
