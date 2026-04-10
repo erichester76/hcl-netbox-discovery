@@ -172,6 +172,39 @@ def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[st
     return "", None, candidates
 
 
+def _debug_missing_lag_name(
+    serial: str,
+    raw_iface: Any,
+    normalized_iface: dict[str, Any],
+    *,
+    nvpair_values: dict[str, str],
+) -> None:
+    """Emit DEBUG logs for interfaces that expose LAG hints but do not normalize."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    if normalized_iface.get("lag_name"):
+        return
+
+    lag_candidates = {
+        key: value for key in _LAG_CANDIDATE_KEYS if (value := _nvpair_get_from_flattened(nvpair_values, key))
+    }
+    if not lag_candidates:
+        return
+
+    logger.debug(
+        "NDFC interface missing lag_name serial=%s name=%r ifType=%r description=%r "
+        "lag_candidates=%s nvpair_keys=%s raw_keys=%s",
+        serial,
+        normalized_iface.get("name", ""),
+        normalized_iface.get("ifType", ""),
+        normalized_iface.get("description", ""),
+        lag_candidates,
+        sorted(nvpair_values.keys()),
+        sorted(raw_iface.keys()) if isinstance(raw_iface, dict) else [],
+    )
+
+
 def _debug_interface_normalization(
     serial: str,
     raw_iface: Any,
@@ -226,38 +259,22 @@ def _debug_interface_fetch_summary(
     )
 
 
-def _debug_missing_lag_name(serial: str, raw_iface: Any, normalized_iface: dict) -> None:
-    """Emit targeted DEBUG logs when a likely member interface has no lag_name."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-    if not isinstance(raw_iface, dict):
-        return
-
-    name = str(normalized_iface.get("name", "") or "")
-    if not name or normalized_iface.get("lag_name"):
-        return
-
-    lowered = name.lower()
-    if lowered.startswith(("port-channel", "vpc", "loopback", "vlan", "nve", "mgmt")):
-        return
-
-    nvpair_values = _flatten_nv_pairs(_safe_get(raw_iface, "nvPairs"))
-    lag_candidates = {
-        key: value
-        for key in _LAG_CANDIDATE_KEYS
-        if (value := _nvpair_get_from_flattened(nvpair_values, key))
-    }
-
-    logger.debug(
-        "NDFC interface missing lag_name serial=%s name=%r ifType=%r description=%r "
-        "nvpair_keys=%s lag_candidates=%s",
-        serial,
-        name,
-        normalized_iface.get("ifType", ""),
-        normalized_iface.get("description", ""),
-        sorted(nvpair_values.keys()),
-        lag_candidates,
-    )
+_LAG_CANDIDATE_KEYS = (
+    "portChannelInterfaceDn",
+    "portChannelInterface",
+    "portChannelName",
+    "portChannel",
+    "portChannelId",
+    "channelGroup",
+    "channelGroupId",
+    "aggregateInterface",
+    "aggregateId",
+    "bundleId",
+    "memberOf",
+    "interfaceGroup",
+    "poId",
+    "primaryIntf",
+)
 
 
 def _flatten_interface_payload(payload: Any) -> list[dict]:
@@ -416,22 +433,6 @@ def _normalize_vpc_name(value: Any) -> str:
     return f"vpc{suffix}" if suffix else ""
 
 
-_LAG_CANDIDATE_KEYS: tuple[str, ...] = (
-    "portChannelInterfaceDn",
-    "portChannelInterface",
-    "portChannelName",
-    "portChannel",
-    "portChannelId",
-    "channelGroup",
-    "channelGroupId",
-    "aggregateInterface",
-    "aggregateId",
-    "bundleId",
-    "memberOf",
-    "interfaceGroup",
-)
-
-
 def _candidate_iface_values(
     iface: Any, *keys: str, nvpair_values: dict[str, str] | None = None
 ) -> list[str]:
@@ -485,6 +486,55 @@ def _derive_vpc_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     if name.lower().startswith("vpc"):
         return _normalize_vpc_name(name)
     return ""
+
+
+def _debug_unparsed_speed(
+    serial: str,
+    raw_iface: Any,
+    normalized_iface: dict[str, Any],
+    *,
+    nvpair_values: dict[str, str],
+    speed_str: str,
+) -> None:
+    """Emit DEBUG logs when NDFC exposes speed-like fields we still cannot parse."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    if normalized_iface.get("speed") is not None:
+        return
+
+    speed_candidates = {
+        key: value
+        for key in (
+            "speedStr",
+            "speed",
+            "portSpeed",
+            "ethSpeed",
+            "adminSpeed",
+            "operSpeed",
+            "ifSpeed",
+            "interfaceSpeed",
+            "speedValue",
+            "linkSpeed",
+            "bandwidth",
+            "bw",
+        )
+        if (value := _nvpair_get_from_flattened(nvpair_values, key))
+    }
+    if not speed_candidates and not speed_str:
+        return
+
+    logger.debug(
+        "NDFC interface unparsed speed serial=%s name=%r normalized_type=%r raw_speed=%r "
+        "top_level_speed=%r speed_candidates=%s nvpair_keys=%s",
+        serial,
+        normalized_iface.get("name", ""),
+        normalized_iface.get("type", ""),
+        speed_str,
+        _safe_get(raw_iface, "speed", "") or _safe_get(raw_iface, "speedStr", "") or "",
+        speed_candidates,
+        sorted(nvpair_values.keys()),
+    )
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -579,6 +629,34 @@ def _normalize_iface_type(raw_type: str, if_name: str = "", speed_mbps: int | No
             return inferred_from_speed
         return _infer_iface_type_from_name(if_name)
     return _IFACE_TYPE_MAP.get(normalized_raw_type, _infer_iface_type_from_name(if_name))
+
+
+def _normalize_physical_iface_type(raw_type: str, if_name: str, speed_mbps: int | None) -> str:
+    """Prefer speed-specific NetBox physical types when NDFC only reports generic Ethernet."""
+    normalized = _normalize_iface_type(raw_type, if_name)
+    if normalized != "1000base-t":
+        return normalized
+
+    name = str(if_name or "").strip().lower()
+    if not name.startswith(("ethernet", "eth")):
+        return normalized
+    if speed_mbps is None:
+        return normalized
+    if speed_mbps >= 400_000:
+        return "400gbase-x-qsfpdd"
+    if speed_mbps >= 100_000:
+        return "100gbase-x-qsfp28"
+    if speed_mbps >= 40_000:
+        return "40gbase-x-qsfpp"
+    if speed_mbps >= 25_000:
+        return "25gbase-x-sfp28"
+    if speed_mbps >= 10_000:
+        return "10gbase-x-sfpp"
+    if speed_mbps >= 1_000:
+        return "1000base-t"
+    if speed_mbps >= 100:
+        return "100base-tx"
+    return normalized
 
 
 def _is_interface_enabled(admin_state: str, oper_status: str = "") -> bool:
@@ -869,6 +947,26 @@ class NexusDashboardSource(DataSource):
             enriched = self._enrich_interface(iface, switch_ip_address=switch_ip_address)
             interfaces.append(enriched)
             if debug_enabled:
+                nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
+                speed_str = (
+                    _safe_get(iface, "speedStr", "")
+                    or _safe_get(iface, "speed", "")
+                    or _nvpair_get_from_flattened(
+                        nvpair_values,
+                        "speedStr",
+                        "speed",
+                        "portSpeed",
+                        "ethSpeed",
+                        "adminSpeed",
+                        "operSpeed",
+                        "ifSpeed",
+                        "interfaceSpeed",
+                        "speedValue",
+                        "linkSpeed",
+                        "bandwidth",
+                        "bw",
+                    )
+                )
                 _, name_source, name_candidates = _derive_interface_name_details(iface)
                 _debug_interface_normalization(
                     serial,
@@ -877,7 +975,19 @@ class NexusDashboardSource(DataSource):
                     name_source=name_source,
                     name_candidates=name_candidates,
                 )
-                _debug_missing_lag_name(serial, iface, enriched)
+                _debug_missing_lag_name(
+                    serial,
+                    iface,
+                    enriched,
+                    nvpair_values=nvpair_values,
+                )
+                _debug_unparsed_speed(
+                    serial,
+                    iface,
+                    enriched,
+                    nvpair_values=nvpair_values,
+                    speed_str=speed_str,
+                )
 
         interfaces.sort(key=_interface_sort_key)
         _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
@@ -976,11 +1086,10 @@ class NexusDashboardSource(DataSource):
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
-
         return {
             # --- normalised convenience fields ---
             "name":        name,
-            "type":        _normalize_iface_type(if_type, name, speed_mbps),
+            "type":        _normalize_physical_iface_type(if_type, name, speed_mbps),
             "enabled":     _is_interface_enabled(admin_state, oper_status),
             "description": description,
             "lag_name":    lag_name,
