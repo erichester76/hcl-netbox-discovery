@@ -496,12 +496,8 @@ def _flatten_dashboard_grouped_records(
         if not value:
             return []
 
-        has_nested = any(isinstance(item, (dict, list)) for item in value.values())
         looks_like_record = any(key in value for key in _DASHBOARD_RECORD_HINT_KEYS)
-        is_group_root = bool(root_group) and len(group_path) <= 1
-        if looks_like_record or not has_nested:
-            if is_group_root and not looks_like_record:
-                return []
+        if looks_like_record:
             record = dict(value)
             if group_path:
                 record.setdefault("dashboard_group", "/".join(group_path))
