@@ -14,6 +14,7 @@ from collector.sources.nexus import (
     NexusDashboardSource,
     _derive_interface_name_details,
     _flatten_interface_payload,
+    _is_interface_enabled,
     _normalize_iface_type,
     _normalize_model,
     _normalize_port_channel_name,
@@ -56,23 +57,46 @@ class TestNormalizeModel:
 
 class TestNormalizeIfaceType:
     @pytest.mark.parametrize(
-        "raw_type, expected",
+        "raw_type, if_name, expected",
         [
-            ("INTERFACE_ETHERNET",     "1000base-t"),
-            ("INTERFACE_MANAGEMENT",   "1000base-t"),
-            ("INTERFACE_PORT_CHANNEL", "lag"),
-            ("INTERFACE_LOOPBACK",     "virtual"),
-            ("INTERFACE_VLAN",         "virtual"),
-            ("INTERFACE_NVE",          "virtual"),
-            ("eth",                    "1000base-t"),
-            ("port-channel",           "lag"),
-            ("loopback",               "virtual"),
-            ("UNKNOWN_TYPE",           "other"),
-            ("",                       "other"),
+            ("INTERFACE_ETHERNET",     "",                "1000base-t"),
+            ("INTERFACE_MANAGEMENT",   "",                "1000base-t"),
+            ("INTERFACE_PORT_CHANNEL", "",                "lag"),
+            ("INTERFACE_LOOPBACK",     "",                "virtual"),
+            ("INTERFACE_VLAN",         "",                "virtual"),
+            ("INTERFACE_NVE",          "",                "virtual"),
+            ("eth",                    "",                "1000base-t"),
+            ("port-channel",           "",                "lag"),
+            ("loopback",               "",                "virtual"),
+            ("UNKNOWN_TYPE",           "Ethernet1/1",     "1000base-t"),
+            ("",                       "port-channel10",  "lag"),
+            ("",                       "loopback0",       "virtual"),
+            ("",                       "vpc101",          "virtual"),
+            ("",                       "",                "other"),
         ],
     )
-    def test_normalize_iface_type(self, raw_type, expected):
-        assert _normalize_iface_type(raw_type) == expected
+    def test_normalize_iface_type(self, raw_type, if_name, expected):
+        assert _normalize_iface_type(raw_type, if_name) == expected
+
+
+class TestNormalizeEnabled:
+    @pytest.mark.parametrize(
+        ("admin_state", "oper_status", "expected"),
+        [
+            ("up", "", True),
+            ("UP", "", True),
+            ("admin-up", "", True),
+            ("ADMIN_STATE_UP", "", True),
+            ("enabled", "", True),
+            ("", "up", True),
+            ("down", "", False),
+            ("disabled", "", False),
+            ("ADMIN_STATE_DOWN", "", False),
+            ("", "", False),
+        ],
+    )
+    def test_is_interface_enabled(self, admin_state, oper_status, expected):
+        assert _is_interface_enabled(admin_state, oper_status) is expected
 
 
 class TestDeriveInterfaceNameDetails:
@@ -174,6 +198,7 @@ class TestParseSpeedMbps:
             ("1000 Mbps",  1000),
             ("1000M",      1000),
             ("1000",       1000),
+            ("25000000000", 25000),
             ("100",        100),
             ("",           None),
             ("unknown",    None),
@@ -788,6 +813,20 @@ class TestNexusEnrichInterface:
 
         assert result["mgmt_only"] is True
         assert result["ip_address"] == "10.19.237.183/32"
+
+    def test_interface_type_and_enabled_can_fall_back_from_name_and_admin_variants(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "port-channel500",
+            "nvPairs": {
+                "adminStatus": "ADMIN_STATE_UP",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["type"] == "lag"
+        assert result["enabled"] is True
 
     def test_member_interface_derives_lag_and_vpc_names_from_nv_pairs(self):
         src = NexusDashboardSource()

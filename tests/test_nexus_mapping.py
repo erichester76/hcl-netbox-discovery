@@ -38,6 +38,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert interface_fields["type"] == "when(source('type'), source('type'), 'other')"
     assert interface_fields["description"] == "when(source('description'), source('description'), '')"
     assert interface_fields["mgmt_only"] == "source('mgmt_only')"
+    assert interface_fields["speed"] == "source('speed')"
 
     lag_field = next((field for field in interface.fields if field.name == "lag"), None)
     assert lag_field is not None
@@ -48,15 +49,32 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
         "name": "when(source('lag_name') != '', source('lag_name'), None)",
     }
 
-    assert interface.ip_addresses, "interface block must declare ip_address"
-    ip_block = interface.ip_addresses[0]
-    assert ip_block.primary_if == "first"
+    assert len(interface.ip_addresses) == 2, "interface block must declare routed and mgmt ip blocks"
+
+    routed_ip_block = interface.ip_addresses[0]
+    assert routed_ip_block.primary_if == "first"
+    assert routed_ip_block.oob_if is None
+    assert routed_ip_block.enabled_if == "not source('mgmt_only')"
     assert (
-        ip_block.source_items
+        routed_ip_block.source_items
         == "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
     )
 
-    address_field = next((field for field in ip_block.fields if field.name == "address"), None)
-    status_field = next((field for field in ip_block.fields if field.name == "status"), None)
-    assert address_field is not None and address_field.value == "source('address')"
-    assert status_field is not None and status_field.value == "'active'"
+    routed_address_field = next((field for field in routed_ip_block.fields if field.name == "address"), None)
+    routed_status_field = next((field for field in routed_ip_block.fields if field.name == "status"), None)
+    assert routed_address_field is not None and routed_address_field.value == "source('address')"
+    assert routed_status_field is not None and routed_status_field.value == "'active'"
+
+    mgmt_ip_block = interface.ip_addresses[1]
+    assert mgmt_ip_block.primary_if is None
+    assert mgmt_ip_block.oob_if == "first"
+    assert mgmt_ip_block.enabled_if == "source('mgmt_only')"
+    assert (
+        mgmt_ip_block.source_items
+        == "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+    )
+
+    mgmt_address_field = next((field for field in mgmt_ip_block.fields if field.name == "address"), None)
+    mgmt_status_field = next((field for field in mgmt_ip_block.fields if field.name == "status"), None)
+    assert mgmt_address_field is not None and mgmt_address_field.value == "source('address')"
+    assert mgmt_status_field is not None and mgmt_status_field.value == "'active'"

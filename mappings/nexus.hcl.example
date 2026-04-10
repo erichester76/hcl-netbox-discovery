@@ -172,6 +172,10 @@ object "device" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
     }
 
+    field "speed" {
+      value = "source('speed')"
+    }
+
     field "lag" {
       type     = "fk"
       resource = "dcim.interfaces"
@@ -184,6 +188,21 @@ object "device" {
     ip_address {
       source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
       primary_if   = "first"
+      enabled_if   = "not source('mgmt_only')"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      oob_if       = "first"
+      enabled_if   = "source('mgmt_only')"
 
       field "address" {
         value = "source('address')"

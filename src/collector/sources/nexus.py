@@ -488,11 +488,50 @@ _IFACE_TYPE_MAP: dict[str, str] = {
 }
 
 
-def _normalize_iface_type(raw_type: str) -> str:
+def _infer_iface_type_from_name(if_name: str) -> str:
+    """Return a best-effort NetBox interface type slug from *if_name*."""
+    name = str(if_name or "").strip().lower()
+    if not name:
+        return "other"
+
+    if name.startswith(("ethernet", "eth", "mgmt")):
+        return "1000base-t"
+    if name.startswith(("port-channel", "po")):
+        return "lag"
+    if name.startswith(("loopback", "vlan", "nve", "vpc")):
+        return "virtual"
+    return "other"
+
+
+def _normalize_iface_type(raw_type: str, if_name: str = "") -> str:
     """Return a NetBox-compatible interface type slug for *raw_type*."""
     if not raw_type:
-        return "other"
-    return _IFACE_TYPE_MAP.get(raw_type, "other")
+        return _infer_iface_type_from_name(if_name)
+    return _IFACE_TYPE_MAP.get(raw_type, _infer_iface_type_from_name(if_name))
+
+
+def _is_interface_enabled(admin_state: str, oper_status: str = "") -> bool:
+    """Return the best-effort enabled state for an interface."""
+    candidates = [
+        str(admin_state or "").strip().lower(),
+        str(oper_status or "").strip().lower(),
+    ]
+    truthy = {"up", "enabled", "enable", "true", "1", "on", "admin-up", "link-up"}
+    falsey = {"down", "disabled", "disable", "false", "0", "off", "admin-down", "link-down"}
+
+    for value in candidates:
+        if not value:
+            continue
+        if value in truthy:
+            return True
+        if value in falsey:
+            return False
+        if "up" in value and "down" not in value:
+            return True
+        if "down" in value and "up" not in value:
+            return False
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -855,8 +894,8 @@ class NexusDashboardSource(DataSource):
         return {
             # --- normalised convenience fields ---
             "name":        name,
-            "type":        _normalize_iface_type(if_type),
-            "enabled":     admin_state.lower() == "up",
+            "type":        _normalize_iface_type(if_type, name),
+            "enabled":     _is_interface_enabled(admin_state, oper_status),
             "description": description,
             "lag_name":    lag_name,
             "vpc_name":    vpc_name,
@@ -882,4 +921,7 @@ _safe_get = safe_get
 
 def _parse_speed_mbps(speed_str: str) -> int | None:
     """Delegate to shared helper, treating bare integers as already-Mbps (Nexus)."""
-    return parse_speed_mbps(speed_str)
+    text = str(speed_str or "").strip()
+    if text.isdigit() and int(text) >= 1_000_000:
+        return parse_speed_mbps(text, numeric_is_bps=True)
+    return parse_speed_mbps(text)
