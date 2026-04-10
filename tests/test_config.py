@@ -506,6 +506,7 @@ class TestLoadConfigNetBoxOptions:
             NETBOX_CACHE_TTL="14400",
             NETBOX_CACHE_KEY_PREFIX="myapp:",
             NETBOX_PREWARM_SENTINEL_TTL="7200",
+            NETBOX_USE_TURBOBULK="true",
         )
 
         path = _write_hcl(tmp_path, """
@@ -524,6 +525,7 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache_ttl == 14400
         assert cfg.netbox.cache_key_prefix == "myapp:"
         assert cfg.netbox.prewarm_sentinel_ttl == 7200
+        assert cfg.netbox.use_turbobulk is True
 
     def test_cache_settings_hcl_takes_priority_over_runtime_config(self, tmp_path, monkeypatch):
         """Explicit HCL values must override DB-backed runtime settings."""

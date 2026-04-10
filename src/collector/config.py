@@ -193,6 +193,7 @@ class NetBoxConfig:
     cache_url: str = ""
     cache_ttl: int = 300
     prewarm_sentinel_ttl: Optional[int] = None
+    use_turbobulk: bool = False
     rate_limit: float = 0.0
     rate_limit_burst: int = 1
     retry_attempts: int = 3
@@ -680,6 +681,10 @@ def load_config(mapping_path: str) -> CollectorConfig:
         cache_url=_eval_config_str(netbox_body.get("cache_url", "env('NETBOX_CACHE_URL', '')")),
         cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", "env('NETBOX_CACHE_TTL', '300')"))),
         prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
+        use_turbobulk=_bool(
+            _eval_config_str(netbox_body.get("use_turbobulk", "env('NETBOX_USE_TURBOBULK', 'false')")),
+            default=False,
+        ),
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", "env('NETBOX_RATE_LIMIT', '0')"))),
         rate_limit_burst=_int(_eval_config_str(netbox_body.get("rate_limit_burst", "env('NETBOX_RATE_LIMIT_BURST', '1')")), default=1),
         retry_attempts=_int(_eval_config_str(netbox_body.get("retry_attempts", "env('NETBOX_RETRY_ATTEMPTS', '3')")), default=3),

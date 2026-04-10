@@ -126,6 +126,7 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         retry_max_delay_seconds=cfg_nb.retry_max_delay,
         retry_jitter_seconds=cfg_nb.retry_jitter,
         retry_5xx_cooldown_seconds=cfg_nb.retry_5xx_cooldown,
+        turbobulk_export_for_prewarm=cfg_nb.use_turbobulk,
     )
     if cfg_nb.retry_on_4xx:
         try:

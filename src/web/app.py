@@ -432,6 +432,9 @@ def _cache_client_kwargs() -> dict[str, Any]:
         token=get_config("NETBOX_TOKEN", ""),
         cache_backend=backend,
         cache_ttl_seconds=_env_int("NETBOX_CACHE_TTL", 300),
+        turbobulk_export_for_prewarm=(
+            get_config("NETBOX_USE_TURBOBULK", "false").strip().lower() == "true"
+        ),
         cache_key_prefix=build_effective_cache_key_prefix(
             get_config("NETBOX_CACHE_KEY_PREFIX", "nbx:"),
             netbox_url=netbox_url,

@@ -48,6 +48,7 @@ def test_web_cache_client_kwargs_uses_effective_prefix(monkeypatch) -> None:
         "NETBOX_CACHE_KEY_PREFIX": "nbx:",
         "NETBOX_CACHE_TTL": "300",
         "NETBOX_PREWARM_SENTINEL_TTL": "",
+        "NETBOX_USE_TURBOBULK": "true",
     }
 
     monkeypatch.setattr("web.app.get_config", lambda key, default="": config_values.get(key, default))
@@ -60,6 +61,7 @@ def test_web_cache_client_kwargs_uses_effective_prefix(monkeypatch) -> None:
 
     assert kwargs["cache_key_prefix"].startswith("nbx:dev:")
     assert kwargs["url"] == "https://netbox.example.com"
+    assert kwargs["turbobulk_export_for_prewarm"] is True
 
 
 def test_engine_build_nb_client_uses_effective_prefix(monkeypatch) -> None:
@@ -87,3 +89,4 @@ def test_engine_build_nb_client_uses_effective_prefix(monkeypatch) -> None:
 
     assert captured["cache_key_prefix"].startswith("nbx:dev:")
     assert captured["url"] == "https://netbox.example.com"
+    assert captured["turbobulk_export_for_prewarm"] is False
