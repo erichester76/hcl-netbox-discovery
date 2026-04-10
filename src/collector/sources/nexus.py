@@ -45,6 +45,7 @@ Interface dict fields (when fetch_interfaces is enabled)
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from typing import Any
@@ -245,6 +246,100 @@ def _flatten_interface_payload(payload: Any) -> list[dict]:
         return _flatten_interface_payload(nested)
 
     return [payload]
+
+
+def _normalize_nvpair_key(key: Any) -> str:
+    """Return a canonical lowercase key for nvPair matching."""
+    return "".join(ch for ch in str(key).lower() if ch.isalnum())
+
+
+def _flatten_nv_pairs(nv_pairs: Any) -> dict[str, str]:
+    """Flatten common NDFC ``nvPairs`` shapes into a simple string map."""
+    flattened: dict[str, str] = {}
+
+    def _visit(value: Any) -> None:
+        if isinstance(value, dict):
+            pair_key = None
+            pair_value = None
+            for key_name in ("key", "name", "nvPairKey"):
+                if key_name in value and value[key_name] not in (None, ""):
+                    pair_key = value[key_name]
+                    break
+            for value_name in ("value", "nvPairValue"):
+                if value_name in value and value[value_name] not in (None, ""):
+                    pair_value = value[value_name]
+                    break
+
+            if pair_key is not None and pair_value is not None:
+                flattened[_normalize_nvpair_key(pair_key)] = str(pair_value).strip()
+
+            for nested_key, nested_value in value.items():
+                if nested_key in {"key", "name", "nvPairKey", "value", "nvPairValue"}:
+                    continue
+                if isinstance(nested_value, (dict, list)):
+                    _visit(nested_value)
+                elif nested_value not in (None, ""):
+                    flattened[_normalize_nvpair_key(nested_key)] = str(nested_value).strip()
+            return
+
+        if isinstance(value, list):
+            for item in value:
+                _visit(item)
+
+    _visit(nv_pairs)
+    return flattened
+
+
+def _nvpair_get(iface: Any, *keys: str) -> str:
+    """Return the first non-empty value for *keys* from ``iface['nvPairs']``."""
+    nv_pairs = _safe_get(iface, "nvPairs")
+    if nv_pairs in (None, "", []):
+        return ""
+
+    flattened = _flatten_nv_pairs(nv_pairs)
+    for key in keys:
+        value = flattened.get(_normalize_nvpair_key(key), "")
+        if value:
+            return value
+    return ""
+
+
+def _nvpair_get_from_flattened(flattened: dict[str, str], *keys: str) -> str:
+    """Return the first non-empty value for *keys* from a flattened nvPair map."""
+    for key in keys:
+        value = flattened.get(_normalize_nvpair_key(key), "")
+        if value:
+            return value
+    return ""
+
+
+def _normalize_host_ip_prefix(address: str) -> str:
+    """Return *address* with a host prefix when it is a bare IP literal."""
+    if not address:
+        return ""
+
+    text = str(address).strip()
+    if not text:
+        return ""
+    if "/" in text:
+        return text
+
+    try:
+        parsed = ipaddress.ip_address(text)
+    except ValueError:
+        return text
+
+    return f"{text}/32" if parsed.version == 4 else f"{text}/128"
+
+
+def _derive_switch_ip_address(switch: Any) -> str:
+    """Return the best switch management IP for interface/IP fallback."""
+    return _first_non_empty(
+        switch,
+        "mgmtAddress",
+        "primaryIP",
+        "ipAddress",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +559,10 @@ class NexusDashboardSource(DataSource):
             if self._fetch_interfaces:
                 serial = enriched.get("serialNumber", "")
                 if serial:
-                    enriched["interfaces"] = self._fetch_switch_interfaces(serial)
+                    enriched["interfaces"] = self._fetch_switch_interfaces(
+                        serial,
+                        switch_ip_address=enriched.get("ip_address", ""),
+                    )
                 else:
                     enriched["interfaces"] = []
             switches.append(enriched)
@@ -473,7 +571,7 @@ class NexusDashboardSource(DataSource):
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
 
-    def _fetch_switch_interfaces(self, serial: str) -> list[dict]:
+    def _fetch_switch_interfaces(self, serial: str, *, switch_ip_address: str = "") -> list[dict]:
         """Return a list of normalised interface dicts for the given switch *serial*."""
         try:
             data = self._get(
@@ -502,6 +600,7 @@ class NexusDashboardSource(DataSource):
             and isinstance(data[0], dict)
         ):
             first = data[0]
+            first_nvpair_values = _flatten_nv_pairs(first.get("nvPairs"))
             preview_keys = [
                 "ifName",
                 "name",
@@ -519,6 +618,23 @@ class NexusDashboardSource(DataSource):
                 for key in preview_keys
                 if key in first and (value := first.get(key)) not in (None, "")
             }
+            nv_preview = {
+                key: value
+                for key in (
+                    "ifType",
+                    "adminState",
+                    "operStatus",
+                    "ipAddress",
+                    "speedStr",
+                    "speed",
+                    "ifDescr",
+                    "description",
+                    "macAddress",
+                )
+                if (value := _nvpair_get_from_flattened(first_nvpair_values, key))
+            }
+            if nv_preview:
+                preview["nvPairs"] = nv_preview
             logger.debug(
                 "NDFC first interface payload serial=%s keys=%s preview=%s",
                 serial,
@@ -532,7 +648,7 @@ class NexusDashboardSource(DataSource):
             if not isinstance(iface, dict):
                 continue
 
-            enriched = self._enrich_interface(iface)
+            enriched = self._enrich_interface(iface, switch_ip_address=switch_ip_address)
             interfaces.append(enriched)
             if debug_enabled:
                 _, name_source, name_candidates = _derive_interface_name_details(iface)
@@ -556,7 +672,8 @@ class NexusDashboardSource(DataSource):
         fabric_name = _safe_get(switch, "fabricName", "") or ""
         site_name   = _derive_site_name(switch)
         switch_role = _safe_get(switch, "switchRole", "") or ""
-        ip_address  = _safe_get(switch, "ipAddress", "") or ""
+        ip_address  = _derive_switch_ip_address(switch)
+        raw_ip_address = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
 
@@ -589,23 +706,42 @@ class NexusDashboardSource(DataSource):
             "release":      release,
             "fabricName":   fabric_name,
             "switchRole":   switch_role,
-            "ipAddress":    ip_address,
+            "ipAddress":    raw_ip_address,
+            "mgmtAddress":  _safe_get(switch, "mgmtAddress", "") or "",
+            "primaryIP":    _safe_get(switch, "primaryIP", "") or "",
             "rawStatus":    raw_status,
             "systemMode":   system_mode,
         }
 
-    def _enrich_interface(self, iface: dict) -> dict:
+    def _enrich_interface(self, iface: dict, *, switch_ip_address: str = "") -> dict:
         """Return a normalised dict for a single NDFC interface record."""
+        nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
+
+        def nv(*keys: str) -> str:
+            return _nvpair_get_from_flattened(nvpair_values, *keys)
+
         if_name     = _safe_get(iface, "ifName", "") or ""
         name        = _derive_interface_name(iface)
-        if_type     = _safe_get(iface, "ifType", "") or ""
-        admin_state = _safe_get(iface, "adminState", "") or ""
-        oper_status = _safe_get(iface, "operStatus", "") or ""
-        description = _safe_get(iface, "ifDescr", "") or _safe_get(iface, "description", "") or ""
-        mac_address = _safe_get(iface, "macAddress", "") or ""
-        ip_address  = _safe_get(iface, "ipAddress", "") or ""
-        speed_str   = _safe_get(iface, "speedStr", "") or _safe_get(iface, "speed", "") or ""
+        if_type     = _safe_get(iface, "ifType", "") or nv("ifType", "interfaceType", "portType")
+        admin_state = _safe_get(iface, "adminState", "") or nv("adminState", "adminStatus")
+        oper_status = _safe_get(iface, "operStatus", "") or nv("operStatus", "operState", "operStatusStr")
+        description = (
+            _safe_get(iface, "ifDescr", "")
+            or _safe_get(iface, "description", "")
+            or nv("ifDescr", "description", "desc")
+            or ""
+        )
+        mac_address = _safe_get(iface, "macAddress", "") or nv("macAddress", "mac")
+        ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIP", "ip")
+        speed_str   = (
+            _safe_get(iface, "speedStr", "")
+            or _safe_get(iface, "speed", "")
+            or nv("speedStr", "speed", "portSpeed", "ethSpeed")
+            or ""
+        )
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
+        if mgmt_only and not ip_address:
+            ip_address = _normalize_host_ip_prefix(switch_ip_address)
 
         return {
             # --- normalised convenience fields ---
