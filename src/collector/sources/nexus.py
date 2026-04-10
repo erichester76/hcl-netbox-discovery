@@ -292,6 +292,9 @@ _SPEED_CANDIDATE_KEYS = (
     "interfaceSpeed",
     "speedValue",
     "linkSpeed",
+)
+
+_BANDWIDTH_CANDIDATE_KEYS = (
     "bandwidth",
     "bw",
 )
@@ -602,10 +605,12 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
     if speed_mbps is not None:
         return speed_mbps, speed_str
 
-    bandwidth = _nvpair_get_from_flattened(nvpair_values, "bandwidth", "bw")
+    bandwidth = _nvpair_get_from_flattened(nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS)
     if bandwidth and str(bandwidth).strip().isdigit():
         # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
-        return int(str(bandwidth).strip()) // 1000, str(bandwidth).strip()
+        bandwidth_mbps = int(str(bandwidth).strip()) // 1000
+        if bandwidth_mbps > 0:
+            return bandwidth_mbps, str(bandwidth).strip()
 
     return None, speed_str
 

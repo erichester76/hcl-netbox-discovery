@@ -973,6 +973,21 @@ class TestNexusEnrichInterface:
         assert result["speed"] == 40000
         assert result["type"] == "lag"
 
+    def test_interface_bandwidth_is_not_parsed_as_generic_speed_string(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "port-channel29",
+            "nvPairs": {
+                "ifType": "INTERFACE_PORT_CHANNEL",
+                "bandwidth": "40000000",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["speed"] == 40000
+        assert result["type"] == "lag"
+
     def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
         src = NexusDashboardSource()
         iface = {
