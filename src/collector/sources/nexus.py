@@ -144,7 +144,15 @@ def _derive_site_name(switch: Any) -> str:
 
 def _derive_interface_name(iface: Any) -> str:
     """Return the best-available interface name from common NDFC fields."""
-    return _derive_interface_name_details(iface)[0]
+    return _first_non_empty(
+        iface,
+        "ifName",
+        "name",
+        "interfaceName",
+        "portName",
+        "displayName",
+        "shortName",
+    )
 
 
 def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[str, str]]:
