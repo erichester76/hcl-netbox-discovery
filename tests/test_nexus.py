@@ -14,8 +14,10 @@ from collector.sources.nexus import (
     NexusDashboardSource,
     _derive_interface_name_details,
     _flatten_interface_payload,
+    _flatten_nv_pairs,
     _normalize_iface_type,
     _normalize_model,
+    _nvpair_get,
     _parse_speed_mbps,
     _safe_get,
 )
@@ -124,6 +126,32 @@ class TestFlattenInterfacePayload:
             {"ifName": "Ethernet1/1"},
             {"ifName": "Ethernet1/2"},
         ]
+
+
+class TestNvPairsHelpers:
+    def test_flattens_dict_nv_pairs(self):
+        nv_pairs = {
+            "ifType": "INTERFACE_LOOPBACK",
+            "speedStr": "10G",
+            "ipAddress": "10.0.0.1/32",
+        }
+
+        assert _flatten_nv_pairs(nv_pairs) == {
+            "iftype": "INTERFACE_LOOPBACK",
+            "speedstr": "10G",
+            "ipaddress": "10.0.0.1/32",
+        }
+
+    def test_flattens_list_style_nv_pairs(self):
+        iface = {
+            "nvPairs": [
+                {"key": "ifType", "value": "INTERFACE_PORT_CHANNEL"},
+                {"key": "speedStr", "value": "100G"},
+            ]
+        }
+
+        assert _nvpair_get(iface, "ifType") == "INTERFACE_PORT_CHANNEL"
+        assert _nvpair_get(iface, "speedStr") == "100G"
 
 
 # ---------------------------------------------------------------------------
@@ -722,6 +750,57 @@ class TestNexusEnrichInterface:
         result = src._enrich_interface(iface)
         assert result["type"] == "1000base-t"
         assert result["mgmt_only"] is True
+
+    def test_interface_uses_nv_pairs_when_top_level_fields_missing(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "loopback0",
+            "nvPairs": {
+                "ifType": "INTERFACE_LOOPBACK",
+                "adminState": "up",
+                "operStatus": "up",
+                "ifDescr": "router-id",
+                "ipAddress": "10.255.0.1/32",
+                "speedStr": "",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["type"] == "virtual"
+        assert result["enabled"] is True
+        assert result["description"] == "router-id"
+        assert result["ip_address"] == "10.255.0.1/32"
+
+    def test_management_interface_falls_back_to_switch_ip(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "mgmt0",
+            "nvPairs": {
+                "ifType": "INTERFACE_MANAGEMENT",
+                "adminState": "up",
+                "operStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, switch_ip_address="10.19.237.183")
+
+        assert result["mgmt_only"] is True
+        assert result["ip_address"] == "10.19.237.183"
+
+    def test_port_channel_uses_nv_pairs_type(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "port-channel500",
+            "nvPairs": {
+                "ifType": "INTERFACE_PORT_CHANNEL",
+                "adminState": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["type"] == "lag"
 
     @pytest.mark.parametrize(
         ("iface", "expected_name"),
