@@ -625,12 +625,69 @@ class TestNexusEnrichInterface:
         assert result["type"] == "1000base-t"
         assert result["mgmt_only"] is True
 
-    def test_interface_name_falls_back_when_ifname_missing(self):
+    @pytest.mark.parametrize(
+        ("iface", "expected_name"),
+        [
+            (
+                {
+                    "ifName":        "",
+                    "name":          "Ethernet1/49",
+                    "interfaceName": "ignored-because-name-already-set",
+                    "portName":      "ignored-port-name",
+                    "displayName":   "ignored-display-name",
+                    "shortName":     "ignored-short-name",
+                },
+                "Ethernet1/49",
+            ),
+            (
+                {
+                    "ifName":        "",
+                    "name":          "",
+                    "interfaceName": "Ethernet1/50",
+                    "portName":      "ignored-port-name",
+                    "displayName":   "ignored-display-name",
+                    "shortName":     "ignored-short-name",
+                },
+                "Ethernet1/50",
+            ),
+            (
+                {
+                    "ifName":        "",
+                    "name":          "",
+                    "interfaceName": "",
+                    "portName":      "Ethernet1/51",
+                    "displayName":   "ignored-display-name",
+                    "shortName":     "ignored-short-name",
+                },
+                "Ethernet1/51",
+            ),
+            (
+                {
+                    "ifName":        "",
+                    "name":          "",
+                    "interfaceName": "",
+                    "portName":      "",
+                    "displayName":   "Ethernet1/52",
+                    "shortName":     "ignored-short-name",
+                },
+                "Ethernet1/52",
+            ),
+            (
+                {
+                    "ifName":        "",
+                    "name":          "",
+                    "interfaceName": "",
+                    "portName":      "",
+                    "displayName":   "",
+                    "shortName":     "Ethernet1/53",
+                },
+                "Ethernet1/53",
+            ),
+        ],
+    )
+    def test_interface_name_falls_back_when_ifname_missing(self, iface, expected_name):
         src = NexusDashboardSource()
         iface = {
-            "ifName":        "",
-            "name":          "Ethernet1/49",
-            "interfaceName": "ignored-because-name-already-set",
             "ifType":        "INTERFACE_ETHERNET",
             "adminState":    "up",
             "operStatus":    "up",
@@ -638,9 +695,10 @@ class TestNexusEnrichInterface:
             "macAddress":    "",
             "ipAddress":     "",
             "speedStr":      "10G",
+            **iface,
         }
         result = src._enrich_interface(iface)
-        assert result["name"] == "Ethernet1/49"
+        assert result["name"] == expected_name
         assert result["type"] == "1000base-t"
         assert result["enabled"] is True
 

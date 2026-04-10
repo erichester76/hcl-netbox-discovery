@@ -405,7 +405,11 @@ class NexusDashboardSource(DataSource):
             else:
                 data = []
 
-        if data and isinstance(data[0], dict):
+        if (
+            logger.isEnabledFor(logging.DEBUG)
+            and data
+            and isinstance(data[0], dict)
+        ):
             first = data[0]
             preview_keys = [
                 "ifName",
