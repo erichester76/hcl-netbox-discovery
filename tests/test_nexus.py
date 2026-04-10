@@ -988,7 +988,7 @@ class TestNexusEnrichInterface:
         assert result["speed"] == 40000
         assert result["type"] == "lag"
 
-    def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
+    def test_vpc_interface_does_not_emit_parent_lag_from_port_channel_id(self):
         src = NexusDashboardSource()
         iface = {
             "ifName": "vpc101",
