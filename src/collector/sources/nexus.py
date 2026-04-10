@@ -193,19 +193,22 @@ def _debug_interface_normalization(
     )
 
 
-def _debug_interface_fetch_summary(serial: str, interfaces: list[dict], raw_count: int) -> None:
+def _debug_interface_fetch_summary(
+    serial: str, interfaces: list[dict], fetched_count: int | None = None
+) -> None:
     """Emit a DEBUG summary of interface normalization results for one switch."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
+    fetched = fetched_count if fetched_count is not None else len(interfaces)
     named = sum(1 for iface in interfaces if iface.get("name"))
-    blank = raw_count - named
+    blank = sum(1 for iface in interfaces if not iface.get("name"))
     mgmt_only = sum(1 for iface in interfaces if iface.get("mgmt_only"))
 
     logger.debug(
         "NDFC interface normalization summary serial=%s fetched=%d named=%d blank=%d mgmt_only=%d",
         serial,
-        raw_count,
+        fetched,
         named,
         blank,
         mgmt_only,
@@ -492,23 +495,25 @@ class NexusDashboardSource(DataSource):
                 preview,
             )
 
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
         interfaces: list[dict] = []
         for iface in data:
             if not isinstance(iface, dict):
                 continue
 
-            _, name_source, name_candidates = _derive_interface_name_details(iface)
             enriched = self._enrich_interface(iface)
             interfaces.append(enriched)
-            _debug_interface_normalization(
-                serial,
-                iface,
-                enriched,
-                name_source=name_source,
-                name_candidates=name_candidates,
-            )
+            if debug_enabled:
+                _, name_source, name_candidates = _derive_interface_name_details(iface)
+                _debug_interface_normalization(
+                    serial,
+                    iface,
+                    enriched,
+                    name_source=name_source,
+                    name_candidates=name_candidates,
+                )
 
-        _debug_interface_fetch_summary(serial, interfaces, len(interfaces))
+        _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
         return interfaces
 
     def _enrich_switch(self, switch: Any) -> dict:
