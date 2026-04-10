@@ -64,6 +64,7 @@ object "cluster" {
   source_collection = "clusters"
   netbox_resource   = "virtualization.clusters"
   lookup_by         = ["name"]
+  enabled_if        = "not source('name').startswith('Staging')"
 
   prerequisite "cluster_type" {
     method   = "ensure_cluster_type"

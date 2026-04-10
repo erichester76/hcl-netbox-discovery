@@ -346,6 +346,7 @@ class ObjectConfig:
     source_collection: str
     netbox_resource: str
     lookup_by: list[str] = field(default_factory=lambda: ["name"])
+    enabled_if: Optional[str] = None
     max_workers: Optional[int] = None
     prerequisites: list[PrerequisiteConfig] = field(default_factory=list)
     fields: list[FieldConfig] = field(default_factory=list)
@@ -523,6 +524,7 @@ def _parse_objects(raw: list) -> list[ObjectConfig]:
             source_collection=body.get("source_collection", ""),
             netbox_resource=body.get("netbox_resource", ""),
             lookup_by=list(lookup_by),
+            enabled_if=body.get("enabled_if"),
             max_workers=max_workers,
             prerequisites=_parse_prerequisites(body.get("prerequisite", [])),
             fields=_parse_fields(body.get("field", [])),
