@@ -265,17 +265,35 @@ def _debug_interface_fetch_summary(
 
 
 def _debug_switch_modules(switch: dict[str, Any]) -> None:
-    """Emit a compact DEBUG preview of switch module payload shape when present."""
+    """Emit a compact DEBUG preview of switch module payload shape."""
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
     modules = switch.get("modules")
-    if not isinstance(modules, list) or not modules:
+    if modules in (None, ""):
+        logger.debug("NDFC switch modules absent type=%s", type(modules).__name__)
+        return
+
+    if not isinstance(modules, list):
+        preview = sorted(modules.keys()) if isinstance(modules, dict) else str(modules)[:200]
+        logger.debug(
+            "NDFC switch modules non-list type=%s preview=%s",
+            type(modules).__name__,
+            preview,
+        )
+        return
+
+    if not modules:
+        logger.debug("NDFC switch modules list empty")
         return
 
     first_module = next((item for item in modules if isinstance(item, dict)), None)
     if not first_module:
-        logger.debug("NDFC switch modules present count=%d but no dict entries", len(modules))
+        logger.debug(
+            "NDFC switch modules list count=%d but no dict entries type=%s",
+            len(modules),
+            type(modules[0]).__name__,
+        )
         return
 
     preview_keys = (
@@ -301,6 +319,23 @@ def _debug_switch_modules(switch: dict[str, Any]) -> None:
             first_nested = next((item for item in nested if isinstance(item, dict)), None)
             if first_nested:
                 preview[f"{nested_key}_keys"] = sorted(first_nested.keys())
+                preview[f"{nested_key}_preview"] = {
+                    key: value
+                    for key in (
+                        "ifName",
+                        "name",
+                        "portName",
+                        "speed",
+                        "portSpeed",
+                        "ifSpeed",
+                        "adminSpeed",
+                        "operSpeed",
+                        "bandwidth",
+                        "mediaType",
+                        "portType",
+                    )
+                    if key in first_nested and (value := first_nested.get(key)) not in (None, "")
+                }
 
     logger.debug(
         "NDFC first switch modules count=%d first_module_keys=%s preview=%s",
@@ -633,13 +668,18 @@ def _debug_unparsed_speed(
 
     logger.debug(
         "NDFC interface unparsed speed serial=%s name=%r normalized_type=%r raw_speed=%r "
-        "top_level_speed=%r speed_candidates=%s nvpair_keys=%s",
+        "top_level_speed=%r speed_candidates=%s bandwidth_candidates=%s nvpair_keys=%s",
         serial,
         normalized_iface.get("name", ""),
         normalized_iface.get("type", ""),
         speed_str,
         _safe_get(raw_iface, "speed", "") or _safe_get(raw_iface, "speedStr", "") or "",
         speed_candidates,
+        {
+            key: value
+            for key in _BANDWIDTH_CANDIDATE_KEYS
+            if (value := _nvpair_get_from_flattened(nvpair_values, key))
+        },
         sorted(nvpair_values.keys()),
     )
 
@@ -680,6 +720,33 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
             return bandwidth_mbps, str(bandwidth).strip()
 
     return None, speed_str
+
+
+def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
+    """Clear duplicated interface IPs so shared addresses do not churn in NetBox."""
+    addresses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for switch in switches:
+        switch_name = str(switch.get("name", "") or switch.get("serialNumber", "") or "unknown")
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            address = str(iface.get("ip_address", "") or "").strip()
+            if not address:
+                continue
+            addresses.setdefault(address, []).append((switch_name, iface))
+
+    for address, refs in addresses.items():
+        if len(refs) < 2:
+            continue
+        reference_labels = [f"{switch_name}:{iface.get('name', '')}" for switch_name, iface in refs]
+        logger.warning(
+            "NDFC duplicate interface IP suppressed address=%s references=%s",
+            address,
+            reference_labels,
+        )
+        for _, iface in refs:
+            iface["duplicate_ip_address"] = address
+            iface["ip_address"] = ""
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -1011,6 +1078,9 @@ class NexusDashboardSource(DataSource):
                     enriched["interfaces"] = []
             switches.append(enriched)
 
+        if self._fetch_interfaces:
+            _suppress_duplicate_interface_ips(switches)
+
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
@@ -1198,6 +1268,7 @@ class NexusDashboardSource(DataSource):
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
             "speed":       speed_mbps,
+            "duplicate_ip_address": "",
             # --- passthrough raw fields ---
             "ifName":      if_name,
             "ifType":      if_type,

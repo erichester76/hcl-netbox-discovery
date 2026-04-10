@@ -5,6 +5,7 @@ All HTTP calls are mocked — no real Nexus Dashboard / NDFC is required.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -567,6 +568,95 @@ class TestNexusGetObjects:
 
         result = src.get_objects("switches")
         assert "interfaces" not in result[0]
+
+    def test_get_switches_logs_empty_module_shape_at_debug(self, caplog):
+        src = self._connected_source()
+        src._fetch_interfaces = False
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-05",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL0002222",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.6",
+                "status": "alive",
+                "systemMode": "Normal",
+                "modules": [],
+            }
+        ]
+        src._session.get.return_value = mock_resp
+
+        with caplog.at_level(logging.DEBUG, logger="collector.sources.nexus"):
+            src.get_objects("switches")
+
+        assert "NDFC switch modules list empty" in caplog.text
+
+    def test_get_switches_suppresses_duplicate_interface_ips_across_switches(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+            {
+                "hostName": "nx-leaf-04",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876544",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.5",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+        ]
+
+        iface_resp_one = MagicMock()
+        iface_resp_one.raise_for_status = MagicMock()
+        iface_resp_one.json.return_value = [
+            {
+                "ifName": "Vlan3600",
+                "ifType": "INTERFACE_VLAN",
+                "adminState": "up",
+                "ipAddress": "10.100.7.1/32",
+            }
+        ]
+
+        iface_resp_two = MagicMock()
+        iface_resp_two.raise_for_status = MagicMock()
+        iface_resp_two.json.return_value = [
+            {
+                "ifName": "Vlan3600",
+                "ifType": "INTERFACE_VLAN",
+                "adminState": "up",
+                "ipAddress": "10.100.7.1/32",
+            }
+        ]
+
+        src._session.get.side_effect = [switch_resp, iface_resp_one, iface_resp_two]
+
+        result = src.get_objects("switches")
+
+        assert result[0]["interfaces"][0]["ip_address"] == ""
+        assert result[1]["interfaces"][0]["ip_address"] == ""
+        assert result[0]["interfaces"][0]["duplicate_ip_address"] == "10.100.7.1/32"
+        assert result[1]["interfaces"][0]["duplicate_ip_address"] == "10.100.7.1/32"
 
 
 # ---------------------------------------------------------------------------
