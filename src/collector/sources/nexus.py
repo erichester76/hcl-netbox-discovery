@@ -345,6 +345,70 @@ def _debug_switch_modules(switch: dict[str, Any]) -> None:
     )
 
 
+def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> None:
+    """Emit a compact DEBUG preview of a dashboard endpoint payload shape."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    if isinstance(payload, list):
+        first_item = next((item for item in payload if isinstance(item, dict)), None)
+        if first_item:
+            logger.debug(
+                "NDFC dashboard %s switch_id=%s count=%d first_keys=%s preview=%s",
+                kind,
+                switch_id,
+                len(payload),
+                sorted(first_item.keys()),
+                {
+                    key: value
+                    for key in (
+                        "ifName",
+                        "name",
+                        "portName",
+                        "speed",
+                        "portSpeed",
+                        "ifSpeed",
+                        "adminSpeed",
+                        "operSpeed",
+                        "bandwidth",
+                        "mediaType",
+                        "portType",
+                        "moduleName",
+                        "moduleType",
+                        "model",
+                        "serialNumber",
+                    )
+                    if key in first_item and (value := first_item.get(key)) not in (None, "")
+                },
+            )
+            return
+        logger.debug(
+            "NDFC dashboard %s switch_id=%s list count=%d first_type=%s",
+            kind,
+            switch_id,
+            len(payload),
+            type(payload[0]).__name__ if payload else "none",
+        )
+        return
+
+    if isinstance(payload, dict):
+        logger.debug(
+            "NDFC dashboard %s switch_id=%s dict keys=%s",
+            kind,
+            switch_id,
+            sorted(payload.keys()),
+        )
+        return
+
+    logger.debug(
+        "NDFC dashboard %s switch_id=%s type=%s preview=%r",
+        kind,
+        switch_id,
+        type(payload).__name__,
+        payload,
+    )
+
+
 _LAG_CANDIDATE_KEYS = (
     "portChannelInterfaceDn",
     "portChannelInterface",
@@ -1063,6 +1127,7 @@ class NexusDashboardSource(DataSource):
                 preview,
             )
             _debug_switch_modules(first)
+            self._debug_dashboard_switch_endpoints(first)
 
         switches: list[dict] = []
         for raw in data:
@@ -1084,6 +1149,33 @@ class NexusDashboardSource(DataSource):
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
+
+    def _debug_dashboard_switch_endpoints(self, switch: dict[str, Any]) -> None:
+        """Emit DEBUG previews for documented dashboard switch endpoints."""
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+
+        switch_db_id = _safe_get(switch, "switchDbID")
+        if switch_db_id in (None, ""):
+            logger.debug("NDFC dashboard switch endpoints skipped: missing switchDbID")
+            return
+
+        endpoints = {
+            "switch/interface": f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/interface?switchId={switch_db_id}",
+            "switch/module": f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/module?switchId={switch_db_id}",
+        }
+        for kind, path in endpoints.items():
+            try:
+                payload = self._get(path)
+            except Exception as exc:
+                logger.debug(
+                    "NDFC dashboard %s switch_id=%s fetch failed: %s",
+                    kind,
+                    switch_db_id,
+                    exc,
+                )
+                continue
+            _debug_dashboard_payload_shape(kind, switch_db_id, payload)
 
     def _fetch_switch_interfaces(self, serial: str, switch_ip_address: str = "") -> list[dict]:
         """Return a list of normalised interface dicts for the given switch *serial*."""
@@ -1183,6 +1275,7 @@ class NexusDashboardSource(DataSource):
         hostname    = _first_non_empty(switch, "hostName")
         model       = _safe_get(switch, "model", "") or ""
         serial      = _safe_get(switch, "serialNumber", "") or ""
+        switch_db_id = _safe_get(switch, "switchDbID", None)
         release     = _safe_get(switch, "release", "") or ""
         fabric_name = _safe_get(switch, "fabricName", "") or ""
         site_name   = _derive_site_name(switch)
@@ -1208,6 +1301,7 @@ class NexusDashboardSource(DataSource):
             "fabric_name":  fabric_name,
             "site_name":    site_name,
             "ip_address":   ip_address,
+            "switch_db_id": switch_db_id,
             "status":       status,
             # --- passthrough raw fields ---
             "hostName":     hostname,
@@ -1226,6 +1320,7 @@ class NexusDashboardSource(DataSource):
             "primaryIP":    _safe_get(switch, "primaryIP", "") or "",
             "rawStatus":    raw_status,
             "systemMode":   system_mode,
+            "switchDbID":   switch_db_id,
         }
 
     def _enrich_interface(self, iface: dict, switch_ip_address: str = "") -> dict:
