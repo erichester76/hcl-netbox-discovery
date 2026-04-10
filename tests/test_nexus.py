@@ -833,6 +833,37 @@ class TestNexusEnrichInterface:
         assert result["mgmt_only"] is True
         assert result["ip_address"] == "10.19.237.183/32"
 
+    def test_routed_interface_bare_ip_uses_prefix_from_nv_pairs(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/33",
+            "nvPairs": {
+                "ifType": "INTERFACE_ETHERNET",
+                "adminState": "up",
+                "ip": "10.100.7.1",
+                "prefix": "32",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["ip_address"] == "10.100.7.1/32"
+
+    def test_routed_interface_bare_ip_defaults_to_host_prefix(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "loopback254",
+            "nvPairs": {
+                "ifType": "INTERFACE_LOOPBACK",
+                "adminState": "up",
+                "ip": "10.100.8.22",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["ip_address"] == "10.100.8.22/32"
+
     def test_interface_type_and_enabled_can_fall_back_from_name_and_admin_variants(self):
         src = NexusDashboardSource()
         iface = {
@@ -924,6 +955,23 @@ class TestNexusEnrichInterface:
         assert result["speed"] == 100000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
+
+    def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "port-channel28",
+            "nvPairs": {
+                "ifType": "INTERFACE_PORT_CHANNEL",
+                "adminState": "up",
+                "speed": "Auto",
+                "bandwidth": "40000000",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["speed"] == 40000
+        assert result["type"] == "lag"
 
     def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
         src = NexusDashboardSource()
