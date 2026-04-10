@@ -625,6 +625,25 @@ class TestNexusEnrichInterface:
         assert result["type"] == "1000base-t"
         assert result["mgmt_only"] is True
 
+    def test_interface_name_falls_back_when_ifname_missing(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName":        "",
+            "name":          "Ethernet1/49",
+            "interfaceName": "ignored-because-name-already-set",
+            "ifType":        "INTERFACE_ETHERNET",
+            "adminState":    "up",
+            "operStatus":    "up",
+            "ifDescr":       "uplink",
+            "macAddress":    "",
+            "ipAddress":     "",
+            "speedStr":      "10G",
+        }
+        result = src._enrich_interface(iface)
+        assert result["name"] == "Ethernet1/49"
+        assert result["type"] == "1000base-t"
+        assert result["enabled"] is True
+
     def test_admin_down_interface_not_enabled(self):
         src = NexusDashboardSource()
         iface = {
