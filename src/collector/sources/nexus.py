@@ -422,13 +422,18 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
                     _preview_dict(first_item) if first_item else {},
                 )
             elif isinstance(nested, dict):
+                flattened = _flatten_dashboard_grouped_records(nested, root_group=nested_key)
+                first_flattened = flattened[0] if flattened else None
                 logger.debug(
-                    "NDFC dashboard %s switch_id=%s %s dict keys=%s preview=%s",
+                    "NDFC dashboard %s switch_id=%s %s dict keys=%s flattened_count=%d first_group=%r first_keys=%s preview=%s",
                     kind,
                     switch_id,
                     nested_key,
                     sorted(nested.keys()),
-                    _preview_dict(nested),
+                    len(flattened),
+                    first_flattened.get("dashboard_group", "") if first_flattened else "",
+                    sorted(first_flattened.keys()) if first_flattened else [],
+                    _preview_dict(first_flattened) if first_flattened else {},
                 )
             elif nested not in (None, ""):
                 logger.debug(
@@ -448,6 +453,64 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
         type(payload).__name__,
         payload,
     )
+
+
+_DASHBOARD_RECORD_HINT_KEYS = (
+    "ifName",
+    "name",
+    "portName",
+    "displayName",
+    "shortName",
+    "speed",
+    "portSpeed",
+    "ifSpeed",
+    "adminSpeed",
+    "operSpeed",
+    "bandwidth",
+    "mediaType",
+    "portType",
+    "moduleName",
+    "moduleType",
+    "model",
+    "serialNumber",
+    "productId",
+    "partNumber",
+)
+
+
+def _flatten_dashboard_grouped_records(
+    payload: Any, *, root_group: str = ""
+) -> list[dict[str, Any]]:
+    """Flatten grouped dashboard payloads into plain records with group metadata."""
+
+    def _visit(value: Any, group_path: tuple[str, ...]) -> list[dict[str, Any]]:
+        if isinstance(value, list):
+            records: list[dict[str, Any]] = []
+            for item in value:
+                records.extend(_visit(item, group_path))
+            return records
+
+        if not isinstance(value, dict):
+            return []
+
+        if not value:
+            return []
+
+        has_nested = any(isinstance(item, (dict, list)) for item in value.values())
+        looks_like_record = any(key in value for key in _DASHBOARD_RECORD_HINT_KEYS)
+        if looks_like_record or not has_nested:
+            record = dict(value)
+            if group_path:
+                record.setdefault("dashboard_group", "/".join(group_path))
+            return [record]
+
+        records: list[dict[str, Any]] = []
+        for key, nested in value.items():
+            records.extend(_visit(nested, (*group_path, str(key))))
+        return records
+
+    initial_path = (root_group,) if root_group else ()
+    return _visit(payload, initial_path)
 
 
 _LAG_CANDIDATE_KEYS = (
@@ -792,8 +855,7 @@ def _debug_unparsed_speed(
 def _derive_interface_speed_string(iface: Any, nvpair_values: dict[str, str]) -> str:
     """Return the first parseable speed string, skipping placeholder values like ``Auto``."""
     candidates = [
-        _safe_get(iface, "speedStr", ""),
-        _safe_get(iface, "speed", ""),
+        *(_safe_get(iface, key, "") for key in _SPEED_CANDIDATE_KEYS),
         *(_nvpair_get_from_flattened(nvpair_values, key) for key in _SPEED_CANDIDATE_KEYS),
     ]
     fallback = ""
@@ -817,7 +879,9 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
     if speed_mbps is not None:
         return speed_mbps, speed_str
 
-    bandwidth = _nvpair_get_from_flattened(nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS)
+    bandwidth = _first_non_empty(iface, *_BANDWIDTH_CANDIDATE_KEYS) or _nvpair_get_from_flattened(
+        nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS
+    )
     if bandwidth and str(bandwidth).strip().isdigit():
         # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
         bandwidth_mbps = int(str(bandwidth).strip()) // 1000
@@ -825,6 +889,30 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
             return bandwidth_mbps, str(bandwidth).strip()
 
     return None, speed_str
+
+
+def _index_dashboard_interfaces(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Return dashboard interface records keyed by normalized interface name."""
+    indexed: dict[str, dict[str, Any]] = {}
+    for record in records:
+        name = _derive_interface_name(record).strip()
+        if not name:
+            continue
+        indexed.setdefault(name.lower(), record)
+    return indexed
+
+
+def _merge_dashboard_interface(raw_iface: dict[str, Any], dashboard_iface: dict[str, Any] | None) -> dict[str, Any]:
+    """Overlay dashboard interface fields without letting legacy placeholders win."""
+    if not dashboard_iface:
+        return raw_iface
+
+    merged = dict(raw_iface)
+    for key, value in dashboard_iface.items():
+        current = merged.get(key)
+        if key not in merged or current in (None, "", "Auto", "auto"):
+            merged[key] = value
+    return merged
 
 
 def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
@@ -1168,17 +1256,18 @@ class NexusDashboardSource(DataSource):
                 preview,
             )
             _debug_switch_modules(first)
-            self._debug_dashboard_switch_endpoints(first)
 
         switches: list[dict] = []
         for raw in data:
             enriched = self._enrich_switch(raw)
+            enriched.update(self._fetch_dashboard_switch_details(enriched))
             if self._fetch_interfaces:
                 serial = enriched.get("serialNumber", "")
                 if serial:
                     enriched["interfaces"] = self._fetch_switch_interfaces(
                         serial,
                         switch_ip_address=enriched.get("ip_address", ""),
+                        dashboard_logical_interfaces=enriched.get("dashboard_logical_interfaces", []),
                     )
                 else:
                     enriched["interfaces"] = []
@@ -1191,15 +1280,18 @@ class NexusDashboardSource(DataSource):
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
 
-    def _debug_dashboard_switch_endpoints(self, switch: dict[str, Any]) -> None:
-        """Emit DEBUG previews for documented dashboard switch endpoints."""
-        if not logger.isEnabledFor(logging.DEBUG):
-            return
-
-        switch_db_id = _safe_get(switch, "switchDbID")
+    def _fetch_dashboard_switch_details(self, switch: dict[str, Any]) -> dict[str, Any]:
+        """Fetch and flatten documented dashboard switch endpoints for one switch."""
+        switch_db_id = _safe_get(switch, "switchDbID") or _safe_get(switch, "switch_db_id")
+        details = {
+            "dashboard_logical_interfaces": [],
+            "dashboard_module_info": [],
+            "dashboard_fex_details": [],
+        }
         if switch_db_id in (None, ""):
-            logger.debug("NDFC dashboard switch endpoints skipped: missing switchDbID")
-            return
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("NDFC dashboard switch endpoints skipped: missing switchDbID")
+            return details
 
         endpoints = {
             "switch/interface": f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/interface?switchId={switch_db_id}",
@@ -1217,8 +1309,29 @@ class NexusDashboardSource(DataSource):
                 )
                 continue
             _debug_dashboard_payload_shape(kind, switch_db_id, payload)
+            if kind == "switch/interface":
+                details["dashboard_logical_interfaces"] = _flatten_dashboard_grouped_records(
+                    _safe_get(payload, "logicalInterfaces", {}),
+                    root_group="logicalInterfaces",
+                )
+            elif kind == "switch/module":
+                details["dashboard_module_info"] = _flatten_dashboard_grouped_records(
+                    _safe_get(payload, "moduleInfo", {}),
+                    root_group="moduleInfo",
+                )
+                details["dashboard_fex_details"] = _flatten_dashboard_grouped_records(
+                    _safe_get(payload, "fexDetails", {}),
+                    root_group="fexDetails",
+                )
 
-    def _fetch_switch_interfaces(self, serial: str, switch_ip_address: str = "") -> list[dict]:
+        return details
+
+    def _fetch_switch_interfaces(
+        self,
+        serial: str,
+        switch_ip_address: str = "",
+        dashboard_logical_interfaces: list[dict[str, Any]] | None = None,
+    ) -> list[dict]:
         """Return a list of normalised interface dicts for the given switch *serial*."""
         try:
             data = self._get(
@@ -1275,16 +1388,23 @@ class NexusDashboardSource(DataSource):
             )
 
         debug_enabled = logger.isEnabledFor(logging.DEBUG)
+        dashboard_index = _index_dashboard_interfaces(dashboard_logical_interfaces or [])
         interfaces: list[dict] = []
         for iface in data:
             if not isinstance(iface, dict):
                 continue
 
-            enriched = self._enrich_interface(iface, switch_ip_address=switch_ip_address)
+            dashboard_iface = dashboard_index.get(_derive_interface_name(iface).strip().lower())
+            enriched = self._enrich_interface(
+                iface,
+                switch_ip_address=switch_ip_address,
+                dashboard_iface=dashboard_iface,
+            )
             interfaces.append(enriched)
             if debug_enabled:
                 nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
-                _, speed_str = _derive_interface_speed_mbps(iface, nvpair_values)
+                merged_iface = _merge_dashboard_interface(iface, dashboard_iface)
+                _, speed_str = _derive_interface_speed_mbps(merged_iface, nvpair_values)
                 _, name_source, name_candidates = _derive_interface_name_details(iface)
                 _debug_interface_normalization(
                     serial,
@@ -1344,6 +1464,9 @@ class NexusDashboardSource(DataSource):
             "ip_address":   ip_address,
             "switch_db_id": switch_db_id,
             "status":       status,
+            "dashboard_logical_interfaces": [],
+            "dashboard_module_info": [],
+            "dashboard_fex_details": [],
             # --- passthrough raw fields ---
             "hostName":     hostname,
             "switchName":   _safe_get(switch, "switchName", "") or "",
@@ -1364,29 +1487,40 @@ class NexusDashboardSource(DataSource):
             "switchDbID":   switch_db_id,
         }
 
-    def _enrich_interface(self, iface: dict, switch_ip_address: str = "") -> dict:
+    def _enrich_interface(
+        self,
+        iface: dict,
+        switch_ip_address: str = "",
+        dashboard_iface: dict[str, Any] | None = None,
+    ) -> dict:
         """Return a normalised dict for a single NDFC interface record."""
         nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
+        source_iface = _merge_dashboard_interface(iface, dashboard_iface)
 
         def nv(*keys: str) -> str:
             return _nvpair_get_from_flattened(nvpair_values, *keys)
 
-        if_name     = _safe_get(iface, "ifName", "") or ""
-        name        = _derive_interface_name(iface)
-        if_type     = _safe_get(iface, "ifType", "") or nv("ifType", "interfaceType", "portType")
-        admin_state = _safe_get(iface, "adminState", "") or nv("adminState", "adminStatus")
-        oper_status = _safe_get(iface, "operStatus", "") or nv("operStatus", "operState", "operStatusStr")
+        if_name     = _safe_get(source_iface, "ifName", "") or ""
+        name        = _derive_interface_name(source_iface)
+        if_type     = (
+            _first_non_empty(source_iface, "ifType", "interfaceType", "portType", "mediaType")
+            or nv("ifType", "interfaceType", "portType", "mediaType")
+        )
+        admin_state = _first_non_empty(source_iface, "adminState", "adminStatus") or nv("adminState", "adminStatus")
+        oper_status = _first_non_empty(source_iface, "operStatus", "operState", "operStatusStr") or nv(
+            "operStatus", "operState", "operStatusStr"
+        )
         description = (
-            _safe_get(iface, "ifDescr", "")
-            or _safe_get(iface, "description", "")
+            _safe_get(source_iface, "ifDescr", "")
+            or _safe_get(source_iface, "description", "")
             or nv("ifDescr", "description", "desc", "portDescription")
         )
-        mac_address = _safe_get(iface, "macAddress", "") or nv("macAddress", "mac")
-        ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
+        mac_address = _safe_get(source_iface, "macAddress", "") or nv("macAddress", "mac")
+        ip_address  = _safe_get(source_iface, "ipAddress", "") or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
         ip_prefix   = nv("prefix", "prefixLength", "subnetPrefix", "mask", "subnetMask")
-        speed_mbps, speed_str = _derive_interface_speed_mbps(iface, nvpair_values)
-        lag_name    = _derive_lag_name(iface, nvpair_values=nvpair_values)
-        vpc_name    = _derive_vpc_name(iface, nvpair_values=nvpair_values)
+        speed_mbps, speed_str = _derive_interface_speed_mbps(source_iface, nvpair_values)
+        lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
+        vpc_name    = _derive_vpc_name(source_iface, nvpair_values=nvpair_values)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
