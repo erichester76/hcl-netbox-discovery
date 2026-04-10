@@ -281,6 +281,15 @@ _LAG_CANDIDATE_KEYS = (
     "primaryIntf",
 )
 
+_VPC_LAG_CANDIDATE_KEYS = (
+    "peer1Pcid",
+    "peer2Pcid",
+    "pcId",
+    "pcid",
+    "peer1PortChannelId",
+    "peer2PortChannelId",
+)
+
 _SPEED_CANDIDATE_KEYS = (
     "speedStr",
     "speed",
@@ -478,11 +487,11 @@ def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     if iface_name.startswith("port-channel"):
         return ""
 
-    candidates = _candidate_iface_values(
-        iface,
-        *_LAG_CANDIDATE_KEYS,
-        nvpair_values=nvpair_values,
-    )
+    candidate_keys = _LAG_CANDIDATE_KEYS
+    if iface_name.startswith("vpc"):
+        candidate_keys = (*_VPC_LAG_CANDIDATE_KEYS, *_LAG_CANDIDATE_KEYS)
+
+    candidates = _candidate_iface_values(iface, *candidate_keys, nvpair_values=nvpair_values)
     for value in candidates:
         normalized = _normalize_port_channel_name(value)
         if normalized:
