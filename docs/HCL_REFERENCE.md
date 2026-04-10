@@ -109,6 +109,7 @@ netbox {
 | `cache_url` | no | Redis URL or SQLite path when applicable |
 | `cache_ttl` | no | Cache entry TTL in seconds (default: `300`) |
 | `prewarm_sentinel_ttl` | no | Optional TTL used by cache pre-warm sentinels |
+| `use_turbobulk` | no | Enable TurboBulk-backed export for cache prewarm when supported; branch-scoped clients still fall back to REST. This repo currently installs `turbobulk-client` from the NetBox Labs public git repo because the package is new (default: `false`) |
 | `rate_limit` | no | Max API calls per second (default: `0` = unlimited) |
 | `rate_limit_burst` | no | Token-bucket burst size (default: `1`) |
 | `retry_attempts` | no | Retry attempts for transient NetBox failures (default: `3`) |
@@ -788,4 +789,3 @@ source "source_nb" {
 ```
 
 This adapter reads from a source NetBox instance and returns plain dicts that can be remapped into the destination NetBox.
-

@@ -11,6 +11,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
 pynetbox-wrapper = { git = "https://github.com/erichester76/pynetbox-wrapper.git", rev = "96871bba7234ef32e818a30457308297260b98fa" }
+turbobulk-client = { git = "https://github.com/netboxlabs/netbox-turbobulk-public.git", rev = "0405054fa538080c1d6e7f23b01ba4e16d8e01ec" }
 pynetbox = "7.3.3"
 pyvmomi = "8.0.3.0.1"
 requests = "2.32.3"

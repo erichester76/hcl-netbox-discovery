@@ -226,6 +226,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "NetBox",
     ),
     (
+        "NETBOX_USE_TURBOBULK",
+        "false",
+        'Set to "true" to use TurboBulk export for cache prewarm when supported; branch-scoped clients still fall back to REST (default: false)',
+        "NetBox",
+    ),
+    (
         "NETBOX_CACHE_DISABLE_ON_FAILURES",
         "5",
         "Number of consecutive Redis failures before the cache is auto-disabled for the run (default: 5)",

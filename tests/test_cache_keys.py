@@ -48,6 +48,7 @@ def test_web_cache_client_kwargs_uses_effective_prefix(monkeypatch) -> None:
         "NETBOX_CACHE_KEY_PREFIX": "nbx:",
         "NETBOX_CACHE_TTL": "300",
         "NETBOX_PREWARM_SENTINEL_TTL": "",
+        "NETBOX_USE_TURBOBULK": "true",
     }
 
     monkeypatch.setattr("web.app.get_config", lambda key, default="": config_values.get(key, default))
@@ -60,6 +61,30 @@ def test_web_cache_client_kwargs_uses_effective_prefix(monkeypatch) -> None:
 
     assert kwargs["cache_key_prefix"].startswith("nbx:dev:")
     assert kwargs["url"] == "https://netbox.example.com"
+    assert kwargs["turbobulk_export_for_prewarm"] is True
+
+
+def test_web_cache_client_kwargs_accepts_truthy_turbobulk_values(monkeypatch) -> None:
+    config_values = {
+        "NETBOX_CACHE_BACKEND": "redis",
+        "NETBOX_CACHE_URL": "redis://redis:6379/0",
+        "NETBOX_URL": "https://netbox.example.com",
+        "NETBOX_TOKEN": "token",
+        "NETBOX_CACHE_KEY_PREFIX": "nbx:",
+        "NETBOX_CACHE_TTL": "300",
+        "NETBOX_PREWARM_SENTINEL_TTL": "",
+        "NETBOX_USE_TURBOBULK": "yes",
+    }
+
+    monkeypatch.setattr("web.app.get_config", lambda key, default="": config_values.get(key, default))
+    monkeypatch.setattr(
+        "collector.cache_keys.get_code_version",
+        lambda: {"git_branch": "dev"},
+    )
+
+    kwargs = _cache_client_kwargs()
+
+    assert kwargs["turbobulk_export_for_prewarm"] is True
 
 
 def test_engine_build_nb_client_uses_effective_prefix(monkeypatch) -> None:
@@ -87,3 +112,33 @@ def test_engine_build_nb_client_uses_effective_prefix(monkeypatch) -> None:
 
     assert captured["cache_key_prefix"].startswith("nbx:dev:")
     assert captured["url"] == "https://netbox.example.com"
+    assert captured["turbobulk_export_for_prewarm"] is False
+
+
+def test_engine_build_nb_client_enables_turbobulk_prewarm_export(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_api(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    fake_module = types.SimpleNamespace(api=fake_api)
+    monkeypatch.setitem(sys.modules, "pynetbox2", fake_module)
+    monkeypatch.setattr(
+        "collector.cache_keys.get_code_version",
+        lambda: {"git_branch": "dev"},
+    )
+
+    cfg = NetBoxConfig(
+        url="https://netbox.example.com",
+        token="token",
+        cache="redis",
+        cache_url="redis://redis:6379/0",
+        use_turbobulk=True,
+    )
+
+    _build_nb_client(cfg)
+
+    assert captured["cache_key_prefix"].startswith("nbx:dev:")
+    assert captured["url"] == "https://netbox.example.com"
+    assert captured["turbobulk_export_for_prewarm"] is True
