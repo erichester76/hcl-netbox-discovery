@@ -175,7 +175,7 @@
   function applyLevelFilters() {
     pre.querySelectorAll("[data-level]").forEach((line) => {
       const level = line.dataset.level;
-      line.style.display = levelVisibility[level] ? "" : "none";
+      line.style.display = levelVisibility[level] !== false ? "" : "none";
     });
   }
 

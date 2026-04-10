@@ -357,6 +357,20 @@ def test_job_detail_has_live_and_level_controls_for_queued_job(app):
     assert b'id="job-status-badge"' in resp.data
 
 
+def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "CRITICAL", "engine", "Critical test line")
+    finish_job(job_id, success=False)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'data-level="CRITICAL"' in resp.data
+    assert b"levelVisibility[level] !== false" in resp.data
+    assert b"</span>\n" in resp.data
+
+
 def test_job_detail_partial_status(app):
     """A job finished with has_errors=True should show 'partial' badge."""
     job_id = create_job("mappings/test.hcl")
