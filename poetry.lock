@@ -1305,11 +1305,14 @@ netboxlabs-diode-sdk = ">=1.10.0"
 pynetbox = ">=7.3.3"
 redis = ">=5.0.0"
 
+[package.extras]
+turbobulk = ["turbobulk-client (>=0.1.4)"]
+
 [package.source]
 type = "git"
 url = "https://github.com/erichester76/pynetbox-wrapper.git"
-reference = "e353c76affc6266b3dba36d2a170131ebde44697"
-resolved_reference = "e353c76affc6266b3dba36d2a170131ebde44697"
+reference = "96871bba7234ef32e818a30457308297260b98fa"
+resolved_reference = "96871bba7234ef32e818a30457308297260b98fa"
 
 [[package]]
 name = "pysnmp"
@@ -1855,4 +1858,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<4.0"
-content-hash = "86d8a0d72637fbbc8db857ff5d5e4e3fc7db6c14753333a523027d0b5dfc7a6f"
+content-hash = "440ddad61cbd9cef7a2ff368284f052589d5d94ce8120ae4c037e01d9a045034"
