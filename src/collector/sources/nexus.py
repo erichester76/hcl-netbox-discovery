@@ -223,6 +223,30 @@ def _debug_interface_fetch_summary(
     )
 
 
+def _flatten_interface_payload(payload: Any) -> list[dict]:
+    """Return flat interface records from mixed NDFC wrapper payloads."""
+    if isinstance(payload, list):
+        flattened: list[dict] = []
+        for item in payload:
+            flattened.extend(_flatten_interface_payload(item))
+        return flattened
+
+    if not isinstance(payload, dict):
+        return []
+
+    nested = payload.get("interfaces")
+    if isinstance(nested, list):
+        flattened: list[dict] = []
+        for item in nested:
+            flattened.extend(_flatten_interface_payload(item))
+        return flattened
+
+    if isinstance(nested, dict):
+        return _flatten_interface_payload(nested)
+
+    return [payload]
+
+
 # ---------------------------------------------------------------------------
 # Interface type mapping (NDFC → NetBox)
 # ---------------------------------------------------------------------------
@@ -462,16 +486,15 @@ class NexusDashboardSource(DataSource):
             )
             return []
 
-        if not isinstance(data, list):
-            if isinstance(data, dict):
-                for key in ("interfaces", "items", "data"):
-                    if key in data and isinstance(data[key], list):
-                        data = data[key]
-                        break
-                else:
-                    data = []
+        if isinstance(data, dict):
+            for key in ("interfaces", "items", "data"):
+                if key in data:
+                    data = data[key]
+                    break
             else:
                 data = []
+
+        data = _flatten_interface_payload(data)
 
         if (
             logger.isEnabledFor(logging.DEBUG)
