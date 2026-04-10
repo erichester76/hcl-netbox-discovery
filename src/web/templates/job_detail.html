@@ -6,7 +6,7 @@
   <div class="col">
     <h4 class="mb-0">
       Job <strong>#{{ job.id }}</strong>
-      <span class="badge badge-{{ job.status }} ms-2">{{ job.status }}</span>
+      <span class="badge badge-{{ job.status }} ms-2" id="job-status-badge" data-status="{{ job.status }}">{{ job.status }}</span>
     </h4>
     <small class="text-muted">{{ job.hcl_file }}</small>
   </div>
@@ -113,16 +113,23 @@
 <div class="card shadow-sm">
   <div class="card-header card-header-cu fw-semibold d-flex justify-content-between align-items-center">
     <span>Log Output</span>
-    {% if job.status == 'running' %}
-    <span class="badge bg-primary" id="live-badge">● LIVE</span>
-    {% endif %}
-    {% if job.stop_requested and job.status == 'running' %}
-    <span class="badge bg-warning text-dark ms-2">Stop requested</span>
-    {% endif %}
+    <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+      <button type="button" class="btn btn-sm btn-outline-light" id="toggle-live-update">Live Update: {{ 'On' if job.status in ['queued', 'running'] else 'Off' }}</button>
+      <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-DEBUG" data-level="DEBUG" aria-pressed="true">DEBUG</button>
+      <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-INFO" data-level="INFO" aria-pressed="true">INFO</button>
+      <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-WARNING" data-level="WARNING" aria-pressed="true">WARNING</button>
+      <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-ERROR" data-level="ERROR" aria-pressed="true">ERROR</button>
+      <span class="badge {% if job.status in ['queued', 'running'] %}bg-primary{% else %}bg-secondary{% endif %}" id="live-badge">
+        {% if job.status in ['queued', 'running'] %}● LIVE{% else %}LIVE OFF{% endif %}
+      </span>
+      {% if job.stop_requested and job.status == 'running' %}
+      <span class="badge bg-warning text-dark ms-2" id="stop-requested-badge">Stop requested</span>
+      {% endif %}
+    </div>
   </div>
   <div class="card-body p-0">
     <div class="log-pre" id="log-output">
-{% for lg in logs %}<span class="log-line-{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</span>
+{% for lg in logs %}<span class="log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</span>
 {% endfor %}
     </div>
   </div>
@@ -130,37 +137,129 @@
 {% endblock %}
 
 {% block scripts %}
-{% if job.status == 'running' %}
 <script>
 (function () {
-  const jobId   = {{ job.id }};
-  const pre     = document.getElementById("log-output");
-  let   afterId = {{ logs[-1].id if logs else 0 }};
+  const jobId = {{ job.id }};
+  const pre = document.getElementById("log-output");
+  const statusBadge = document.getElementById("job-status-badge");
+  const liveBadge = document.getElementById("live-badge");
+  const liveToggle = document.getElementById("toggle-live-update");
+  const levelButtons = Array.from(document.querySelectorAll("[id^='toggle-level-']"));
+  const activeStatuses = new Set(["queued", "running"]);
+  const terminalStatuses = new Set(["success", "partial", "failed", "stopped"]);
+  const levelVisibility = {
+    DEBUG: true,
+    INFO: true,
+    WARNING: true,
+    ERROR: true,
+  };
+  let afterId = {{ logs[-1].id if logs else 0 }};
+  let currentStatus = {{ job.status|tojson }};
+  let liveEnabled = activeStatuses.has(currentStatus);
+  let pollTimer = null;
+  let reloadedForTerminal = false;
+
+  function syncLiveControls() {
+    liveToggle.textContent = "Live Update: " + (liveEnabled ? "On" : "Off");
+    liveToggle.classList.toggle("active", liveEnabled);
+    liveToggle.setAttribute("aria-pressed", liveEnabled ? "true" : "false");
+    if (liveEnabled) {
+      liveBadge.className = "badge bg-primary";
+      liveBadge.textContent = "● LIVE";
+    } else {
+      liveBadge.className = "badge bg-secondary";
+      liveBadge.textContent = "LIVE OFF";
+    }
+  }
+
+  function applyLevelFilters() {
+    pre.querySelectorAll("[data-level]").forEach((line) => {
+      const level = line.dataset.level;
+      line.style.display = levelVisibility[level] ? "" : "none";
+    });
+  }
+
+  function updateStatus(status) {
+    currentStatus = status || "unknown";
+    statusBadge.dataset.status = currentStatus;
+    statusBadge.textContent = currentStatus;
+    statusBadge.className = "badge ms-2 badge-" + currentStatus;
+  }
+
+  function schedulePoll(delayMs) {
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+    }
+    if (!liveEnabled || !activeStatuses.has(currentStatus)) {
+      return;
+    }
+    pollTimer = setTimeout(poll, delayMs);
+  }
+
+  function handleTerminalStatus() {
+    liveEnabled = false;
+    syncLiveControls();
+    if (!reloadedForTerminal) {
+      reloadedForTerminal = true;
+      setTimeout(() => location.reload(), 1000);
+    }
+  }
+
+  function appendLogs(logs) {
+    logs.forEach((lg) => {
+      const span = document.createElement("span");
+      span.className = "log-line-" + lg.level;
+      span.dataset.level = lg.level;
+      span.textContent = lg.timestamp + "  " + lg.level.padEnd(8) + "  " + lg.message + "\n";
+      pre.appendChild(span);
+      afterId = lg.id;
+    });
+    applyLevelFilters();
+    pre.scrollTop = pre.scrollHeight;
+  }
 
   function poll() {
     fetch(`/jobs/${jobId}/logs?after_id=${afterId}`)
       .then(r => r.json())
       .then(data => {
-        data.logs.forEach(lg => {
-          const span = document.createElement("span");
-          span.className = "log-line-" + lg.level;
-          span.textContent = lg.timestamp + "  " + lg.level.padEnd(8) + "  " + lg.message + "\n";
-          pre.appendChild(span);
-          afterId = lg.id;
-        });
-        pre.scrollTop = pre.scrollHeight;
+        appendLogs(data.logs || []);
+        updateStatus(data.status);
 
-        if (data.status === "running") {
-          setTimeout(poll, 2000);
+        if (terminalStatuses.has(currentStatus)) {
+          handleTerminalStatus();
         } else {
-          // Job finished – reload to show final summary
-          setTimeout(() => location.reload(), 1500);
+          schedulePoll(2000);
         }
       })
-      .catch(() => setTimeout(poll, 5000));
+      .catch(() => schedulePoll(5000));
   }
-  setTimeout(poll, 2000);
+
+  levelButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const level = button.dataset.level;
+      levelVisibility[level] = !levelVisibility[level];
+      button.classList.toggle("active", levelVisibility[level]);
+      button.setAttribute("aria-pressed", levelVisibility[level] ? "true" : "false");
+      applyLevelFilters();
+    });
+  });
+
+  liveToggle.addEventListener("click", () => {
+    liveEnabled = !liveEnabled;
+    syncLiveControls();
+    if (liveEnabled && activeStatuses.has(currentStatus)) {
+      schedulePoll(0);
+    } else if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  });
+
+  applyLevelFilters();
+  syncLiveControls();
+  if (liveEnabled && activeStatuses.has(currentStatus)) {
+    schedulePoll(2000);
+  }
 })();
 </script>
-{% endif %}
 {% endblock %}

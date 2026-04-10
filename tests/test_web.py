@@ -342,6 +342,21 @@ def test_job_detail_shows_runtime_snapshot_modal(app):
     assert b"abc123" in resp.data
 
 
+def test_job_detail_has_live_and_level_controls_for_queued_job(app):
+    job_id = create_job("mappings/test.hcl")
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'id="toggle-live-update"' in resp.data
+    assert b"Live Update: On" in resp.data
+    assert b'id="toggle-level-DEBUG"' in resp.data
+    assert b'id="toggle-level-INFO"' in resp.data
+    assert b'id="toggle-level-WARNING"' in resp.data
+    assert b'id="toggle-level-ERROR"' in resp.data
+    assert b'id="job-status-badge"' in resp.data
+
+
 def test_job_detail_partial_status(app):
     """A job finished with has_errors=True should show 'partial' badge."""
     job_id = create_job("mappings/test.hcl")
@@ -352,6 +367,18 @@ def test_job_detail_partial_status(app):
     resp = app.get(f"/jobs/{job_id}")
     assert resp.status_code == 200
     assert b"partial" in resp.data
+
+
+def test_job_detail_terminal_job_shows_live_update_off(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b"Live Update: Off" in resp.data
+    assert b"LIVE OFF" in resp.data
 
 
 def test_job_detail_not_found(app):
