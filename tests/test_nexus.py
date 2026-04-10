@@ -595,7 +595,7 @@ class TestNexusGetObjects:
             src.get_objects("switches")
 
         assert "NDFC switch modules list empty" in caplog.text
-    
+
     def test_get_switches_logs_dashboard_switch_endpoint_shapes_at_debug(self, caplog):
         src = self._connected_source()
         src._fetch_interfaces = False
