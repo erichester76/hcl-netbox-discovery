@@ -600,6 +600,7 @@ class NexusDashboardSource(DataSource):
             and isinstance(data[0], dict)
         ):
             first = data[0]
+            first_nvpair_values = _flatten_nv_pairs(first.get("nvPairs"))
             preview_keys = [
                 "ifName",
                 "name",
@@ -630,7 +631,7 @@ class NexusDashboardSource(DataSource):
                     "description",
                     "macAddress",
                 )
-                if (value := _nvpair_get(first, key))
+                if (value := _nvpair_get_from_flattened(first_nvpair_values, key))
             }
             if nv_preview:
                 preview["nvPairs"] = nv_preview
@@ -672,6 +673,7 @@ class NexusDashboardSource(DataSource):
         site_name   = _derive_site_name(switch)
         switch_role = _safe_get(switch, "switchRole", "") or ""
         ip_address  = _derive_switch_ip_address(switch)
+        raw_ip_address = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
 
@@ -704,7 +706,7 @@ class NexusDashboardSource(DataSource):
             "release":      release,
             "fabricName":   fabric_name,
             "switchRole":   switch_role,
-            "ipAddress":    ip_address,
+            "ipAddress":    raw_ip_address,
             "mgmtAddress":  _safe_get(switch, "mgmtAddress", "") or "",
             "primaryIP":    _safe_get(switch, "primaryIP", "") or "",
             "rawStatus":    raw_status,
