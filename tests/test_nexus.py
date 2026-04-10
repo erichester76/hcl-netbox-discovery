@@ -767,6 +767,65 @@ class TestNexusGetObjects:
         assert result[0]["dashboard_module_info"] == []
         assert result[0]["dashboard_fex_details"] == []
 
+    def test_get_switches_flattens_nested_grouped_dashboard_records(self):
+        src = self._connected_source()
+        src._fetch_interfaces = False
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-05",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL0002222",
+                "switchDbID": 22530,
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.6",
+                "status": "alive",
+                "systemMode": "Normal",
+                "modules": None,
+            }
+        ]
+
+        dashboard_iface_resp = MagicMock()
+        dashboard_iface_resp.raise_for_status = MagicMock()
+        dashboard_iface_resp.json.return_value = {
+            "logicalInterfaces": {
+                "Ethernet": {
+                    "up": [
+                        {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
+                    ]
+                }
+            }
+        }
+
+        dashboard_module_resp = MagicMock()
+        dashboard_module_resp.raise_for_status = MagicMock()
+        dashboard_module_resp.json.return_value = {
+            "moduleInfo": {
+                "ok": {
+                    "power": [
+                        {"moduleName": "PSU1", "moduleType": "Power Supply"}
+                    ]
+                }
+            },
+            "fexDetails": {},
+        }
+
+        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
+
+        result = src.get_objects("switches")
+
+        assert result[0]["dashboard_logical_interfaces"][0]["ifName"] == "Ethernet1/1"
+        assert (
+            result[0]["dashboard_logical_interfaces"][0]["dashboard_group"]
+            == "logicalInterfaces/Ethernet/up"
+        )
+        assert result[0]["dashboard_module_info"][0]["moduleName"] == "PSU1"
+        assert result[0]["dashboard_module_info"][0]["dashboard_group"] == "moduleInfo/ok/power"
+
     def test_get_switches_suppresses_duplicate_interface_ips_across_switches(self):
         src = self._connected_source()
         src._fetch_interfaces = True
