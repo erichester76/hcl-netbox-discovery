@@ -786,7 +786,7 @@ class TestNexusEnrichInterface:
         result = src._enrich_interface(iface, switch_ip_address="10.19.237.183")
 
         assert result["mgmt_only"] is True
-        assert result["ip_address"] == "10.19.237.183"
+        assert result["ip_address"] == "10.19.237.183/32"
 
     def test_port_channel_uses_nv_pairs_type(self):
         src = NexusDashboardSource()

@@ -45,6 +45,7 @@ Interface dict fields (when fetch_interfaces is enabled)
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 from typing import Any
@@ -301,6 +302,34 @@ def _nvpair_get(iface: Any, *keys: str) -> str:
         if value:
             return value
     return ""
+
+
+def _nvpair_get_from_flattened(flattened: dict[str, str], *keys: str) -> str:
+    """Return the first non-empty value for *keys* from a flattened nvPair map."""
+    for key in keys:
+        value = flattened.get(_normalize_nvpair_key(key), "")
+        if value:
+            return value
+    return ""
+
+
+def _normalize_host_ip_prefix(address: str) -> str:
+    """Return *address* with a host prefix when it is a bare IP literal."""
+    if not address:
+        return ""
+
+    text = str(address).strip()
+    if not text:
+        return ""
+    if "/" in text:
+        return text
+
+    try:
+        parsed = ipaddress.ip_address(text)
+    except ValueError:
+        return text
+
+    return f"{text}/32" if parsed.version == 4 else f"{text}/128"
 
 
 def _derive_switch_ip_address(switch: Any) -> str:
@@ -684,38 +713,33 @@ class NexusDashboardSource(DataSource):
 
     def _enrich_interface(self, iface: dict, *, switch_ip_address: str = "") -> dict:
         """Return a normalised dict for a single NDFC interface record."""
+        nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
+
+        def nv(*keys: str) -> str:
+            return _nvpair_get_from_flattened(nvpair_values, *keys)
+
         if_name     = _safe_get(iface, "ifName", "") or ""
         name        = _derive_interface_name(iface)
-        if_type     = _safe_get(iface, "ifType", "") or _nvpair_get(
-            iface, "ifType", "interfaceType", "portType"
-        )
-        admin_state = _safe_get(iface, "adminState", "") or _nvpair_get(
-            iface, "adminState", "adminStatus"
-        )
-        oper_status = _safe_get(iface, "operStatus", "") or _nvpair_get(
-            iface, "operStatus", "operState", "operStatusStr"
-        )
+        if_type     = _safe_get(iface, "ifType", "") or nv("ifType", "interfaceType", "portType")
+        admin_state = _safe_get(iface, "adminState", "") or nv("adminState", "adminStatus")
+        oper_status = _safe_get(iface, "operStatus", "") or nv("operStatus", "operState", "operStatusStr")
         description = (
             _safe_get(iface, "ifDescr", "")
             or _safe_get(iface, "description", "")
-            or _nvpair_get(iface, "ifDescr", "description", "desc")
+            or nv("ifDescr", "description", "desc")
             or ""
         )
-        mac_address = _safe_get(iface, "macAddress", "") or _nvpair_get(
-            iface, "macAddress", "mac"
-        )
-        ip_address  = _safe_get(iface, "ipAddress", "") or _nvpair_get(
-            iface, "ipAddress", "primaryIP", "ip"
-        )
+        mac_address = _safe_get(iface, "macAddress", "") or nv("macAddress", "mac")
+        ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIP", "ip")
         speed_str   = (
             _safe_get(iface, "speedStr", "")
             or _safe_get(iface, "speed", "")
-            or _nvpair_get(iface, "speedStr", "speed", "portSpeed", "ethSpeed")
+            or nv("speedStr", "speed", "portSpeed", "ethSpeed")
             or ""
         )
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
-            ip_address = switch_ip_address
+            ip_address = _normalize_host_ip_prefix(switch_ip_address)
 
         return {
             # --- normalised convenience fields ---
