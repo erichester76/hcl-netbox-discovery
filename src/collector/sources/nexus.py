@@ -380,6 +380,16 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
             if key in obj and (value := obj.get(key)) not in (None, "")
         }
 
+    def _preview_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return _preview_dict(value)
+        if isinstance(value, list):
+            first_item = value[0] if value else None
+            if isinstance(first_item, dict):
+                return _preview_dict(first_item)
+            return first_item
+        return value
+
     if isinstance(payload, list):
         first_item = next((item for item in payload if isinstance(item, dict)), None)
         if first_item:
@@ -424,8 +434,10 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
             elif isinstance(nested, dict):
                 flattened = _flatten_dashboard_grouped_records(nested, root_group=nested_key)
                 first_flattened = flattened[0] if flattened else None
+                first_bucket_key = next(iter(nested), "")
+                first_bucket_value = nested[first_bucket_key] if first_bucket_key else None
                 logger.debug(
-                    "NDFC dashboard %s switch_id=%s %s dict keys=%s flattened_count=%d first_group=%r first_keys=%s preview=%s",
+                    "NDFC dashboard %s switch_id=%s %s dict keys=%s flattened_count=%d first_group=%r first_keys=%s preview=%s first_bucket=%r first_bucket_type=%s first_bucket_preview=%r",
                     kind,
                     switch_id,
                     nested_key,
@@ -434,6 +446,9 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
                     first_flattened.get("dashboard_group", "") if first_flattened else "",
                     sorted(first_flattened.keys()) if first_flattened else [],
                     _preview_dict(first_flattened) if first_flattened else {},
+                    first_bucket_key,
+                    type(first_bucket_value).__name__ if first_bucket_key else "none",
+                    _preview_value(first_bucket_value) if first_bucket_key else None,
                 )
             elif nested not in (None, ""):
                 logger.debug(
