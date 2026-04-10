@@ -144,14 +144,71 @@ def _derive_site_name(switch: Any) -> str:
 
 def _derive_interface_name(iface: Any) -> str:
     """Return the best-available interface name from common NDFC fields."""
-    return _first_non_empty(
-        iface,
-        "ifName",
-        "name",
-        "interfaceName",
-        "portName",
-        "displayName",
-        "shortName",
+    return _derive_interface_name_details(iface)[0]
+
+
+def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[str, str]]:
+    """Return the interface name, source field, and raw candidate values."""
+    candidates: dict[str, str] = {}
+    for key in ("ifName", "name", "interfaceName", "portName", "displayName", "shortName"):
+        value = _safe_get(iface, key)
+        candidates[key] = "" if value is None else str(value).strip()
+
+    for key, value in candidates.items():
+        if value:
+            return value, key, candidates
+
+    return "", None, candidates
+
+
+def _debug_interface_normalization(
+    serial: str,
+    raw_iface: Any,
+    normalized_iface: dict,
+    *,
+    name_source: str | None,
+    name_candidates: dict[str, str],
+) -> None:
+    """Emit detailed DEBUG logs for interfaces using fallback or empty names."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    normalized_name = normalized_iface.get("name", "")
+    if name_source == "ifName" and normalized_name:
+        return
+
+    logger.debug(
+        "NDFC interface normalization serial=%s normalized_name=%r name_source=%s "
+        "candidates=%s ifType=%r adminState=%r operStatus=%r ipAddress=%r description=%r raw_keys=%s",
+        serial,
+        normalized_name,
+        name_source or "none",
+        name_candidates,
+        _safe_get(raw_iface, "ifType", "") or "",
+        _safe_get(raw_iface, "adminState", "") or "",
+        _safe_get(raw_iface, "operStatus", "") or "",
+        _safe_get(raw_iface, "ipAddress", "") or "",
+        _safe_get(raw_iface, "ifDescr", "") or _safe_get(raw_iface, "description", "") or "",
+        sorted(raw_iface.keys()) if isinstance(raw_iface, dict) else [],
+    )
+
+
+def _debug_interface_fetch_summary(serial: str, interfaces: list[dict], raw_count: int) -> None:
+    """Emit a DEBUG summary of interface normalization results for one switch."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    named = sum(1 for iface in interfaces if iface.get("name"))
+    blank = raw_count - named
+    mgmt_only = sum(1 for iface in interfaces if iface.get("mgmt_only"))
+
+    logger.debug(
+        "NDFC interface normalization summary serial=%s fetched=%d named=%d blank=%d mgmt_only=%d",
+        serial,
+        raw_count,
+        named,
+        blank,
+        mgmt_only,
     )
 
 
@@ -435,7 +492,24 @@ class NexusDashboardSource(DataSource):
                 preview,
             )
 
-        return [self._enrich_interface(iface) for iface in data if isinstance(iface, dict)]
+        interfaces: list[dict] = []
+        for iface in data:
+            if not isinstance(iface, dict):
+                continue
+
+            _, name_source, name_candidates = _derive_interface_name_details(iface)
+            enriched = self._enrich_interface(iface)
+            interfaces.append(enriched)
+            _debug_interface_normalization(
+                serial,
+                iface,
+                enriched,
+                name_source=name_source,
+                name_candidates=name_candidates,
+            )
+
+        _debug_interface_fetch_summary(serial, interfaces, len(interfaces))
+        return interfaces
 
     def _enrich_switch(self, switch: Any) -> dict:
         """Return a normalised dict for a single NDFC switch record."""

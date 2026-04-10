@@ -12,6 +12,7 @@ import pytest
 
 from collector.sources.nexus import (
     NexusDashboardSource,
+    _derive_interface_name_details,
     _normalize_iface_type,
     _normalize_model,
     _parse_speed_mbps,
@@ -69,6 +70,26 @@ class TestNormalizeIfaceType:
     )
     def test_normalize_iface_type(self, raw_type, expected):
         assert _normalize_iface_type(raw_type) == expected
+
+
+class TestDeriveInterfaceNameDetails:
+    def test_returns_first_non_empty_candidate_and_source(self):
+        name, source, candidates = _derive_interface_name_details(
+            {
+                "ifName": "",
+                "name": "",
+                "interfaceName": "Ethernet1/10",
+                "portName": "Ethernet1/11",
+                "displayName": "Display Ethernet1/12",
+                "shortName": "Et1/13",
+            }
+        )
+
+        assert name == "Ethernet1/10"
+        assert source == "interfaceName"
+        assert candidates["ifName"] == ""
+        assert candidates["interfaceName"] == "Ethernet1/10"
+        assert candidates["portName"] == "Ethernet1/11"
 
 
 # ---------------------------------------------------------------------------
