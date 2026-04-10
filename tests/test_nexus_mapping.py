@@ -20,10 +20,17 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert device is not None
 
     field_values = {field.name: field.value for field in device.fields}
+    assert field_values["name"] == "when(source('name'), source('name'), 'Unknown')"
     assert field_values["primary_ip4"] == "when(source('ip_address') != '', source('ip_address'), None)"
 
     prereq_args = {prereq.name: prereq.args for prereq in device.prerequisites}
-    assert prereq_args["site"]["name"] == "coalesce(source('site_name'), 'Unknown')"
+    assert prereq_args["device_type"]["model"] == "when(source('model'), source('model'), 'Unknown')"
+    assert prereq_args["role"]["name"] == "when(source('role'), source('role'), 'Network Device')"
+    assert (
+        prereq_args["site"]["name"]
+        == "when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), 'Unknown')"
+    )
+    assert prereq_args["platform"]["name"] == "when(source('platform_name'), source('platform_name'), 'NX-OS')"
 
     assert device.interfaces, "device should define interfaces"
     interface = device.interfaces[0]

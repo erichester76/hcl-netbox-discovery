@@ -69,7 +69,7 @@ object "device" {
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('model'), 'Unknown')"
+      model        = "when(source('model'), source('model'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -77,30 +77,32 @@ object "device" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "coalesce(source('role'), 'Network Device')" }
+    args     = { name = "when(source('role'), source('role'), 'Network Device')" }
     optional = false
   }
 
   # Site/fabric membership comes from the adapter's best-available
   # site_name derivation so NDFC environments that do not populate
-  # fabricName can still map devices into NetBox sites.
+  # fabricName can still map devices into NetBox sites. A regex mapping
+  # file can normalize raw NDFC fabric/site labels into the target
+  # NetBox site names for a given environment.
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('site_name'), 'Unknown')" }
+    args     = { name = "when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), 'Unknown')" }
     optional = false
   }
 
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform_name'), 'NX-OS')"
+      name         = "when(source('platform_name'), source('platform_name'), 'NX-OS')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('name'), 'Unknown')"
+    value = "when(source('name'), source('name'), 'Unknown')"
   }
 
   field "device_type" {
