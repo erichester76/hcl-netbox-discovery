@@ -552,8 +552,8 @@ field "lag" {
   type     = "fk"
   resource = "dcim.interfaces"
   lookup   = {
-    device = "parent_id"
-    name   = "source('lag_name')"
+    device = "when(source('lag_name') != '', parent_id, None)"
+    name   = "when(source('lag_name') != '', source('lag_name'), None)"
   }
 }
 ```
