@@ -188,6 +188,7 @@ object "host" {
   source_collection = "hosts"              # passed to source.get_objects()
   netbox_resource   = "dcim.devices"       # NetBox REST resource path
   lookup_by         = ["name", "site"]     # compound upsert key
+  enabled_if        = "source('status') == 'active'"
   max_workers       = 8                    # override collector.max_workers for this object
 
   prerequisite "…" { … }   # repeatable — evaluated before fields
@@ -204,6 +205,7 @@ object "host" {
 | `source_collection` | yes | Collection name passed to `source.get_objects()` |
 | `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`) |
 | `lookup_by` | no | Field names used as the upsert key (default: `["name"]`) |
+| `enabled_if` | no | Expression evaluated per source item; falsey items are skipped before processing |
 | `max_workers` | no | Thread pool size for this object (overrides `collector.max_workers`) |
 
 ---

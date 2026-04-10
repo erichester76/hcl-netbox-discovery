@@ -1087,7 +1087,24 @@ class Engine:
             logger.error("Failed to fetch collection %r: %s", obj_cfg.source_collection, exc)
             return stats
 
-        logger.info("Fetched %d items for %r", len(items), obj_cfg.name)
+        fetched_count = len(items)
+        if obj_cfg.enabled_if is not None:
+            filtered_items = []
+            filtered_out = 0
+            for item in items:
+                if Resolver(ctx.for_item(item)).evaluate(obj_cfg.enabled_if):
+                    filtered_items.append(item)
+                else:
+                    filtered_out += 1
+            items = filtered_items
+            logger.info(
+                "Fetched %d items for %r, filtered out %d via enabled_if",
+                fetched_count,
+                obj_cfg.name,
+                filtered_out,
+            )
+        else:
+            logger.info("Fetched %d items for %r", fetched_count, obj_cfg.name)
 
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
         # Allow a small queue above the worker count so submission overlaps with

@@ -21,6 +21,13 @@ class TestVMwareExamplePlatformPrereqs:
         assert vm_platform_prereqs[0].args["name"] == "source('guest.guestFullName') or 'Unknown'"
 
 
+class TestVMwareExampleClusterFilter:
+    def test_vmware_example_filters_staging_clusters(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        cluster_obj = next(o for o in cfg.objects if o.name == "cluster")
+        assert cluster_obj.enabled_if == "not source('name').startswith('Staging')"
+
+
 class TestVMwareExamplePhysicalNicMapping:
     def test_host_physical_nics_include_host_context_for_description(self):
         cfg = load_config("mappings/vmware.hcl.example")

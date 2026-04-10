@@ -261,9 +261,35 @@ class TestLoadConfigWithObjects:
         assert obj.source_collection == "clusters"
         assert obj.netbox_resource == "virtualization.clusters"
         assert obj.lookup_by == ["name"]
+        assert obj.enabled_if is None
         assert len(obj.fields) == 1
         assert obj.fields[0].name == "name"
         assert obj.fields[0].value == "source('name')"
+
+    def test_parses_object_enabled_if(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+
+            object "cluster" {
+              source_collection = "clusters"
+              netbox_resource   = "virtualization.clusters"
+              enabled_if        = "not source('name').startswith('Staging')"
+
+              field "name" {
+                value = "source('name')"
+              }
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.objects[0].enabled_if == "not source('name').startswith('Staging')"
 
     def test_parses_prerequisite_block(self, tmp_path):
         path = _write_hcl(tmp_path, """
