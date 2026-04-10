@@ -301,6 +301,9 @@ _SPEED_CANDIDATE_KEYS = (
     "interfaceSpeed",
     "speedValue",
     "linkSpeed",
+)
+
+_BANDWIDTH_CANDIDATE_KEYS = (
     "bandwidth",
     "bw",
 )
@@ -412,6 +415,44 @@ def _normalize_host_ip_prefix(address: str) -> str:
         return text
 
     return f"{text}/32" if parsed.version == 4 else f"{text}/128"
+
+
+def _normalize_ip_with_prefix(address: str, prefix: str = "") -> str:
+    """Return *address* with an explicit prefix, preferring a provided mask when valid."""
+    if not address:
+        return ""
+
+    text = str(address).strip()
+    if not text:
+        return ""
+    if "/" in text:
+        return text
+
+    try:
+        ip_obj = ipaddress.ip_address(text)
+    except ValueError:
+        return text
+
+    prefix_text = str(prefix or "").strip()
+    if prefix_text:
+        prefix_text = prefix_text.lstrip("/")
+        if prefix_text.isdigit():
+            prefix_len = int(prefix_text)
+            max_prefix = 32 if ip_obj.version == 4 else 128
+            if 0 <= prefix_len <= max_prefix:
+                return f"{text}/{prefix_len}"
+        else:
+            try:
+                if ip_obj.version == 4:
+                    prefix_len = ipaddress.IPv4Network(f"0.0.0.0/{prefix_text}").prefixlen
+                else:
+                    prefix_len = ipaddress.IPv6Network(f"::/{prefix_text}").prefixlen
+            except ValueError:
+                prefix_len = None
+            if prefix_len is not None:
+                return f"{text}/{prefix_len}"
+
+    return f"{text}/32" if ip_obj.version == 4 else f"{text}/128"
 
 
 def _extract_port_channel_number(value: str) -> str:
@@ -564,6 +605,23 @@ def _derive_interface_speed_string(iface: Any, nvpair_values: dict[str, str]) ->
         or _safe_get(iface, "speed", "")
         or _nvpair_get_from_flattened(nvpair_values, *_SPEED_CANDIDATE_KEYS)
     )
+
+
+def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> tuple[int | None, str]:
+    """Return parsed interface speed in Mbps plus the raw source string used."""
+    speed_str = _derive_interface_speed_string(iface, nvpair_values)
+    speed_mbps = _parse_speed_mbps(speed_str)
+    if speed_mbps is not None:
+        return speed_mbps, speed_str
+
+    bandwidth = _nvpair_get_from_flattened(nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS)
+    if bandwidth and str(bandwidth).strip().isdigit():
+        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
+        bandwidth_mbps = int(str(bandwidth).strip()) // 1000
+        if bandwidth_mbps > 0:
+            return bandwidth_mbps, str(bandwidth).strip()
+
+    return None, speed_str
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -964,7 +1022,7 @@ class NexusDashboardSource(DataSource):
             interfaces.append(enriched)
             if debug_enabled:
                 nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
-                speed_str = _derive_interface_speed_string(iface, nvpair_values)
+                _, speed_str = _derive_interface_speed_mbps(iface, nvpair_values)
                 _, name_source, name_candidates = _derive_interface_name_details(iface)
                 _debug_interface_normalization(
                     serial,
@@ -1060,13 +1118,15 @@ class NexusDashboardSource(DataSource):
         )
         mac_address = _safe_get(iface, "macAddress", "") or nv("macAddress", "mac")
         ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
-        speed_str   = _derive_interface_speed_string(iface, nvpair_values)
-        speed_mbps  = _parse_speed_mbps(speed_str)
+        ip_prefix   = nv("prefix", "prefixLength", "subnetPrefix", "mask", "subnetMask")
+        speed_mbps, speed_str = _derive_interface_speed_mbps(iface, nvpair_values)
         lag_name    = _derive_lag_name(iface, nvpair_values=nvpair_values)
         vpc_name    = _derive_vpc_name(iface, nvpair_values=nvpair_values)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
+        elif ip_address:
+            ip_address = _normalize_ip_with_prefix(ip_address, ip_prefix)
         return {
             # --- normalised convenience fields ---
             "name":        name,
