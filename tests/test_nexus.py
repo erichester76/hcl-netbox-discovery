@@ -620,15 +620,24 @@ class TestNexusGetObjects:
 
         dashboard_iface_resp = MagicMock()
         dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = [
-            {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
-        ]
+        dashboard_iface_resp.json.return_value = {
+            "serialNumber": "SAL0002222",
+            "adminStatus": "up",
+            "logicalInterfaces": [
+                {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
+            ],
+        }
 
         dashboard_module_resp = MagicMock()
         dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = [
-            {"moduleName": "PSU1", "moduleType": "Power Supply"}
-        ]
+        dashboard_module_resp.json.return_value = {
+            "moduleInfo": [
+                {"moduleName": "PSU1", "moduleType": "Power Supply"}
+            ],
+            "fexDetails": [
+                {"moduleName": "FEX101", "model": "N2K-C2348TQ"}
+            ],
+        }
 
         src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
 
@@ -636,7 +645,10 @@ class TestNexusGetObjects:
             src.get_objects("switches")
 
         assert "NDFC dashboard switch/interface switch_id=22530" in caplog.text
+        assert "logicalInterfaces count=1" in caplog.text
         assert "NDFC dashboard switch/module switch_id=22530" in caplog.text
+        assert "moduleInfo count=1" in caplog.text
+        assert "fexDetails count=1" in caplog.text
 
     def test_get_switches_suppresses_duplicate_interface_ips_across_switches(self):
         src = self._connected_source()

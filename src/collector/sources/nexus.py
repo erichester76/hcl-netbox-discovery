@@ -350,6 +350,36 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
+    preview_keys = (
+        "ifName",
+        "name",
+        "portName",
+        "speed",
+        "portSpeed",
+        "ifSpeed",
+        "adminSpeed",
+        "operSpeed",
+        "bandwidth",
+        "mediaType",
+        "portType",
+        "moduleName",
+        "moduleType",
+        "model",
+        "serialNumber",
+        "productId",
+        "partNumber",
+        "status",
+        "adminStatus",
+        "operStatus",
+    )
+
+    def _preview_dict(obj: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key in preview_keys
+            if key in obj and (value := obj.get(key)) not in (None, "")
+        }
+
     if isinstance(payload, list):
         first_item = next((item for item in payload if isinstance(item, dict)), None)
         if first_item:
@@ -359,27 +389,7 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
                 switch_id,
                 len(payload),
                 sorted(first_item.keys()),
-                {
-                    key: value
-                    for key in (
-                        "ifName",
-                        "name",
-                        "portName",
-                        "speed",
-                        "portSpeed",
-                        "ifSpeed",
-                        "adminSpeed",
-                        "operSpeed",
-                        "bandwidth",
-                        "mediaType",
-                        "portType",
-                        "moduleName",
-                        "moduleType",
-                        "model",
-                        "serialNumber",
-                    )
-                    if key in first_item and (value := first_item.get(key)) not in (None, "")
-                },
+                _preview_dict(first_item),
             )
             return
         logger.debug(
@@ -398,6 +408,37 @@ def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> N
             switch_id,
             sorted(payload.keys()),
         )
+        for nested_key in ("logicalInterfaces", "moduleInfo", "fexDetails"):
+            nested = payload.get(nested_key)
+            if isinstance(nested, list):
+                first_item = next((item for item in nested if isinstance(item, dict)), None)
+                logger.debug(
+                    "NDFC dashboard %s switch_id=%s %s count=%d first_keys=%s preview=%s",
+                    kind,
+                    switch_id,
+                    nested_key,
+                    len(nested),
+                    sorted(first_item.keys()) if first_item else [],
+                    _preview_dict(first_item) if first_item else {},
+                )
+            elif isinstance(nested, dict):
+                logger.debug(
+                    "NDFC dashboard %s switch_id=%s %s dict keys=%s preview=%s",
+                    kind,
+                    switch_id,
+                    nested_key,
+                    sorted(nested.keys()),
+                    _preview_dict(nested),
+                )
+            elif nested not in (None, ""):
+                logger.debug(
+                    "NDFC dashboard %s switch_id=%s %s type=%s preview=%r",
+                    kind,
+                    switch_id,
+                    nested_key,
+                    type(nested).__name__,
+                    nested,
+                )
         return
 
     logger.debug(
