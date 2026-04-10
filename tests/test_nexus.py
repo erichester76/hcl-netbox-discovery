@@ -670,8 +670,10 @@ class TestNexusGetObjects:
 
         assert "NDFC dashboard switch/interface switch_id=22530" in caplog.text
         assert "logicalInterfaces dict keys=['Ethernet'] flattened_count=1" in caplog.text
+        assert "first_bucket='Ethernet' first_bucket_type=list" in caplog.text
         assert "NDFC dashboard switch/module switch_id=22530" in caplog.text
         assert "moduleInfo dict keys=['ok'] flattened_count=1" in caplog.text
+        assert "first_bucket='ok' first_bucket_type=list" in caplog.text
         assert "fexDetails dict keys=['attached'] flattened_count=1" in caplog.text
         assert result[0]["dashboard_logical_interfaces"][0]["ifName"] == "Ethernet1/1"
         assert result[0]["dashboard_logical_interfaces"][0]["dashboard_group"] == "logicalInterfaces/Ethernet"
@@ -717,6 +719,59 @@ class TestNexusGetObjects:
         assert result[0]["dashboard_logical_interfaces"] == []
         assert result[0]["dashboard_module_info"] == []
         assert result[0]["dashboard_fex_details"] == []
+
+    def test_get_switches_logs_group_bucket_value_shape_when_dashboard_groups_do_not_flatten(self, caplog):
+        src = self._connected_source()
+        src._fetch_interfaces = False
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-05",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL0002222",
+                "switchDbID": 22530,
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.6",
+                "status": "alive",
+                "systemMode": "Normal",
+                "modules": None,
+            }
+        ]
+
+        dashboard_iface_resp = MagicMock()
+        dashboard_iface_resp.raise_for_status = MagicMock()
+        dashboard_iface_resp.json.return_value = {
+            "logicalInterfaces": {
+                "Ethernet": {
+                    "summary": "opaque",
+                }
+            }
+        }
+
+        dashboard_module_resp = MagicMock()
+        dashboard_module_resp.raise_for_status = MagicMock()
+        dashboard_module_resp.json.return_value = {
+            "moduleInfo": {
+                "ok": {
+                    "summary": "opaque",
+                }
+            },
+            "fexDetails": {},
+        }
+
+        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
+
+        with caplog.at_level(logging.DEBUG, logger="collector.sources.nexus"):
+            result = src.get_objects("switches")
+
+        assert result[0]["dashboard_logical_interfaces"] == []
+        assert result[0]["dashboard_module_info"] == []
+        assert "first_bucket='Ethernet' first_bucket_type=dict" in caplog.text
+        assert "first_bucket='ok' first_bucket_type=dict" in caplog.text
 
     def test_get_switches_does_not_emit_group_containers_as_dashboard_records(self):
         src = self._connected_source()
