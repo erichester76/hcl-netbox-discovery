@@ -920,7 +920,11 @@ _safe_get = safe_get
 
 
 def _parse_speed_mbps(speed_str: str) -> int | None:
-    """Delegate to shared helper, treating bare integers as already-Mbps (Nexus)."""
+    """Delegate to shared helper for Nexus speed values.
+
+    Bare integer strings below 1,000,000 are treated as already being in Mbps.
+    Larger bare integers are treated as bits-per-second and converted to Mbps.
+    """
     text = str(speed_str or "").strip()
     if text.isdigit() and int(text) >= 1_000_000:
         return parse_speed_mbps(text, numeric_is_bps=True)
