@@ -10,7 +10,7 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.12,<4.0"
-pynetbox-wrapper = { git = "https://github.com/erichester76/pynetbox-wrapper.git", rev = "e353c76affc6266b3dba36d2a170131ebde44697" }
+pynetbox-wrapper = { git = "https://github.com/erichester76/pynetbox-wrapper.git", rev = "96871bba7234ef32e818a30457308297260b98fa" }
 pynetbox = "7.3.3"
 pyvmomi = "8.0.3.0.1"
 requests = "2.32.3"
