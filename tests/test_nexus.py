@@ -974,6 +974,24 @@ class TestNexusEnrichInterface:
         assert result["type"] == "40gbase-x-qsfpp"
         assert result["enabled"] is True
 
+    def test_interface_speed_prefers_numeric_admin_speed_over_auto_placeholder(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/3",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminState": "up",
+                "speed": "Auto",
+                "adminSpeed": "100000000000",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["speed"] == 100000
+        assert result["type"] == "100gbase-x-qsfp28"
+        assert result["enabled"] is True
+
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
         src = NexusDashboardSource()
         iface = {
@@ -1006,7 +1024,7 @@ class TestNexusEnrichInterface:
         assert result["speed"] == 40000
         assert result["type"] == "lag"
 
-    def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
+    def test_vpc_interface_does_not_emit_parent_lag_from_port_channel_id(self):
         src = NexusDashboardSource()
         iface = {
             "ifName": "vpc101",

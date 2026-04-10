@@ -649,12 +649,24 @@ def _debug_unparsed_speed(
 
 
 def _derive_interface_speed_string(iface: Any, nvpair_values: dict[str, str]) -> str:
-    """Return the first non-empty top-level or nvPairs speed string for an interface."""
-    return (
-        _safe_get(iface, "speedStr", "")
-        or _safe_get(iface, "speed", "")
-        or _nvpair_get_from_flattened(nvpair_values, *_SPEED_CANDIDATE_KEYS)
-    )
+    """Return the first parseable speed string, skipping placeholder values like ``Auto``."""
+    candidates = [
+        _safe_get(iface, "speedStr", ""),
+        _safe_get(iface, "speed", ""),
+        *(_nvpair_get_from_flattened(nvpair_values, key) for key in _SPEED_CANDIDATE_KEYS),
+    ]
+    fallback = ""
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        if not fallback:
+            fallback = text
+        if text.lower() == "auto":
+            continue
+        if _parse_speed_mbps(text) is not None:
+            return text
+    return fallback
 
 
 def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> tuple[int | None, str]:
