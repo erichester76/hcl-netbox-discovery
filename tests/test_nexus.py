@@ -956,6 +956,24 @@ class TestNexusEnrichInterface:
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
+    def test_interface_speed_can_use_admin_and_oper_speed_variants(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/2",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminState": "up",
+                "adminSpeed": "40000000000",
+                "operSpeedStr": "40000000000",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["speed"] == 40000
+        assert result["type"] == "40gbase-x-qsfpp"
+        assert result["enabled"] is True
+
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
         src = NexusDashboardSource()
         iface = {

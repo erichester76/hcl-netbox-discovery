@@ -264,6 +264,52 @@ def _debug_interface_fetch_summary(
     )
 
 
+def _debug_switch_modules(switch: dict[str, Any]) -> None:
+    """Emit a compact DEBUG preview of switch module payload shape when present."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    modules = switch.get("modules")
+    if not isinstance(modules, list) or not modules:
+        return
+
+    first_module = next((item for item in modules if isinstance(item, dict)), None)
+    if not first_module:
+        logger.debug("NDFC switch modules present count=%d but no dict entries", len(modules))
+        return
+
+    preview_keys = (
+        "moduleName",
+        "name",
+        "model",
+        "moduleType",
+        "moduleIndex",
+        "serialNumber",
+        "speed",
+        "portSpeed",
+        "ifSpeed",
+    )
+    preview = {
+        key: value
+        for key in preview_keys
+        if key in first_module and (value := first_module.get(key)) not in (None, "")
+    }
+    for nested_key in ("ports", "interfaces"):
+        nested = first_module.get(nested_key)
+        if isinstance(nested, list):
+            preview[f"{nested_key}_count"] = len(nested)
+            first_nested = next((item for item in nested if isinstance(item, dict)), None)
+            if first_nested:
+                preview[f"{nested_key}_keys"] = sorted(first_nested.keys())
+
+    logger.debug(
+        "NDFC first switch modules count=%d first_module_keys=%s preview=%s",
+        len(modules),
+        sorted(first_module.keys()),
+        preview,
+    )
+
+
 _LAG_CANDIDATE_KEYS = (
     "portChannelInterfaceDn",
     "portChannelInterface",
@@ -297,6 +343,10 @@ _SPEED_CANDIDATE_KEYS = (
     "ethSpeed",
     "adminSpeed",
     "operSpeed",
+    "adminSpeedStr",
+    "operSpeedStr",
+    "negotiatedSpeed",
+    "actualSpeed",
     "ifSpeed",
     "interfaceSpeed",
     "speedValue",
@@ -937,6 +987,7 @@ class NexusDashboardSource(DataSource):
                 sorted(first.keys()),
                 preview,
             )
+            _debug_switch_modules(first)
 
         switches: list[dict] = []
         for raw in data:
