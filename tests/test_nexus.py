@@ -864,21 +864,6 @@ class TestNexusEnrichInterface:
         assert result["lag_name"] == "port-channel15"
         assert result["vpc_name"] == "vpc101"
 
-    def test_member_interface_can_derive_lag_name_from_description(self):
-        src = NexusDashboardSource()
-        iface = {
-            "ifName": "Ethernet1/35",
-            "nvPairs": {
-                "ifType": "INTERFACE_ETHERNET",
-                "adminState": "up",
-                "description": "PO 500 (vpc-peer-link) member to peer",
-            },
-        }
-
-        result = src._enrich_interface(iface)
-
-        assert result["lag_name"] == "port-channel500"
-
     def test_interface_speed_can_use_extended_nvpair_keys(self):
         src = NexusDashboardSource()
         iface = {

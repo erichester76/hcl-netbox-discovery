@@ -226,6 +226,54 @@ def _debug_interface_fetch_summary(
     )
 
 
+def _debug_missing_lag_name(serial: str, raw_iface: Any, normalized_iface: dict) -> None:
+    """Emit targeted DEBUG logs when a likely member interface has no lag_name."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    if not isinstance(raw_iface, dict):
+        return
+
+    name = str(normalized_iface.get("name", "") or "")
+    if not name or normalized_iface.get("lag_name"):
+        return
+
+    lowered = name.lower()
+    if lowered.startswith(("port-channel", "vpc", "loopback", "vlan", "nve", "mgmt")):
+        return
+
+    nvpair_values = _flatten_nv_pairs(_safe_get(raw_iface, "nvPairs"))
+    lag_candidate_keys = (
+        "portChannelInterfaceDn",
+        "portChannelInterface",
+        "portChannelName",
+        "portChannel",
+        "portChannelId",
+        "channelGroup",
+        "channelGroupId",
+        "aggregateInterface",
+        "aggregateId",
+        "bundleId",
+        "memberOf",
+        "interfaceGroup",
+    )
+    lag_candidates = {
+        key: value
+        for key in lag_candidate_keys
+        if (value := _nvpair_get_from_flattened(nvpair_values, key))
+    }
+
+    logger.debug(
+        "NDFC interface missing lag_name serial=%s name=%r ifType=%r description=%r "
+        "nvpair_keys=%s lag_candidates=%s",
+        serial,
+        name,
+        normalized_iface.get("ifType", ""),
+        normalized_iface.get("description", ""),
+        sorted(nvpair_values.keys()),
+        lag_candidates,
+    )
+
+
 def _flatten_interface_payload(payload: Any) -> list[dict]:
     """Return flat interface records from mixed NDFC wrapper payloads."""
     if isinstance(payload, list):
@@ -417,10 +465,6 @@ def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
         "bundleId",
         "memberOf",
         "interfaceGroup",
-        "ifDescr",
-        "description",
-        "desc",
-        "portDescription",
         nvpair_values=nvpair_values,
     )
     for value in candidates:
@@ -842,6 +886,7 @@ class NexusDashboardSource(DataSource):
                     name_source=name_source,
                     name_candidates=name_candidates,
                 )
+                _debug_missing_lag_name(serial, iface, enriched)
 
         interfaces.sort(key=_interface_sort_key)
         _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
