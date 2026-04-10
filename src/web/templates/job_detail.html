@@ -129,7 +129,7 @@
   </div>
   <div class="card-body p-0">
     <div class="log-pre" id="log-output">
-{% for lg in logs %}<span class="log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</span>
+{% for lg in logs %}<div class="log-row log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</div>
 {% endfor %}
     </div>
   </div>
@@ -207,11 +207,11 @@
 
   function appendLogs(logs) {
     logs.forEach((lg) => {
-      const span = document.createElement("span");
-      span.className = "log-line-" + lg.level;
-      span.dataset.level = lg.level;
-      span.textContent = lg.timestamp + "  " + lg.level.padEnd(8) + "  " + lg.message + "\n";
-      pre.appendChild(span);
+      const line = document.createElement("div");
+      line.className = "log-row log-line-" + lg.level;
+      line.dataset.level = lg.level;
+      line.textContent = lg.timestamp + "  " + lg.level.padEnd(8) + "  " + lg.message;
+      pre.appendChild(line);
       afterId = lg.id;
     });
     applyLevelFilters();

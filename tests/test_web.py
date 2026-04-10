@@ -368,7 +368,7 @@ def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
     assert resp.status_code == 200
     assert b'data-level="CRITICAL"' in resp.data
     assert b"levelVisibility[level] !== false" in resp.data
-    assert b"</span>\n" in resp.data
+    assert b'class="log-row log-line-CRITICAL"' in resp.data
 
 
 def test_job_detail_partial_status(app):
