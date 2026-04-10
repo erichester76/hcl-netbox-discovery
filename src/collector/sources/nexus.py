@@ -575,14 +575,10 @@ def _candidate_iface_values(
 def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None) -> str:
     """Return the best-available parent LAG name for an interface item."""
     iface_name = _derive_interface_name(iface).strip().lower()
-    if iface_name.startswith("port-channel"):
+    if iface_name.startswith(("port-channel", "vpc")):
         return ""
 
-    candidate_keys = _LAG_CANDIDATE_KEYS
-    if iface_name.startswith("vpc"):
-        candidate_keys = (*_VPC_LAG_CANDIDATE_KEYS, *_LAG_CANDIDATE_KEYS)
-
-    candidates = _candidate_iface_values(iface, *candidate_keys, nvpair_values=nvpair_values)
+    candidates = _candidate_iface_values(iface, *_LAG_CANDIDATE_KEYS, nvpair_values=nvpair_values)
     for value in candidates:
         normalized = _normalize_port_channel_name(value)
         if normalized:
