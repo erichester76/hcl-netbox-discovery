@@ -21,7 +21,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
 
     field_values = {field.name: field.value for field in device.fields}
     assert field_values["name"] == "when(source('name'), source('name'), 'Unknown')"
-    assert field_values["primary_ip4"] == "when(source('ip_address') != '', source('ip_address'), None)"
+    assert "primary_ip4" not in field_values
 
     prereq_args = {prereq.name: prereq.args for prereq in device.prerequisites}
     assert prereq_args["device_type"]["model"] == "when(source('model'), source('model'), 'Unknown')"

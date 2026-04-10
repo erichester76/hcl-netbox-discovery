@@ -131,10 +131,6 @@ object "device" {
     value = "source('status')"
   }
 
-  field "primary_ip4" {
-    value = "when(source('ip_address') != '', source('ip_address'), None)"
-  }
-
   field "tags" {
     type  = "tags"
     value = "['ndfc-sync']"
