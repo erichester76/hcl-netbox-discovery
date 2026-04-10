@@ -892,6 +892,22 @@ class TestNexusEnrichInterface:
 
         assert result["lag_name"] == "port-channel500"
 
+    def test_port_channel_interface_does_not_self_assign_lag_name(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "port-channel500",
+            "nvPairs": {
+                "ifType": "INTERFACE_PORT_CHANNEL",
+                "poid": "500",
+                "primaryIntf": "port-channel500",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["type"] == "lag"
+        assert result["lag_name"] == ""
+
     def test_interface_speed_can_use_extended_nvpair_keys(self):
         src = NexusDashboardSource()
         iface = {
