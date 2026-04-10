@@ -39,6 +39,15 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert interface_fields["description"] == "when(source('description'), source('description'), '')"
     assert interface_fields["mgmt_only"] == "source('mgmt_only')"
 
+    lag_field = next((field for field in interface.fields if field.name == "lag"), None)
+    assert lag_field is not None
+    assert lag_field.type == "fk"
+    assert lag_field.resource == "dcim.interfaces"
+    assert lag_field.lookup == {
+        "device": "when(source('lag_name') != '', parent_id, None)",
+        "name": "when(source('lag_name') != '', source('lag_name'), None)",
+    }
+
     assert interface.ip_addresses, "interface block must declare ip_address"
     ip_block = interface.ip_addresses[0]
     assert ip_block.primary_if == "first"

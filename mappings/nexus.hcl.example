@@ -172,6 +172,15 @@ object "device" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
     }
 
+    field "lag" {
+      type     = "fk"
+      resource = "dcim.interfaces"
+      lookup   = {
+        device = "when(source('lag_name') != '', parent_id, None)"
+        name   = "when(source('lag_name') != '', source('lag_name'), None)"
+      }
+    }
+
     ip_address {
       source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
       primary_if   = "first"

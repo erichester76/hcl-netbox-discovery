@@ -73,7 +73,7 @@ class TestWalkPath:
 # ---------------------------------------------------------------------------
 
 
-def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp"):
+def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp", parent_nb_obj=None):
     opts = CollectorOptions(
         max_workers=4,
         dry_run=False,
@@ -87,7 +87,7 @@ def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp"):
         regex_dir=regex_dir,
         prereqs=prereqs or {},
         source_obj=source_obj,
-        parent_nb_obj=None,
+        parent_nb_obj=parent_nb_obj,
         dry_run=False,
     )
     return Resolver(ctx)
@@ -111,6 +111,14 @@ class TestResolverSource:
         assert r.evaluate(42) == 42
         assert r.evaluate(True) is True
         assert r.evaluate(None) is None
+
+    def test_parent_object_and_parent_id_are_available(self):
+        parent = SimpleNamespace(id=101, name="leaf-01")
+        r = _make_resolver({"name": "Ethernet1/1"}, parent_nb_obj=parent)
+
+        assert r.evaluate("parent.id") == 101
+        assert r.evaluate("parent.name") == "leaf-01"
+        assert r.evaluate("parent_id") == 101
 
 
 # ---------------------------------------------------------------------------

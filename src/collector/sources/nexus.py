@@ -36,6 +36,8 @@ Interface dict fields (when fetch_interfaces is enabled)
   type              NetBox-compatible interface type string
   enabled           ``True`` if admin state is up
   description       Interface description
+  lag_name          Best-available parent LAG/port-channel interface name
+  vpc_name          Best-available vPC interface name
   mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
   speed             Speed in Mbps (integer)
@@ -332,14 +334,135 @@ def _normalize_host_ip_prefix(address: str) -> str:
     return f"{text}/32" if parsed.version == 4 else f"{text}/128"
 
 
-def _derive_switch_ip_address(switch: Any) -> str:
-    """Return the best switch management IP for interface/IP fallback."""
-    return _first_non_empty(
-        switch,
-        "mgmtAddress",
-        "primaryIP",
-        "ipAddress",
+def _extract_port_channel_number(value: str) -> str:
+    """Return the trailing number from common port-channel labels."""
+    if not value:
+        return ""
+
+    text = str(value).strip()
+    numeric_match = re.fullmatch(r"\d+", text)
+    if numeric_match:
+        return text
+
+    patterns = (
+        r"port[\s_-]*channel[\s_-]*(\d+)",
+        r"\bpo[\s_-]*(\d+)\b",
     )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+
+    return ""
+
+
+def _extract_vpc_number(value: str) -> str:
+    """Return the trailing number from common vPC labels."""
+    if not value:
+        return ""
+
+    text = str(value).strip()
+    numeric_match = re.fullmatch(r"\d+", text)
+    if numeric_match:
+        return text
+
+    match = re.search(r"\bvpc[\s_-]*(\d+)\b", text, re.IGNORECASE)
+    return match.group(1) if match else ""
+
+
+def _normalize_port_channel_name(value: Any) -> str:
+    """Return a canonical NetBox port-channel interface name."""
+    suffix = _extract_port_channel_number("" if value is None else str(value))
+    return f"port-channel{suffix}" if suffix else ""
+
+
+def _normalize_vpc_name(value: Any) -> str:
+    """Return a canonical NetBox vPC interface name."""
+    suffix = _extract_vpc_number("" if value is None else str(value))
+    return f"vpc{suffix}" if suffix else ""
+
+
+def _candidate_iface_values(
+    iface: Any, *keys: str, nvpair_values: dict[str, str] | None = None
+) -> list[str]:
+    """Return unique non-empty values for interface candidate keys."""
+    values: list[str] = []
+    seen: set[str] = set()
+    flattened = nvpair_values or {}
+    for key in keys:
+        for value in (_safe_get(iface, key), _nvpair_get_from_flattened(flattened, key)):
+            if value in (None, ""):
+                continue
+            text = str(value).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            values.append(text)
+    return values
+
+
+def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None) -> str:
+    """Return the best-available parent LAG name for an interface item."""
+    candidates = _candidate_iface_values(
+        iface,
+        "portChannelInterfaceDn",
+        "portChannelInterface",
+        "portChannelName",
+        "portChannel",
+        "portChannelId",
+        "channelGroup",
+        "channelGroupId",
+        "aggregateInterface",
+        "aggregateId",
+        "bundleId",
+        "memberOf",
+        "interfaceGroup",
+        nvpair_values=nvpair_values,
+    )
+    for value in candidates:
+        normalized = _normalize_port_channel_name(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _derive_vpc_name(iface: Any, *, nvpair_values: dict[str, str] | None = None) -> str:
+    """Return the best-available vPC interface name for an interface item."""
+    candidates = _candidate_iface_values(
+        iface,
+        "vpcInterface",
+        "vpcInterfaceName",
+        "vpcName",
+        "vpcId",
+        "vpc",
+        "interfaceGroup",
+        nvpair_values=nvpair_values,
+    )
+    for value in candidates:
+        normalized = _normalize_vpc_name(value)
+        if normalized:
+            return normalized
+    name = _derive_interface_name(iface)
+    if name.lower().startswith("vpc"):
+        return _normalize_vpc_name(name)
+    return ""
+
+
+def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
+    """Sort LAGs before dependent interfaces so same-device FK lookups resolve."""
+    name = str(iface.get("name", "") or "").lower()
+    lag_name = str(iface.get("lag_name", "") or "").lower()
+
+    if name.startswith("port-channel"):
+        bucket = 0
+    elif name.startswith("vpc"):
+        bucket = 1
+    elif lag_name:
+        bucket = 2
+    else:
+        bucket = 3
+
+    return (bucket, name)
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +694,7 @@ class NexusDashboardSource(DataSource):
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
 
-    def _fetch_switch_interfaces(self, serial: str, *, switch_ip_address: str = "") -> list[dict]:
+    def _fetch_switch_interfaces(self, serial: str, switch_ip_address: str = "") -> list[dict]:
         """Return a list of normalised interface dicts for the given switch *serial*."""
         try:
             data = self._get(
@@ -600,7 +723,6 @@ class NexusDashboardSource(DataSource):
             and isinstance(data[0], dict)
         ):
             first = data[0]
-            first_nvpair_values = _flatten_nv_pairs(first.get("nvPairs"))
             preview_keys = [
                 "ifName",
                 "name",
@@ -612,29 +734,15 @@ class NexusDashboardSource(DataSource):
                 "adminState",
                 "operStatus",
                 "ipAddress",
+                "portChannelId",
+                "channelGroup",
+                "vpcId",
             ]
             preview = {
                 key: value
                 for key in preview_keys
                 if key in first and (value := first.get(key)) not in (None, "")
             }
-            nv_preview = {
-                key: value
-                for key in (
-                    "ifType",
-                    "adminState",
-                    "operStatus",
-                    "ipAddress",
-                    "speedStr",
-                    "speed",
-                    "ifDescr",
-                    "description",
-                    "macAddress",
-                )
-                if (value := _nvpair_get_from_flattened(first_nvpair_values, key))
-            }
-            if nv_preview:
-                preview["nvPairs"] = nv_preview
             logger.debug(
                 "NDFC first interface payload serial=%s keys=%s preview=%s",
                 serial,
@@ -660,6 +768,7 @@ class NexusDashboardSource(DataSource):
                     name_candidates=name_candidates,
                 )
 
+        interfaces.sort(key=_interface_sort_key)
         _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
         return interfaces
 
@@ -672,7 +781,7 @@ class NexusDashboardSource(DataSource):
         fabric_name = _safe_get(switch, "fabricName", "") or ""
         site_name   = _derive_site_name(switch)
         switch_role = _safe_get(switch, "switchRole", "") or ""
-        ip_address  = _derive_switch_ip_address(switch)
+        ip_address  = _first_non_empty(switch, "mgmtAddress", "primaryIP", "ipAddress")
         raw_ip_address = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
@@ -713,7 +822,7 @@ class NexusDashboardSource(DataSource):
             "systemMode":   system_mode,
         }
 
-    def _enrich_interface(self, iface: dict, *, switch_ip_address: str = "") -> dict:
+    def _enrich_interface(self, iface: dict, switch_ip_address: str = "") -> dict:
         """Return a normalised dict for a single NDFC interface record."""
         nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
 
@@ -728,17 +837,17 @@ class NexusDashboardSource(DataSource):
         description = (
             _safe_get(iface, "ifDescr", "")
             or _safe_get(iface, "description", "")
-            or nv("ifDescr", "description", "desc")
-            or ""
+            or nv("ifDescr", "description", "desc", "portDescription")
         )
         mac_address = _safe_get(iface, "macAddress", "") or nv("macAddress", "mac")
-        ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIP", "ip")
+        ip_address  = _safe_get(iface, "ipAddress", "") or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
         speed_str   = (
             _safe_get(iface, "speedStr", "")
             or _safe_get(iface, "speed", "")
             or nv("speedStr", "speed", "portSpeed", "ethSpeed")
-            or ""
         )
+        lag_name    = _derive_lag_name(iface, nvpair_values=nvpair_values)
+        vpc_name    = _derive_vpc_name(iface, nvpair_values=nvpair_values)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
@@ -749,6 +858,8 @@ class NexusDashboardSource(DataSource):
             "type":        _normalize_iface_type(if_type),
             "enabled":     admin_state.lower() == "up",
             "description": description,
+            "lag_name":    lag_name,
+            "vpc_name":    vpc_name,
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,

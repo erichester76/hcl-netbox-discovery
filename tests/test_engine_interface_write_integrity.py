@@ -608,6 +608,49 @@ class TestInterfaceWriteIntegrity:
         assert ctx.nb.get.call_args_list[1].args[0] == "dcim.interfaces"
         assert ctx.nb.get.call_args_list[1].kwargs == {"name": "mgmt0", "device": 101}
 
+    def test_nested_interface_fk_lookup_can_resolve_same_device_lag_via_parent_scope(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="devices",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[
+                        FieldConfig(name="name", value="source('name')"),
+                        FieldConfig(
+                            name="lag",
+                            type="fk",
+                            resource="dcim.interfaces",
+                            lookup={
+                                "device": "parent_id",
+                                "name": "source('lag_name')",
+                            },
+                        ),
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {
+                "_interfaces": [
+                    {"name": "Ethernet1/1", "lag_name": "port-channel10"},
+                ]
+            }
+        )
+        parent_nb_obj = SimpleNamespace(id=99)
+        ctx.nb.get.return_value = SimpleNamespace(id=500)
+
+        with patch.object(engine, "_upsert", return_value=SimpleNamespace(id=700)) as mock_upsert:
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        ctx.nb.get.assert_called_once_with("dcim.interfaces", device=99, name="port-channel10")
+        payload = mock_upsert.call_args.args[2]
+        assert payload["name"] == "Ethernet1/1"
+        assert payload["lag"] == 500
+        assert payload["device"] == 99
+
     def test_dry_run_created_vm_skips_child_gets_against_preview_parent(self):
         engine = Engine()
         ctx = _make_ctx(
