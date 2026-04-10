@@ -615,6 +615,26 @@ class TestNexusEnrichSwitch:
         result = src._enrich_switch(sw)
         assert result["site_name"] == "Fabric-A"
 
+    def test_raw_ip_address_remains_passthrough_when_management_ip_falls_back(self):
+        src = NexusDashboardSource()
+        sw = {
+            "hostName": "nx-leaf-01",
+            "model": "N9K-C93180YC-EX",
+            "serialNumber": "SAL123",
+            "release": "9.3(7)",
+            "fabricName": "Fabric1",
+            "switchRole": "leaf",
+            "ipAddress": "10.0.0.1",
+            "mgmtAddress": "10.0.0.10",
+            "status": "alive",
+            "systemMode": "Normal",
+        }
+
+        result = src._enrich_switch(sw)
+
+        assert result["ip_address"] == "10.0.0.10"
+        assert result["ipAddress"] == "10.0.0.1"
+
     def test_role_formatted_as_title_case(self):
         src = NexusDashboardSource()
         sw = {

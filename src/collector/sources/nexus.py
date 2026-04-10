@@ -782,6 +782,7 @@ class NexusDashboardSource(DataSource):
         site_name   = _derive_site_name(switch)
         switch_role = _safe_get(switch, "switchRole", "") or ""
         ip_address  = _first_non_empty(switch, "mgmtAddress", "primaryIP", "ipAddress")
+        raw_ip_address = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
 
@@ -814,7 +815,7 @@ class NexusDashboardSource(DataSource):
             "release":      release,
             "fabricName":   fabric_name,
             "switchRole":   switch_role,
-            "ipAddress":    ip_address,
+            "ipAddress":    raw_ip_address,
             "mgmtAddress":  _safe_get(switch, "mgmtAddress", "") or "",
             "primaryIP":    _safe_get(switch, "primaryIP", "") or "",
             "rawStatus":    raw_status,
