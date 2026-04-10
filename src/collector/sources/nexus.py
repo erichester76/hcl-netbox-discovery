@@ -242,23 +242,9 @@ def _debug_missing_lag_name(serial: str, raw_iface: Any, normalized_iface: dict)
         return
 
     nvpair_values = _flatten_nv_pairs(_safe_get(raw_iface, "nvPairs"))
-    lag_candidate_keys = (
-        "portChannelInterfaceDn",
-        "portChannelInterface",
-        "portChannelName",
-        "portChannel",
-        "portChannelId",
-        "channelGroup",
-        "channelGroupId",
-        "aggregateInterface",
-        "aggregateId",
-        "bundleId",
-        "memberOf",
-        "interfaceGroup",
-    )
     lag_candidates = {
         key: value
-        for key in lag_candidate_keys
+        for key in _LAG_CANDIDATE_KEYS
         if (value := _nvpair_get_from_flattened(nvpair_values, key))
     }
 
@@ -430,6 +416,22 @@ def _normalize_vpc_name(value: Any) -> str:
     return f"vpc{suffix}" if suffix else ""
 
 
+_LAG_CANDIDATE_KEYS: tuple[str, ...] = (
+    "portChannelInterfaceDn",
+    "portChannelInterface",
+    "portChannelName",
+    "portChannel",
+    "portChannelId",
+    "channelGroup",
+    "channelGroupId",
+    "aggregateInterface",
+    "aggregateId",
+    "bundleId",
+    "memberOf",
+    "interfaceGroup",
+)
+
+
 def _candidate_iface_values(
     iface: Any, *keys: str, nvpair_values: dict[str, str] | None = None
 ) -> list[str]:
@@ -453,18 +455,7 @@ def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     """Return the best-available parent LAG name for an interface item."""
     candidates = _candidate_iface_values(
         iface,
-        "portChannelInterfaceDn",
-        "portChannelInterface",
-        "portChannelName",
-        "portChannel",
-        "portChannelId",
-        "channelGroup",
-        "channelGroupId",
-        "aggregateInterface",
-        "aggregateId",
-        "bundleId",
-        "memberOf",
-        "interfaceGroup",
+        *_LAG_CANDIDATE_KEYS,
         nvpair_values=nvpair_values,
     )
     for value in candidates:
