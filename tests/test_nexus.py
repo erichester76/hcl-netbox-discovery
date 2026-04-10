@@ -13,6 +13,7 @@ import pytest
 from collector.sources.nexus import (
     NexusDashboardSource,
     _derive_interface_name_details,
+    _flatten_interface_payload,
     _normalize_iface_type,
     _normalize_model,
     _parse_speed_mbps,
@@ -90,6 +91,39 @@ class TestDeriveInterfaceNameDetails:
         assert candidates["ifName"] == ""
         assert candidates["interfaceName"] == "Ethernet1/10"
         assert candidates["portName"] == "Ethernet1/11"
+
+
+class TestFlattenInterfacePayload:
+    def test_flattens_wrapped_interface_dicts(self):
+        payload = [
+            {
+                "interfaces": {
+                    "ifName": "Ethernet1/1",
+                    "ifType": "INTERFACE_ETHERNET",
+                },
+                "policy": "default",
+            }
+        ]
+
+        assert _flatten_interface_payload(payload) == [
+            {"ifName": "Ethernet1/1", "ifType": "INTERFACE_ETHERNET"}
+        ]
+
+    def test_flattens_wrapped_interface_lists(self):
+        payload = [
+            {
+                "interfaces": [
+                    {"ifName": "Ethernet1/1"},
+                    {"ifName": "Ethernet1/2"},
+                ],
+                "policy": "default",
+            }
+        ]
+
+        assert _flatten_interface_payload(payload) == [
+            {"ifName": "Ethernet1/1"},
+            {"ifName": "Ethernet1/2"},
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +394,49 @@ class TestNexusGetObjects:
         assert iface["enabled"] is True
         assert iface["mac_address"] == "00:1B:44:11:3A:B7"
         assert iface["speed"] == 10000
+
+    def test_get_switches_with_wrapped_interfaces_fetched(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = [
+            {
+                "interfaces": {
+                    "ifName": "mgmt0",
+                    "ifType": "INTERFACE_MANAGEMENT",
+                    "adminState": "up",
+                    "operStatus": "up",
+                    "ifDescr": "management",
+                    "ipAddress": "10.0.0.4/24",
+                },
+                "policy": "default",
+            }
+        ]
+
+        src._session.get.side_effect = [switch_resp, iface_resp]
+
+        result = src.get_objects("switches")
+
+        assert result[0]["interfaces"][0]["name"] == "mgmt0"
+        assert result[0]["interfaces"][0]["mgmt_only"] is True
 
     def test_get_switches_interface_fetch_error_returns_empty(self):
         src = self._connected_source()
