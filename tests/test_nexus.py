@@ -14,6 +14,7 @@ from collector.sources.nexus import (
     NexusDashboardSource,
     _derive_interface_name_details,
     _flatten_interface_payload,
+    _infer_iface_type_from_speed,
     _is_interface_enabled,
     _normalize_iface_type,
     _normalize_model,
@@ -57,26 +58,44 @@ class TestNormalizeModel:
 
 class TestNormalizeIfaceType:
     @pytest.mark.parametrize(
-        "raw_type, if_name, expected",
+        "raw_type, if_name, speed_mbps, expected",
         [
-            ("INTERFACE_ETHERNET",     "",                "1000base-t"),
-            ("INTERFACE_MANAGEMENT",   "",                "1000base-t"),
-            ("INTERFACE_PORT_CHANNEL", "",                "lag"),
-            ("INTERFACE_LOOPBACK",     "",                "virtual"),
-            ("INTERFACE_VLAN",         "",                "virtual"),
-            ("INTERFACE_NVE",          "",                "virtual"),
-            ("eth",                    "",                "1000base-t"),
-            ("port-channel",           "",                "lag"),
-            ("loopback",               "",                "virtual"),
-            ("UNKNOWN_TYPE",           "Ethernet1/1",     "1000base-t"),
-            ("",                       "port-channel10",  "lag"),
-            ("",                       "loopback0",       "virtual"),
-            ("",                       "vpc101",          "virtual"),
-            ("",                       "",                "other"),
+            ("INTERFACE_ETHERNET",     "",                None,    "1000base-t"),
+            ("INTERFACE_ETHERNET",     "Ethernet1/1",     100000,  "100gbase-x-qsfp28"),
+            ("INTERFACE_ETHERNET",     "Ethernet1/1",     40000,   "40gbase-x-qsfpp"),
+            ("INTERFACE_ETHERNET",     "Ethernet1/1",     25000,   "25gbase-x-sfp28"),
+            ("INTERFACE_MANAGEMENT",   "",                None,    "1000base-t"),
+            ("INTERFACE_PORT_CHANNEL", "",                None,    "lag"),
+            ("INTERFACE_LOOPBACK",     "",                None,    "virtual"),
+            ("INTERFACE_VLAN",         "",                None,    "virtual"),
+            ("INTERFACE_NVE",          "",                None,    "virtual"),
+            ("eth",                    "",                None,    "1000base-t"),
+            ("port-channel",           "",                None,    "lag"),
+            ("loopback",               "",                None,    "virtual"),
+            ("UNKNOWN_TYPE",           "Ethernet1/1",     None,    "1000base-t"),
+            ("",                       "port-channel10",  None,    "lag"),
+            ("",                       "loopback0",       None,    "virtual"),
+            ("",                       "vpc101",          None,    "virtual"),
+            ("",                       "",                None,    "other"),
         ],
     )
-    def test_normalize_iface_type(self, raw_type, if_name, expected):
-        assert _normalize_iface_type(raw_type, if_name) == expected
+    def test_normalize_iface_type(self, raw_type, if_name, speed_mbps, expected):
+        assert _normalize_iface_type(raw_type, if_name, speed_mbps) == expected
+
+    @pytest.mark.parametrize(
+        ("speed_mbps", "expected"),
+        [
+            (100000, "100gbase-x-qsfp28"),
+            (40000, "40gbase-x-qsfpp"),
+            (25000, "25gbase-x-sfp28"),
+            (10000, "10gbase-x-sfpp"),
+            (1000, "1000base-t"),
+            (100, "100base-tx"),
+            (None, "other"),
+        ],
+    )
+    def test_infer_iface_type_from_speed(self, speed_mbps, expected):
+        assert _infer_iface_type_from_speed(speed_mbps) == expected
 
 
 class TestNormalizeEnabled:
@@ -446,7 +465,7 @@ class TestNexusGetObjects:
         assert "interfaces" in result[0]
         iface = result[0]["interfaces"][0]
         assert iface["name"] == "Ethernet1/1"
-        assert iface["type"] == "1000base-t"
+        assert iface["type"] == "10gbase-x-sfpp"
         assert iface["enabled"] is True
         assert iface["mac_address"] == "00:1B:44:11:3A:B7"
         assert iface["speed"] == 10000
@@ -745,7 +764,7 @@ class TestNexusEnrichInterface:
         }
         result = src._enrich_interface(iface)
         assert result["name"] == "Ethernet1/1"
-        assert result["type"] == "1000base-t"
+        assert result["type"] == "25gbase-x-sfp28"
         assert result["enabled"] is True
         assert result["description"] == "to-spine-01"
         assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
@@ -845,6 +864,23 @@ class TestNexusEnrichInterface:
         assert result["lag_name"] == "port-channel15"
         assert result["vpc_name"] == "vpc101"
 
+    def test_interface_speed_can_use_extended_nvpair_keys(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/1",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminStatus": "ADMIN_STATE_UP",
+                "ifSpeed": "100000000000",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["speed"] == 100000
+        assert result["type"] == "100gbase-x-qsfp28"
+        assert result["enabled"] is True
+
     def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
         src = NexusDashboardSource()
         iface = {
@@ -935,7 +971,7 @@ class TestNexusEnrichInterface:
         }
         result = src._enrich_interface(iface)
         assert result["name"] == expected_name
-        assert result["type"] == "1000base-t"
+        assert result["type"] == "10gbase-x-sfpp"
         assert result["enabled"] is True
 
     def test_admin_down_interface_not_enabled(self):

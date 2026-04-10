@@ -226,6 +226,40 @@ def _debug_interface_fetch_summary(
     )
 
 
+def _debug_missing_lag_name(serial: str, raw_iface: Any, normalized_iface: dict) -> None:
+    """Emit targeted DEBUG logs when a likely member interface has no lag_name."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    if not isinstance(raw_iface, dict):
+        return
+
+    name = str(normalized_iface.get("name", "") or "")
+    if not name or normalized_iface.get("lag_name"):
+        return
+
+    lowered = name.lower()
+    if lowered.startswith(("port-channel", "vpc", "loopback", "vlan", "nve", "mgmt")):
+        return
+
+    nvpair_values = _flatten_nv_pairs(_safe_get(raw_iface, "nvPairs"))
+    lag_candidates = {
+        key: value
+        for key in _LAG_CANDIDATE_KEYS
+        if (value := _nvpair_get_from_flattened(nvpair_values, key))
+    }
+
+    logger.debug(
+        "NDFC interface missing lag_name serial=%s name=%r ifType=%r description=%r "
+        "nvpair_keys=%s lag_candidates=%s",
+        serial,
+        name,
+        normalized_iface.get("ifType", ""),
+        normalized_iface.get("description", ""),
+        sorted(nvpair_values.keys()),
+        lag_candidates,
+    )
+
+
 def _flatten_interface_payload(payload: Any) -> list[dict]:
     """Return flat interface records from mixed NDFC wrapper payloads."""
     if isinstance(payload, list):
@@ -382,6 +416,22 @@ def _normalize_vpc_name(value: Any) -> str:
     return f"vpc{suffix}" if suffix else ""
 
 
+_LAG_CANDIDATE_KEYS: tuple[str, ...] = (
+    "portChannelInterfaceDn",
+    "portChannelInterface",
+    "portChannelName",
+    "portChannel",
+    "portChannelId",
+    "channelGroup",
+    "channelGroupId",
+    "aggregateInterface",
+    "aggregateId",
+    "bundleId",
+    "memberOf",
+    "interfaceGroup",
+)
+
+
 def _candidate_iface_values(
     iface: Any, *keys: str, nvpair_values: dict[str, str] | None = None
 ) -> list[str]:
@@ -405,18 +455,7 @@ def _derive_lag_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     """Return the best-available parent LAG name for an interface item."""
     candidates = _candidate_iface_values(
         iface,
-        "portChannelInterfaceDn",
-        "portChannelInterface",
-        "portChannelName",
-        "portChannel",
-        "portChannelId",
-        "channelGroup",
-        "channelGroupId",
-        "aggregateInterface",
-        "aggregateId",
-        "bundleId",
-        "memberOf",
-        "interfaceGroup",
+        *_LAG_CANDIDATE_KEYS,
         nvpair_values=nvpair_values,
     )
     for value in candidates:
@@ -488,6 +527,27 @@ _IFACE_TYPE_MAP: dict[str, str] = {
 }
 
 
+def _infer_iface_type_from_speed(speed_mbps: int | None) -> str:
+    """Return a best-effort physical interface type slug from speed in Mbps."""
+    if not speed_mbps:
+        return "other"
+    if speed_mbps >= 400000:
+        return "400gbase-x-qsfpdd"
+    if speed_mbps >= 100000:
+        return "100gbase-x-qsfp28"
+    if speed_mbps >= 40000:
+        return "40gbase-x-qsfpp"
+    if speed_mbps >= 25000:
+        return "25gbase-x-sfp28"
+    if speed_mbps >= 10000:
+        return "10gbase-x-sfpp"
+    if speed_mbps >= 1000:
+        return "1000base-t"
+    if speed_mbps >= 100:
+        return "100base-tx"
+    return "other"
+
+
 def _infer_iface_type_from_name(if_name: str) -> str:
     """Return a best-effort NetBox interface type slug from *if_name*."""
     name = str(if_name or "").strip().lower()
@@ -503,11 +563,22 @@ def _infer_iface_type_from_name(if_name: str) -> str:
     return "other"
 
 
-def _normalize_iface_type(raw_type: str, if_name: str = "") -> str:
+def _normalize_iface_type(raw_type: str, if_name: str = "", speed_mbps: int | None = None) -> str:
     """Return a NetBox-compatible interface type slug for *raw_type*."""
+    normalized_raw_type = str(raw_type or "").strip()
+    lower_raw_type = normalized_raw_type.lower()
+
+    if lower_raw_type in {"interface_ethernet", "eth", "ethernet"}:
+        inferred_from_speed = _infer_iface_type_from_speed(speed_mbps)
+        if inferred_from_speed != "other":
+            return inferred_from_speed
+
     if not raw_type:
+        inferred_from_speed = _infer_iface_type_from_speed(speed_mbps)
+        if inferred_from_speed != "other":
+            return inferred_from_speed
         return _infer_iface_type_from_name(if_name)
-    return _IFACE_TYPE_MAP.get(raw_type, _infer_iface_type_from_name(if_name))
+    return _IFACE_TYPE_MAP.get(normalized_raw_type, _infer_iface_type_from_name(if_name))
 
 
 def _is_interface_enabled(admin_state: str, oper_status: str = "") -> bool:
@@ -806,6 +877,7 @@ class NexusDashboardSource(DataSource):
                     name_source=name_source,
                     name_candidates=name_candidates,
                 )
+                _debug_missing_lag_name(serial, iface, enriched)
 
         interfaces.sort(key=_interface_sort_key)
         _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
@@ -883,8 +955,22 @@ class NexusDashboardSource(DataSource):
         speed_str   = (
             _safe_get(iface, "speedStr", "")
             or _safe_get(iface, "speed", "")
-            or nv("speedStr", "speed", "portSpeed", "ethSpeed")
+            or nv(
+                "speedStr",
+                "speed",
+                "portSpeed",
+                "ethSpeed",
+                "adminSpeed",
+                "operSpeed",
+                "ifSpeed",
+                "interfaceSpeed",
+                "speedValue",
+                "linkSpeed",
+                "bandwidth",
+                "bw",
+            )
         )
+        speed_mbps  = _parse_speed_mbps(speed_str)
         lag_name    = _derive_lag_name(iface, nvpair_values=nvpair_values)
         vpc_name    = _derive_vpc_name(iface, nvpair_values=nvpair_values)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
@@ -894,7 +980,7 @@ class NexusDashboardSource(DataSource):
         return {
             # --- normalised convenience fields ---
             "name":        name,
-            "type":        _normalize_iface_type(if_type, name),
+            "type":        _normalize_iface_type(if_type, name, speed_mbps),
             "enabled":     _is_interface_enabled(admin_state, oper_status),
             "description": description,
             "lag_name":    lag_name,
@@ -902,7 +988,7 @@ class NexusDashboardSource(DataSource):
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
-            "speed":       _parse_speed_mbps(speed_str),
+            "speed":       speed_mbps,
             # --- passthrough raw fields ---
             "ifName":      if_name,
             "ifType":      if_type,
