@@ -552,7 +552,7 @@ field "lag" {
   type     = "fk"
   resource = "dcim.interfaces"
   lookup   = {
-    device = "parent.id"
+    device = "parent_id"
     name   = "source('lag_name')"
   }
 }
