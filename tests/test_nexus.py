@@ -623,32 +623,44 @@ class TestNexusGetObjects:
         dashboard_iface_resp.json.return_value = {
             "serialNumber": "SAL0002222",
             "adminStatus": "up",
-            "logicalInterfaces": [
-                {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
-            ],
+            "logicalInterfaces": {
+                "Ethernet": [
+                    {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
+                ],
+            },
         }
 
         dashboard_module_resp = MagicMock()
         dashboard_module_resp.raise_for_status = MagicMock()
         dashboard_module_resp.json.return_value = {
-            "moduleInfo": [
-                {"moduleName": "PSU1", "moduleType": "Power Supply"}
-            ],
-            "fexDetails": [
-                {"moduleName": "FEX101", "model": "N2K-C2348TQ"}
-            ],
+            "moduleInfo": {
+                "ok": [
+                    {"moduleName": "PSU1", "moduleType": "Power Supply"}
+                ],
+            },
+            "fexDetails": {
+                "attached": [
+                    {"moduleName": "FEX101", "model": "N2K-C2348TQ"}
+                ],
+            },
         }
 
         src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
 
         with caplog.at_level(logging.DEBUG, logger="collector.sources.nexus"):
-            src.get_objects("switches")
+            result = src.get_objects("switches")
 
         assert "NDFC dashboard switch/interface switch_id=22530" in caplog.text
-        assert "logicalInterfaces count=1" in caplog.text
+        assert "logicalInterfaces dict keys=['Ethernet'] flattened_count=1" in caplog.text
         assert "NDFC dashboard switch/module switch_id=22530" in caplog.text
-        assert "moduleInfo count=1" in caplog.text
-        assert "fexDetails count=1" in caplog.text
+        assert "moduleInfo dict keys=['ok'] flattened_count=1" in caplog.text
+        assert "fexDetails dict keys=['attached'] flattened_count=1" in caplog.text
+        assert result[0]["dashboard_logical_interfaces"][0]["ifName"] == "Ethernet1/1"
+        assert result[0]["dashboard_logical_interfaces"][0]["dashboard_group"] == "logicalInterfaces/Ethernet"
+        assert result[0]["dashboard_module_info"][0]["moduleName"] == "PSU1"
+        assert result[0]["dashboard_module_info"][0]["dashboard_group"] == "moduleInfo/ok"
+        assert result[0]["dashboard_fex_details"][0]["moduleName"] == "FEX101"
+        assert result[0]["dashboard_fex_details"][0]["dashboard_group"] == "fexDetails/attached"
 
     def test_get_switches_suppresses_duplicate_interface_ips_across_switches(self):
         src = self._connected_source()
@@ -1151,6 +1163,27 @@ class TestNexusEnrichInterface:
         }
 
         result = src._enrich_interface(iface)
+
+        assert result["speed"] == 100000
+        assert result["type"] == "100gbase-x-qsfp28"
+        assert result["enabled"] is True
+
+    def test_interface_speed_can_use_dashboard_record_when_legacy_speed_is_auto(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/3",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminState": "up",
+                "speed": "Auto",
+            },
+        }
+        dashboard_iface = {
+            "ifName": "Ethernet1/3",
+            "adminSpeed": "100000000000",
+        }
+
+        result = src._enrich_interface(iface, dashboard_iface=dashboard_iface)
 
         assert result["speed"] == 100000
         assert result["type"] == "100gbase-x-qsfp28"
