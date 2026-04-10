@@ -543,6 +543,21 @@ Cast a value to string or integer.
 
 Reference a resolved prerequisite by name. Use dot notation to access attributes of multi-value prerequisites (e.g., `prereq("placement.site_id")`).
 
+### `parent` / `parent_id`
+
+Inside nested blocks such as `interface {}`, `ip_address {}`, `inventory_item {}`, and `module {}`, the current NetBox parent object is exposed as `parent` and its numeric ID as `parent_id`. This is useful for sibling lookups, for example resolving an interface LAG on the same device:
+
+```hcl
+field "lag" {
+  type     = "fk"
+  resource = "dcim.interfaces"
+  lookup   = {
+    device = "parent.id"
+    name   = "source('lag_name')"
+  }
+}
+```
+
 ### `collector.flag_name`
 
 Reference a boolean flag from the `collector {}` block (e.g., `collector.sync_interfaces`).

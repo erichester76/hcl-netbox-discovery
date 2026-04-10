@@ -353,6 +353,10 @@ class Resolver:
         }
         col_attrs.update(opts.extra_flags)
         collector_ns = types.SimpleNamespace(**col_attrs)
+        parent_obj = ctx.parent_nb_obj
+        parent_id = getattr(parent_obj, "id", None)
+        if parent_id is None and isinstance(parent_obj, dict):
+            parent_id = parent_obj.get("id")
 
         return {
             # Helpers
@@ -378,6 +382,8 @@ class Resolver:
             "float": float_val,
             "prereq": prereq,
             "collector": collector_ns,
+            "parent": parent_obj,
+            "parent_id": parent_id,
             # Attribute access helper (safe: only reads attributes, no side-effects)
             "getattr": getattr,
             # Safe literals

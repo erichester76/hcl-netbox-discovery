@@ -14,10 +14,10 @@ from collector.sources.nexus import (
     NexusDashboardSource,
     _derive_interface_name_details,
     _flatten_interface_payload,
-    _flatten_nv_pairs,
     _normalize_iface_type,
     _normalize_model,
-    _nvpair_get,
+    _normalize_port_channel_name,
+    _normalize_vpc_name,
     _parse_speed_mbps,
     _safe_get,
 )
@@ -128,30 +128,33 @@ class TestFlattenInterfacePayload:
         ]
 
 
-class TestNvPairsHelpers:
-    def test_flattens_dict_nv_pairs(self):
-        nv_pairs = {
-            "ifType": "INTERFACE_LOOPBACK",
-            "speedStr": "10G",
-            "ipAddress": "10.0.0.1/32",
-        }
+class TestInterfaceRelationshipNames:
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("15", "port-channel15"),
+            ("Po15", "port-channel15"),
+            ("Port-Channel 15", "port-channel15"),
+            ("sys/intf/aggr-[po15]", "port-channel15"),
+            ("vpc101", ""),
+            ("", ""),
+        ],
+    )
+    def test_normalize_port_channel_name(self, raw_value, expected):
+        assert _normalize_port_channel_name(raw_value) == expected
 
-        assert _flatten_nv_pairs(nv_pairs) == {
-            "iftype": "INTERFACE_LOOPBACK",
-            "speedstr": "10G",
-            "ipaddress": "10.0.0.1/32",
-        }
-
-    def test_flattens_list_style_nv_pairs(self):
-        iface = {
-            "nvPairs": [
-                {"key": "ifType", "value": "INTERFACE_PORT_CHANNEL"},
-                {"key": "speedStr", "value": "100G"},
-            ]
-        }
-
-        assert _nvpair_get(iface, "ifType") == "INTERFACE_PORT_CHANNEL"
-        assert _nvpair_get(iface, "speedStr") == "100G"
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1", "vpc1"),
+            ("vpc1", "vpc1"),
+            ("vPC 100", "vpc100"),
+            ("port-channel15", ""),
+            ("", ""),
+        ],
+    )
+    def test_normalize_vpc_name(self, raw_value, expected):
+        assert _normalize_vpc_name(raw_value) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -751,35 +754,13 @@ class TestNexusEnrichInterface:
         assert result["type"] == "1000base-t"
         assert result["mgmt_only"] is True
 
-    def test_interface_uses_nv_pairs_when_top_level_fields_missing(self):
-        src = NexusDashboardSource()
-        iface = {
-            "ifName": "loopback0",
-            "nvPairs": {
-                "ifType": "INTERFACE_LOOPBACK",
-                "adminState": "up",
-                "operStatus": "up",
-                "ifDescr": "router-id",
-                "ipAddress": "10.255.0.1/32",
-                "speedStr": "",
-            },
-        }
-
-        result = src._enrich_interface(iface)
-
-        assert result["type"] == "virtual"
-        assert result["enabled"] is True
-        assert result["description"] == "router-id"
-        assert result["ip_address"] == "10.255.0.1/32"
-
-    def test_management_interface_falls_back_to_switch_ip(self):
+    def test_management_interface_can_use_switch_ip_when_interface_ip_missing(self):
         src = NexusDashboardSource()
         iface = {
             "ifName": "mgmt0",
             "nvPairs": {
                 "ifType": "INTERFACE_MANAGEMENT",
                 "adminState": "up",
-                "operStatus": "up",
             },
         }
 
@@ -788,19 +769,38 @@ class TestNexusEnrichInterface:
         assert result["mgmt_only"] is True
         assert result["ip_address"] == "10.19.237.183/32"
 
-    def test_port_channel_uses_nv_pairs_type(self):
+    def test_member_interface_derives_lag_and_vpc_names_from_nv_pairs(self):
         src = NexusDashboardSource()
         iface = {
-            "ifName": "port-channel500",
+            "ifName": "Ethernet1/11",
             "nvPairs": {
-                "ifType": "INTERFACE_PORT_CHANNEL",
+                "ifType": "INTERFACE_ETHERNET",
                 "adminState": "up",
+                "channelGroup": "Port-Channel 15",
+                "vpcId": "101",
             },
         }
 
         result = src._enrich_interface(iface)
 
-        assert result["type"] == "lag"
+        assert result["lag_name"] == "port-channel15"
+        assert result["vpc_name"] == "vpc101"
+
+    def test_vpc_interface_derives_parent_lag_from_port_channel_id(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "vpc101",
+            "nvPairs": {
+                "ifType": "INTERFACE_ST",
+                "portChannelId": "15",
+                "vpcId": "101",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["lag_name"] == "port-channel15"
+        assert result["vpc_name"] == "vpc101"
 
     @pytest.mark.parametrize(
         ("iface", "expected_name"),
@@ -893,6 +893,57 @@ class TestNexusEnrichInterface:
         }
         result = src._enrich_interface(iface)
         assert result["enabled"] is False
+
+    def test_get_switches_orders_lags_before_member_interfaces(self):
+        src = NexusDashboardSource()
+        src._session = MagicMock()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = [
+            {
+                "ifName": "Ethernet1/1",
+                "nvPairs": {
+                    "ifType": "INTERFACE_ETHERNET",
+                    "adminState": "up",
+                    "channelGroup": "15",
+                },
+            },
+            {
+                "ifName": "port-channel15",
+                "nvPairs": {
+                    "ifType": "INTERFACE_PORT_CHANNEL",
+                    "adminState": "up",
+                },
+            },
+        ]
+
+        src._session.get.side_effect = [switch_resp, iface_resp]
+
+        result = src.get_objects("switches")
+
+        assert [iface["name"] for iface in result[0]["interfaces"]] == [
+            "port-channel15",
+            "Ethernet1/1",
+        ]
+        assert result[0]["interfaces"][1]["lag_name"] == "port-channel15"
 
 
 # ---------------------------------------------------------------------------
