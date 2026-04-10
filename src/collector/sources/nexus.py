@@ -142,6 +142,19 @@ def _derive_site_name(switch: Any) -> str:
     )
 
 
+def _derive_interface_name(iface: Any) -> str:
+    """Return the best-available interface name from common NDFC fields."""
+    return _first_non_empty(
+        iface,
+        "ifName",
+        "name",
+        "interfaceName",
+        "portName",
+        "displayName",
+        "shortName",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Interface type mapping (NDFC → NetBox)
 # ---------------------------------------------------------------------------
@@ -392,6 +405,36 @@ class NexusDashboardSource(DataSource):
             else:
                 data = []
 
+        if (
+            logger.isEnabledFor(logging.DEBUG)
+            and data
+            and isinstance(data[0], dict)
+        ):
+            first = data[0]
+            preview_keys = [
+                "ifName",
+                "name",
+                "interfaceName",
+                "portName",
+                "displayName",
+                "shortName",
+                "ifType",
+                "adminState",
+                "operStatus",
+                "ipAddress",
+            ]
+            preview = {
+                key: value
+                for key in preview_keys
+                if key in first and (value := first.get(key)) not in (None, "")
+            }
+            logger.debug(
+                "NDFC first interface payload serial=%s keys=%s preview=%s",
+                serial,
+                sorted(first.keys()),
+                preview,
+            )
+
         return [self._enrich_interface(iface) for iface in data if isinstance(iface, dict)]
 
     def _enrich_switch(self, switch: Any) -> dict:
@@ -444,6 +487,7 @@ class NexusDashboardSource(DataSource):
     def _enrich_interface(self, iface: dict) -> dict:
         """Return a normalised dict for a single NDFC interface record."""
         if_name     = _safe_get(iface, "ifName", "") or ""
+        name        = _derive_interface_name(iface)
         if_type     = _safe_get(iface, "ifType", "") or ""
         admin_state = _safe_get(iface, "adminState", "") or ""
         oper_status = _safe_get(iface, "operStatus", "") or ""
@@ -451,11 +495,11 @@ class NexusDashboardSource(DataSource):
         mac_address = _safe_get(iface, "macAddress", "") or ""
         ip_address  = _safe_get(iface, "ipAddress", "") or ""
         speed_str   = _safe_get(iface, "speedStr", "") or _safe_get(iface, "speed", "") or ""
-        mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or if_name.lower().startswith("mgmt")
+        mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
 
         return {
             # --- normalised convenience fields ---
-            "name":        if_name,
+            "name":        name,
             "type":        _normalize_iface_type(if_type),
             "enabled":     admin_state.lower() == "up",
             "description": description,
