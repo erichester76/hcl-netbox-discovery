@@ -493,6 +493,9 @@ def _flatten_dashboard_grouped_records(
         if not isinstance(value, dict):
             return []
 
+        if not value:
+            return []
+
         has_nested = any(isinstance(item, (dict, list)) for item in value.values())
         looks_like_record = any(key in value for key in _DASHBOARD_RECORD_HINT_KEYS)
         if looks_like_record or not has_nested:
@@ -852,7 +855,6 @@ def _debug_unparsed_speed(
 def _derive_interface_speed_string(iface: Any, nvpair_values: dict[str, str]) -> str:
     """Return the first parseable speed string, skipping placeholder values like ``Auto``."""
     candidates = [
-        _safe_get(iface, "speedStr", ""),
         *(_safe_get(iface, key, "") for key in _SPEED_CANDIDATE_KEYS),
         *(_nvpair_get_from_flattened(nvpair_values, key) for key in _SPEED_CANDIDATE_KEYS),
     ]
