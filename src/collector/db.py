@@ -297,6 +297,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "NetBox branch name for branch-aware deployments; leave empty for default branch",
         "NetBox",
     ),
+    (
+        "NETBOX_USE_CUSTOM_OBJECTS",
+        "false",
+        'Set to "true" when mappings should target NetBox Custom Objects instead of custom-field fallbacks',
+        "NetBox",
+    ),
     # --- NetBox Source ---
     (
         "SOURCE_NETBOX_URL",

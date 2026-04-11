@@ -516,12 +516,14 @@ def test_init_db_backfills_plaintext_sensitive_overrides(monkeypatch):
 
 
 def test_runtime_settings_are_seeded():
+    netbox_settings = {row["key"]: row for row in get_settings_by_group()["NetBox"]}
     catc_settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
     ndfc_settings = {
         row["key"]: row for row in get_settings_by_group()["Cisco Nexus Dashboard Fabric Controller"]
     }
     collector_settings = {row["key"]: row for row in get_settings_by_group()["Per-source sync flags"]}
 
+    assert netbox_settings["NETBOX_USE_CUSTOM_OBJECTS"]["default_value"] == "false"
     assert catc_settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
     assert catc_settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
     assert ndfc_settings["NDFC_FETCH_INTERFACES"]["default_value"] == "false"
