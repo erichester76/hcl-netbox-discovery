@@ -38,6 +38,14 @@ def test_nexus_modules_example_mapping_defines_module_blocks(monkeypatch):
         == "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
     )
 
+    fan = modules_by_profile["Fan"]
+    fan_fields = {field.name: field.value for field in fan.fields}
+    assert fan_fields["description"] == "source('description')"
+    assert (
+        fan_fields["status"]
+        == "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    )
+
     transceiver = modules_by_profile["Transceiver"]
     assert transceiver.dedupe_by == "source('serial') or source('bay_name') or source('model')"
     transceiver_fields = {field.name: field.value for field in transceiver.fields}

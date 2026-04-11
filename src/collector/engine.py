@@ -2542,7 +2542,18 @@ class Engine:
                 module_instance_fields = {
                     key: value
                     for key, value in raw_payload.items()
-                    if key not in {"bay_name", "name", "position", "model", "serial", "manufacturer"}
+                    if key not in {
+                        "id",
+                        "device",
+                        "module_bay",
+                        "module_type",
+                        "bay_name",
+                        "name",
+                        "position",
+                        "model",
+                        "serial",
+                        "manufacturer",
+                    }
                 }
                 module_payload: dict[str, Any] = {
                     "device": parent_id,
@@ -2559,6 +2570,7 @@ class Engine:
                     "dcim.modules",
                     module_payload,
                     ["device", "module_bay"],
+                    field_configs=mod_cfg.fields,
                 )
 
                 # 6. Create power input port if configured
