@@ -546,7 +546,7 @@ class TestNexusGetObjects:
         assert iface["type"] == "100gbase-x-qsfp28"
         assert iface["enabled"] is True
         assert iface["mac_address"] == "00:1B:44:11:3A:B7"
-        assert iface["speed"] == 100000
+        assert iface["speed"] == 100000000
         assert iface["ip_address"] == "10.127.117.32/24"
         assert iface["lag_name"] == "port-channel500"
 
@@ -919,7 +919,7 @@ class TestNexusGetObjects:
 
         interfaces = {iface["name"]: iface for iface in result[0]["interfaces"]}
         assert interfaces["Ethernet1/10"]["type"] == "25gbase-x-sfp28"
-        assert interfaces["Ethernet1/10"]["speed"] == 25000
+        assert interfaces["Ethernet1/10"]["speed"] == 25000000
         assert interfaces["Ethernet1/10"]["ip_address"] == "10.10.10.1/31"
         assert interfaces["Ethernet1/10"]["lag_name"] == "port-channel7"
         assert interfaces["loopback100"]["type"] == "virtual"
@@ -1493,7 +1493,7 @@ class TestNexusEnrichInterface:
         assert result["enabled"] is True
         assert result["description"] == "to-spine-01"
         assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
-        assert result["speed"] == 25000
+        assert result["speed"] == 25000000
 
     def test_port_channel_interface(self):
         src = NexusDashboardSource()
@@ -1677,7 +1677,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
@@ -1695,7 +1695,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "40gbase-x-qsfpp"
         assert result["enabled"] is True
 
@@ -1713,7 +1713,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
@@ -1742,10 +1742,57 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
         assert result["lag_name"] == "port-channel500"
+
+    def test_interface_enrichment_tracks_kbps_mtu_mode_and_vlan_membership(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/13",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/13",
+            "interfaceType": "ethernet",
+            "physicalInterface": True,
+            "speed": "100Gb",
+            "allowedVlans": "100,103,200-201",
+            "nativeVlanId": 100,
+            "operMode": "trunk",
+            "mtu": 1500,
+            "macAddress": "aa:bb:cc:dd:ee:ff",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/13",
+            "configData": {
+                "mode": "access",
+                "networkOS": {
+                    "policy": {
+                        "accessVlan": 100,
+                    }
+                },
+            },
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+                "mtu": 9216,
+                "speed": "100Gb",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["speed"] == 100000000
+        assert result["mtu"] == 9216
+        assert result["mode"] == "access"
+        assert result["untagged_vlan_vid"] == 100
+        assert result["tagged_vlan_vids"] == [103, 200, 201]
+        assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
 
     def test_interface_detail_state_overrides_legacy_and_analyze_state(self):
         src = NexusDashboardSource()
@@ -1772,6 +1819,42 @@ class TestNexusEnrichInterface:
 
         assert result["enabled"] is True
 
+    def test_interface_vlan_enrichment_skips_tagged_all_and_invalid_vids(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/14",
+            "ifType": "INTERFACE_ETHERNET",
+            "adminState": "up",
+            "operStatus": "up",
+            "allowedVlans": "1-4094",
+            "nativeVlanId": 4095,
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/14",
+            "operMode": "tagged-all",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/14",
+            "configData": {
+                "mode": "tagged-all",
+                "networkOS": {
+                    "policy": {
+                        "accessVlan": 0,
+                    }
+                },
+            },
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["mode"] == "tagged-all"
+        assert result["untagged_vlan_vid"] is None
+        assert result["tagged_vlan_vids"] == []
+
     def test_detail_and_analyze_speed_override_auto_placeholders(self):
         src = NexusDashboardSource()
         iface = {
@@ -1797,7 +1880,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
 
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
@@ -1814,7 +1897,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "lag"
 
     def test_interface_bandwidth_is_not_parsed_as_generic_speed_string(self):
@@ -1829,7 +1912,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "lag"
 
     def test_vpc_interface_does_not_emit_parent_lag_from_port_channel_id(self):
@@ -1878,7 +1961,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
 
     @pytest.mark.parametrize(
