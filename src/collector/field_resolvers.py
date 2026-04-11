@@ -9,6 +9,8 @@ import types
 from functools import lru_cache
 from typing import Any
 
+from .prerequisites import extract_id
+
 try:
     from .db import get_config as _get_config
 except ImportError:
@@ -31,7 +33,6 @@ def _get_attr(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
-
 
 def _matches_filter(item: Any, key: str) -> bool:
     """Return True if *item* matches the filter key.
@@ -344,6 +345,30 @@ class Resolver:
                 return getattr(val, parts[1], None)
             return val
 
+        # ---- nb_id() ----
+        def nb_id(resource: str, lookup: dict[str, Any] | None = None) -> int | None:
+            if not resource or ctx.nb is None or ctx.dry_run:
+                return None
+            if not isinstance(lookup, dict):
+                return None
+
+            if not lookup:
+                return None
+            if any(
+                value is None
+                or value == []
+                or (isinstance(value, str) and value.strip() == "")
+                for value in lookup.values()
+            ):
+                return None
+
+            try:
+                obj = ctx.nb.get(resource, **lookup)
+            except Exception as exc:
+                logger.debug("nb_id lookup failed resource=%s lookup=%s: %s", resource, lookup, exc)
+                return None
+            return extract_id(obj)
+
         # ---- collector namespace ----
         col_attrs = {
             "max_workers": opts.max_workers,
@@ -381,6 +406,7 @@ class Resolver:
             "int": int_val,
             "float": float_val,
             "prereq": prereq,
+            "nb_id": nb_id,
             "collector": collector_ns,
             "parent": parent_obj,
             "parent_id": parent_id,
