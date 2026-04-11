@@ -27,6 +27,14 @@ class TestVMwareExampleClusterFilter:
         cluster_obj = next(o for o in cfg.objects if o.name == "cluster")
         assert cluster_obj.enabled_if == "not source('name').startswith('Staging')"
 
+    def test_vmware_example_filters_staging_hosts_and_vms_consistently(self):
+        cfg = load_config("mappings/vmware.hcl.example")
+        host_obj = next(o for o in cfg.objects if o.name == "host")
+        vm_obj = next(o for o in cfg.objects if o.name == "vm")
+
+        assert host_obj.enabled_if == "not source('parent.name').startswith('Staging')"
+        assert vm_obj.enabled_if == "not source('runtime.host.parent.name').startswith('Staging')"
+
 
 class TestVMwareExamplePhysicalNicMapping:
     def test_host_physical_nics_include_host_context_for_description(self):
