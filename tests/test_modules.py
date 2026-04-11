@@ -1482,6 +1482,7 @@ class TestProcessModules:
             MagicMock(id=20),
             MagicMock(id=30),
             MagicMock(id=40),
+            MagicMock(id=50),
         ]
 
         parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
@@ -1539,6 +1540,7 @@ class TestProcessModules:
             MagicMock(id=20),
             MagicMock(id=30),
             MagicMock(id=40),
+            MagicMock(id=50),
         ]
 
         parent_nb_obj = {"id": 99, "device_type": {"id": 5}}

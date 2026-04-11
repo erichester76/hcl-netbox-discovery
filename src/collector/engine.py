@@ -2562,7 +2562,7 @@ class Engine:
                 }
                 module_payload.update(module_instance_fields)
                 module_payload.setdefault("status", "active")
-                if serial:
+                if serial is not None and serial != "":
                     module_payload["serial"] = str(serial)
 
                 module_record = self._upsert(
