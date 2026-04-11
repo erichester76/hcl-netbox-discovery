@@ -9,6 +9,10 @@ def _device_object(cfg):
     return next((obj for obj in cfg.objects if obj.name == "device"), None)
 
 
+def _shared_ip_object(cfg):
+    return next((obj for obj in cfg.objects if obj.name == "shared_ip"), None)
+
+
 def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     monkeypatch.delenv("NDFC_FETCH_INTERFACES", raising=False)
     cfg = load_config("mappings/nexus.hcl.example")
@@ -78,3 +82,16 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     mgmt_status_field = next((field for field in mgmt_ip_block.fields if field.name == "status"), None)
     assert mgmt_address_field is not None and mgmt_address_field.value == "source('address')"
     assert mgmt_status_field is not None and mgmt_status_field.value == "'active'"
+
+    shared_ip = _shared_ip_object(cfg)
+    assert shared_ip is not None
+    assert shared_ip.source_collection == "shared_ips"
+    assert shared_ip.netbox_resource == "ipam.ip_addresses"
+    assert shared_ip.lookup_by == ["address"]
+
+    shared_fields = {field.name: field.value for field in shared_ip.fields}
+    assert shared_fields["address"] == "source('address')"
+    assert shared_fields["role"] == "source('role')"
+    assert shared_fields["status"] == "'active'"
+    assert shared_fields["description"] == "join(', ', source('references') or [])"
+    assert shared_fields["tags"] == "['ndfc-sync', 'ndfc-shared-ip']"
