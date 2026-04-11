@@ -73,7 +73,7 @@ class TestWalkPath:
 # ---------------------------------------------------------------------------
 
 
-def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp", parent_nb_obj=None):
+def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp", parent_nb_obj=None, nb=None):
     opts = CollectorOptions(
         max_workers=4,
         dry_run=False,
@@ -81,7 +81,7 @@ def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp", parent_nb_obj=Non
         regex_dir=regex_dir,
     )
     ctx = RunContext(
-        nb=None,
+        nb=nb,
         source_adapter=None,
         collector_opts=opts,
         regex_dir=regex_dir,
@@ -359,6 +359,67 @@ class TestResolverPrereq:
     def test_prereq_missing_returns_none(self):
         r = _make_resolver({}, prereqs={})
         assert r.evaluate("prereq('missing_prereq')") is None
+
+
+# ---------------------------------------------------------------------------
+# Resolver – nb_id()
+# ---------------------------------------------------------------------------
+
+
+class TestResolverNetBoxLookup:
+    def test_nb_id_returns_record_id(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': 'leaf-01'})") == 101
+
+    def test_nb_id_returns_none_when_lookup_empty(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': ''})") is None
+
+    def test_nb_id_returns_none_when_lookup_value_is_whitespace(self):
+        from unittest.mock import Mock
+
+        nb = SimpleNamespace(get=Mock(return_value={"id": 101}))
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': '   '})") is None
+        nb.get.assert_not_called()
+
+    def test_nb_id_returns_none_when_multikey_lookup_has_missing_component(self):
+        from unittest.mock import Mock
+
+        nb = SimpleNamespace(get=Mock(return_value={"id": 101}))
+        r = _make_resolver({}, nb=nb)
+
+        assert (
+            r.evaluate("nb_id('dcim.interfaces', {'device_id': None, 'name': 'Ethernet1/1'})")
+            is None
+        )
+        nb.get.assert_not_called()
+
+    def test_nb_id_returns_none_in_dry_run(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        opts = CollectorOptions(
+            max_workers=4,
+            dry_run=True,
+            sync_tag="test",
+            regex_dir="/tmp",
+        )
+        ctx = RunContext(
+            nb=nb,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp",
+            prereqs={},
+            source_obj={},
+            parent_nb_obj=None,
+            dry_run=True,
+        )
+
+        assert Resolver(ctx).evaluate("nb_id('dcim.devices', {'name': 'leaf-01'})") is None
 
 
 # ---------------------------------------------------------------------------
