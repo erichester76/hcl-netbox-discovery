@@ -1747,6 +1747,36 @@ class TestNexusEnrichInterface:
         assert result["enabled"] is True
         assert result["lag_name"] == "port-channel500"
 
+    def test_interface_ip_converts_netmask_suffix_to_prefix(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Vlan3965",
+            "ifType": "INTERFACE_VLAN",
+            "ipAddress": "10.20.22.65/255.255.255.240",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["ip_address"] == "10.20.22.65/28"
+
+    def test_interface_ip_skips_use_link_local_only_placeholder(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Vlan2006",
+            "ifType": "INTERFACE_VLAN",
+            "ipAddress": "use-link-local-only",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface)
+
+        assert result["ip_address"] == ""
+
     def test_interface_enrichment_tracks_kbps_mtu_mode_and_vlan_membership(self):
         src = NexusDashboardSource()
         iface = {

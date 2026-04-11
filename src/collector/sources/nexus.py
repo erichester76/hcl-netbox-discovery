@@ -583,6 +583,40 @@ def _normalize_host_ip_prefix(address: str) -> str:
     return f"{text}/32" if parsed.version == 4 else f"{text}/128"
 
 
+def _normalize_prefixed_ip_string(text: str) -> str:
+    """Normalize an IP string that already includes a slash component."""
+    address_text, prefix_text = text.split("/", 1)
+    address_text = address_text.strip()
+    prefix_text = prefix_text.strip().lstrip("/")
+    if not address_text:
+        return ""
+
+    try:
+        ip_obj = ipaddress.ip_address(address_text)
+    except ValueError:
+        return ""
+
+    if not prefix_text:
+        return _normalize_host_ip_prefix(address_text)
+
+    if prefix_text.isdigit():
+        prefix_len = int(prefix_text)
+        max_prefix = 32 if ip_obj.version == 4 else 128
+        if 0 <= prefix_len <= max_prefix:
+            return f"{address_text}/{prefix_len}"
+        return ""
+
+    try:
+        if ip_obj.version == 4:
+            prefix_len = ipaddress.IPv4Network(f"0.0.0.0/{prefix_text}").prefixlen
+        else:
+            prefix_len = ipaddress.IPv6Network(f"::/{prefix_text}").prefixlen
+    except ValueError:
+        return ""
+
+    return f"{address_text}/{prefix_len}"
+
+
 def _normalize_ip_with_prefix(address: str, prefix: str = "") -> str:
     """Return *address* with an explicit prefix, preferring a provided mask when valid."""
     if not address:
@@ -591,13 +625,15 @@ def _normalize_ip_with_prefix(address: str, prefix: str = "") -> str:
     text = str(address).strip()
     if not text:
         return ""
+    if text.lower() == "use-link-local-only":
+        return ""
     if "/" in text:
-        return text
+        return _normalize_prefixed_ip_string(text)
 
     try:
         ip_obj = ipaddress.ip_address(text)
     except ValueError:
-        return text
+        return ""
 
     prefix_text = str(prefix or "").strip()
     if prefix_text:
