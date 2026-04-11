@@ -1978,6 +1978,25 @@ class TestNexusEnrichInterface:
         assert result["lag_name"] == ""
         assert result["vpc_name"] == "vpc28"
 
+    def test_vpc_interface_does_not_emit_parent_lag_from_analyze_channel_id(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "vpc28",
+            "nvPairs": {
+                "ifType": "INTERFACE_ST",
+                "vpcId": "28",
+            },
+        }
+        analyze_iface = {
+            "interfaceName": "vpc28",
+            "channelId": 28,
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface)
+
+        assert result["lag_name"] == ""
+        assert result["vpc_name"] == "vpc28"
+
     def test_nvpair_speed_sets_speed_and_physical_type(self):
         src = NexusDashboardSource()
         iface = {

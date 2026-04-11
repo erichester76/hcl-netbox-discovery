@@ -1761,10 +1761,10 @@ class NexusDashboardSource(DataSource):
         if untagged_vlan_vid is not None:
             tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
-        channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
-        if not lag_name and channel_id not in ("", None, 0, "0"):
-            lag_name = _normalize_port_channel_name(channel_id)
         vpc_name    = _derive_vpc_name(source_iface, nvpair_values=nvpair_values)
+        channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
+        if not lag_name and not vpc_name and channel_id not in ("", None, 0, "0"):
+            lag_name = _normalize_port_channel_name(channel_id)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
