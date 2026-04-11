@@ -202,23 +202,25 @@ def _module_position(module: Any) -> str:
 
 def _derive_interface_name(iface: Any) -> str:
     """Return the best-available interface name from common NDFC fields."""
-    return _first_non_empty(
-        iface,
-        "ifName",
-        "name",
-        "interfaceName",
-        "portName",
-        "displayName",
-        "shortName",
+    return _normalize_interface_name(
+        _first_non_empty(
+            iface,
+            "ifName",
+            "name",
+            "interfaceName",
+            "portName",
+            "displayName",
+            "shortName",
+        )
     )
 
 
 def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[str, str]]:
-    """Return the interface name, source field, and raw candidate values."""
+    """Return the interface name, source field, and normalized candidate values."""
     candidates: dict[str, str] = {}
     for key in ("ifName", "name", "interfaceName", "portName", "displayName", "shortName"):
         value = _safe_get(iface, key)
-        candidates[key] = "" if value is None else str(value).strip()
+        candidates[key] = _normalize_interface_name("" if value is None else str(value).strip())
 
     for key, value in candidates.items():
         if value:
@@ -471,6 +473,30 @@ def _flatten_interface_payload(payload: Any) -> list[dict]:
         return _flatten_interface_payload(nested)
 
     return [payload]
+
+
+def _normalize_interface_name(name: str) -> str:
+    """Return a canonical interface name for mixed NDFC short/long forms."""
+    text = str(name or "").strip()
+    if not text:
+        return ""
+
+    lower = text.lower()
+    patterns = (
+        (r"^eth(?:ernet)?(\d.*)$", "Ethernet"),
+        (r"^(?:po|port-channel)(\d.*)$", "port-channel"),
+        (r"^(?:lo|loopback)(\d.*)$", "loopback"),
+        (r"^vlan(\d.*)$", "Vlan"),
+        (r"^mgmt(\d.*)$", "mgmt"),
+        (r"^nve(\d.*)$", "nve"),
+        (r"^vpc(\d.*)$", "vpc"),
+    )
+    for pattern, prefix in patterns:
+        match = re.match(pattern, lower)
+        if match:
+            return f"{prefix}{match.group(1)}"
+
+    return text
 
 
 def _normalize_nvpair_key(key: Any) -> str:
@@ -811,21 +837,23 @@ def _is_blankish_speed(value: Any) -> bool:
 
 def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
     """Clear duplicated interface IPs so shared addresses do not churn in NetBox."""
-    addresses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    addresses: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for switch in switches:
-        switch_name = str(switch.get("name", "") or switch.get("serialNumber", "") or "unknown")
         for iface in switch.get("interfaces", []) or []:
             if not isinstance(iface, dict):
                 continue
             address = str(iface.get("ip_address", "") or "").strip()
             if not address:
                 continue
-            addresses.setdefault(address, []).append((switch_name, iface))
+            addresses.setdefault(address, []).append((switch, iface))
 
     for address, refs in addresses.items():
         if len(refs) < 2:
             continue
-        reference_labels = [f"{switch_name}:{iface.get('name', '')}" for switch_name, iface in refs]
+        reference_labels = [
+            f"{switch.get('name', '')}:{iface.get('name', '')}"
+            for switch, iface in refs
+        ]
         logger.warning(
             "NDFC duplicate interface IP suppressed address=%s references=%s",
             address,
@@ -834,6 +862,77 @@ def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
         for _, iface in refs:
             iface["duplicate_ip_address"] = address
             iface["ip_address"] = ""
+
+
+def _classify_shared_ip(iface_name: str) -> str:
+    """Return the shared IP role for *iface_name* when it is safe to model."""
+    lower = str(iface_name or "").lower()
+    if lower.startswith("vlan"):
+        return "VIP"
+    if lower.startswith("loopback"):
+        return "Anycast"
+    return ""
+
+
+def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return normalized shared VIP/anycast records from duplicate interface IPs."""
+    addresses: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for switch in switches:
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
+            if not duplicate_address:
+                continue
+            addresses.setdefault(duplicate_address, []).append((switch, iface))
+
+    shared_records: list[dict[str, Any]] = []
+    for address, refs in sorted(addresses.items()):
+        roles = {
+            _classify_shared_ip(iface.get("name", ""))
+            for _, iface in refs
+        }
+        roles.discard("")
+        if len(roles) != 1:
+            continue
+
+        sorted_refs = sorted(
+            refs,
+            key=lambda ref: (
+                str(ref[0].get("name", "") or ""),
+                str(ref[1].get("name", "") or ""),
+            ),
+        )
+        site_names = {
+            str(switch.get("site_name", "") or "")
+            for switch, _ in sorted_refs
+            if str(switch.get("site_name", "") or "")
+        }
+        if len(site_names) > 1:
+            continue
+
+        role = next(iter(roles))
+        first_switch, first_iface = sorted_refs[0]
+        first_name = str(first_iface.get("name", "") or "")
+        references = [
+            f"{switch.get('name', '')}:{iface.get('name', '')}"
+            for switch, iface in sorted_refs
+        ]
+        match = re.search(r"(\d+)$", first_name)
+        shared_records.append(
+            {
+                "address": address,
+                "role": role,
+                "name": f"{first_name} {role} {address}",
+                "group_name": f"{first_name} {role}",
+                "group_id": int(match.group(1)) if match else None,
+                "site_name": str(first_switch.get("site_name", "") or ""),
+                "interface_name": first_name,
+                "references": references,
+            }
+        )
+
+    return shared_records
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -987,6 +1086,7 @@ class NexusDashboardSource(DataSource):
         self._fetch_interfaces: bool = False
         self._fetch_modules: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
+        self._shared_ips: list[dict[str, Any]] = []
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -1033,6 +1133,7 @@ class NexusDashboardSource(DataSource):
 
         collectors = {
             "switches": self._get_switches,
+            "shared_ips": self._get_shared_ips,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -1045,6 +1146,7 @@ class NexusDashboardSource(DataSource):
     def close(self) -> None:
         """Release the HTTP session."""
         self._session = close_http_session(self._session, "NexusDashboardSource")
+        self._shared_ips = []
 
     # ------------------------------------------------------------------
     # Authentication
@@ -1177,10 +1279,19 @@ class NexusDashboardSource(DataSource):
 
         if self._fetch_interfaces:
             _suppress_duplicate_interface_ips(switches)
+            self._shared_ips = _build_shared_ip_records(switches)
+        else:
+            self._shared_ips = []
 
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
+
+    def _get_shared_ips(self) -> list[dict[str, Any]]:
+        """Return shared VIP/anycast IP records derived from switch interfaces."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._shared_ips)
 
     def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""
@@ -1232,6 +1343,20 @@ class NexusDashboardSource(DataSource):
                 data = []
 
         data = _flatten_interface_payload(data)
+        deduped_data: list[dict[str, Any]] = []
+        deduped_index: dict[str, int] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            normalized_name = _derive_interface_name(item).strip().lower()
+            if normalized_name and normalized_name in deduped_index:
+                idx = deduped_index[normalized_name]
+                deduped_data[idx] = _merge_dashboard_interface(deduped_data[idx], item)
+                continue
+            if normalized_name:
+                deduped_index[normalized_name] = len(deduped_data)
+            deduped_data.append(item)
+        data = deduped_data
 
         if (
             logger.isEnabledFor(logging.DEBUG)

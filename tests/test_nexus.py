@@ -13,11 +13,13 @@ import pytest
 
 from collector.sources.nexus import (
     NexusDashboardSource,
+    _build_shared_ip_records,
     _derive_interface_name_details,
     _flatten_interface_payload,
     _infer_iface_type_from_speed,
     _is_interface_enabled,
     _normalize_iface_type,
+    _normalize_interface_name,
     _normalize_model,
     _normalize_port_channel_name,
     _normalize_vpc_name,
@@ -137,6 +139,24 @@ class TestDeriveInterfaceNameDetails:
         assert candidates["ifName"] == ""
         assert candidates["interfaceName"] == "Ethernet1/10"
         assert candidates["portName"] == "Ethernet1/11"
+
+
+class TestNormalizeInterfaceName:
+    @pytest.mark.parametrize(
+        ("raw_name", "expected"),
+        [
+            ("eth1/1", "Ethernet1/1"),
+            ("Ethernet1/1", "Ethernet1/1"),
+            ("po500", "port-channel500"),
+            ("Port-Channel500", "port-channel500"),
+            ("lo100", "loopback100"),
+            ("Loopback100", "loopback100"),
+            ("vlan3965", "Vlan3965"),
+            ("vpc27", "vpc27"),
+        ],
+    )
+    def test_normalize_interface_name(self, raw_name, expected):
+        assert _normalize_interface_name(raw_name) == expected
 
 
 class TestFlattenInterfacePayload:
@@ -631,6 +651,59 @@ class TestNexusGetObjects:
 
         assert "modules" not in result[0]
 
+    def test_get_switches_dedupes_short_and_long_interface_aliases(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-spine-01",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "spine",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = [
+            {"ifName": "eth1/1", "ifType": "INTERFACE_ETHERNET", "ipAddress": "10.100.8.13/30"},
+            {"ifName": "Ethernet1/1", "ifType": "INTERFACE_ETHERNET", "ipAddress": "10.100.8.13/30"},
+        ]
+
+        empty_analyze = MagicMock()
+        empty_analyze.raise_for_status = MagicMock()
+        empty_analyze.json.return_value = {"interfaces": []}
+
+        empty_detail = MagicMock()
+        empty_detail.raise_for_status = MagicMock()
+        empty_detail.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return empty_analyze
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return empty_detail
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        assert len(result[0]["interfaces"]) == 1
+        assert result[0]["interfaces"][0]["name"] == "Ethernet1/1"
+
     def test_get_switches_with_wrapped_interfaces_fetched(self):
         src = self._connected_source()
         src._fetch_interfaces = True
@@ -692,6 +765,85 @@ class TestNexusGetObjects:
 
         assert result[0]["interfaces"][0]["name"] == "mgmt0"
         assert result[0]["interfaces"][0]["mgmt_only"] is True
+
+    def test_get_objects_shared_ips_returns_classified_records(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "leaf-a",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL1111111",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+            {
+                "hostName": "leaf-b",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL2222222",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.5",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+        ]
+
+        empty_analyze = MagicMock()
+        empty_analyze.raise_for_status = MagicMock()
+        empty_analyze.json.return_value = {"interfaces": []}
+
+        empty_detail = MagicMock()
+        empty_detail.raise_for_status = MagicMock()
+        empty_detail.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL1111111"}:
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = [
+                    {"ifName": "Vlan3965", "ifType": "INTERFACE_VLAN", "ipAddress": "10.20.22.65/28"}
+                ]
+                return resp
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL2222222"}:
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = [
+                    {"ifName": "Vlan3965", "ifType": "INTERFACE_VLAN", "ipAddress": "10.20.22.65/28"}
+                ]
+                return resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return empty_analyze
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return empty_detail
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        shared = src.get_objects("shared_ips")
+
+        assert shared == [
+            {
+                "address": "10.20.22.65/28",
+                "role": "VIP",
+                "name": "Vlan3965 VIP 10.20.22.65/28",
+                "group_name": "Vlan3965 VIP",
+                "group_id": 3965,
+                "site_name": "ProdFabric",
+                "interface_name": "Vlan3965",
+                "references": ["leaf-a:Vlan3965", "leaf-b:Vlan3965"],
+            }
+        ]
 
     def test_get_switches_includes_interfaces_found_only_in_analyze_or_detail(self):
         src = self._connected_source()
@@ -1066,6 +1218,108 @@ class TestNexusEnrichSwitch:
         }
         result = src._enrich_switch(sw)
         assert result["role"] == "Border Gateway"
+
+
+class TestSharedIpRecords:
+    def test_build_shared_ip_records_classifies_vlan_as_vip(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert records == [
+            {
+                "address": "10.20.22.65/28",
+                "role": "VIP",
+                "name": "Vlan3965 VIP 10.20.22.65/28",
+                "group_name": "Vlan3965 VIP",
+                "group_id": 3965,
+                "site_name": "Fabric-A",
+                "interface_name": "Vlan3965",
+                "references": ["leaf-a:Vlan3965", "leaf-b:Vlan3965"],
+            }
+        ]
+
+    def test_build_shared_ip_records_classifies_loopback_as_anycast(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "spine-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}
+                    ],
+                },
+                {
+                    "name": "spine-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}
+                    ],
+                },
+            ]
+        )
+
+        assert records[0]["role"] == "Anycast"
+        assert records[0]["group_id"] == 254
+
+    def test_build_shared_ip_records_sorts_references_and_skips_cross_site(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert records[0]["references"] == ["leaf-a:Vlan3965", "leaf-b:Vlan3965"]
+        assert records[0]["site_name"] == "Fabric-A"
+
+        cross_site_records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert cross_site_records == []
 
     def test_serial_uppercased(self):
         src = NexusDashboardSource()

@@ -44,6 +44,43 @@ collector {
 }
 
 # ---------------------------------------------------------------------------
+# Shared VIP / anycast addresses
+#
+# The Nexus adapter derives a separate collection of duplicated interface IPs
+# after canonicalizing interface names (for example ``eth1/1`` →
+# ``Ethernet1/1``). Shared VLAN IPs are modeled as VIPs and shared loopbacks
+# as Anycast addresses so NetBox retains the address without reassigning it
+# between interfaces every run.
+# ---------------------------------------------------------------------------
+
+object "shared_ip" {
+  source_collection = "shared_ips"
+  netbox_resource   = "ipam.ip_addresses"
+  lookup_by         = ["address"]
+
+  field "address" {
+    value = "source('address')"
+  }
+
+  field "role" {
+    value = "source('role')"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+
+  field "description" {
+    value = "join(', ', source('references') or [])"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync', 'ndfc-shared-ip']"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Nexus Fabric Switches
 #
 # The source adapter pre-normalises Cisco Nexus model strings and maps
