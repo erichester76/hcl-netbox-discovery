@@ -481,6 +481,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     # --- Per-source sync flags ---
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
+    ("COLLECTOR_SYNC_MODULES", "false", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
     (

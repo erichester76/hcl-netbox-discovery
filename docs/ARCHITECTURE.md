@@ -60,7 +60,6 @@ hcl-netbox-discovery/
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example
-│   ├── xclarity-modules.hcl.example
 │   ├── azure.hcl.example
 │   ├── catalyst-center.hcl.example
 │   ├── nexus.hcl.example
