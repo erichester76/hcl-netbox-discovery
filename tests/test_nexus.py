@@ -579,9 +579,15 @@ class TestNexusGetObjects:
             ]
         }
 
+        interface_resp = MagicMock()
+        interface_resp.raise_for_status = MagicMock()
+        interface_resp.json.return_value = []
+
         def side_effect(url, **kwargs):
             if url.endswith("/inventory/allswitches"):
                 return switch_resp
+            if url.endswith("/dashboard/switch/interface?switchId=22530"):
+                return interface_resp
             if url.endswith("/dashboard/switch/module?switchId=22530"):
                 return module_resp
             raise AssertionError(f"unexpected URL {url!r}")
@@ -599,7 +605,7 @@ class TestNexusGetObjects:
         assert modules[0]["serial"] == "LIT22505EAA"
         assert modules[1]["profile"] == "Fan"
 
-    def test_get_switches_without_fetch_modules_keeps_empty_modules_list(self):
+    def test_get_switches_without_modules_key_absent(self):
         src = self._connected_source()
         src._fetch_modules = False
 
@@ -623,7 +629,7 @@ class TestNexusGetObjects:
 
         result = src.get_objects("switches")
 
-        assert result[0]["modules"] == []
+        assert "modules" not in result[0]
 
     def test_get_switches_with_wrapped_interfaces_fetched(self):
         src = self._connected_source()
