@@ -747,6 +747,12 @@ def _merge_dashboard_interface(raw_iface: dict[str, Any], dashboard_iface: dict[
     return merged
 
 
+def _is_blankish_speed(value: Any) -> bool:
+    """Return ``True`` for empty or placeholder speed values."""
+    text = str(value or "").strip().lower()
+    return text in {"", "auto"}
+
+
 def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
     """Clear duplicated interface IPs so shared addresses do not churn in NetBox."""
     addresses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
@@ -1406,13 +1412,13 @@ class NexusDashboardSource(DataSource):
             or nv("ifType", "interfaceType", "portType", "mediaType")
         )
         admin_state = (
-            _first_non_empty(source_iface, "adminState", "adminStatus")
-            or _safe_get(detail_oper, "adminStatus", "")
+            _safe_get(detail_oper, "adminStatus", "")
+            or _first_non_empty(source_iface, "adminState", "adminStatus")
             or nv("adminState", "adminStatus")
         )
         oper_status = (
-            _first_non_empty(source_iface, "operStatus", "operState", "operStatusStr", "operationalStatus")
-            or _safe_get(detail_oper, "operationalStatus", "")
+            _safe_get(detail_oper, "operationalStatus", "")
+            or _first_non_empty(source_iface, "operStatus", "operState", "operStatusStr", "operationalStatus")
             or nv("operStatus", "operState", "operStatusStr")
         )
         description = (
@@ -1429,13 +1435,13 @@ class NexusDashboardSource(DataSource):
         )
         ip_prefix   = nv("prefix", "prefixLength", "subnetPrefix", "mask", "subnetMask")
         speed_source = dict(source_iface)
-        if _safe_get(detail_oper, "speed", "") and not speed_source.get("speed"):
+        if _safe_get(detail_oper, "speed", "") and _is_blankish_speed(speed_source.get("speed")):
             speed_source["speed"] = _safe_get(detail_oper, "speed", "")
-        if _safe_get(analyze_iface, "speed", "") and not speed_source.get("speed"):
+        if _safe_get(analyze_iface, "speed", "") and _is_blankish_speed(speed_source.get("speed")):
             speed_source["speed"] = _safe_get(analyze_iface, "speed", "")
-        if _safe_get(analyze_iface, "adminSpeed", "") and not speed_source.get("adminSpeed"):
+        if _safe_get(analyze_iface, "adminSpeed", "") and _is_blankish_speed(speed_source.get("adminSpeed")):
             speed_source["adminSpeed"] = _safe_get(analyze_iface, "adminSpeed", "")
-        if _safe_get(analyze_iface, "operSpeed", "") and not speed_source.get("operSpeed"):
+        if _safe_get(analyze_iface, "operSpeed", "") and _is_blankish_speed(speed_source.get("operSpeed")):
             speed_source["operSpeed"] = _safe_get(analyze_iface, "operSpeed", "")
         speed_mbps, _speed_str = _derive_interface_speed_mbps(speed_source, nvpair_values)
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)

@@ -583,6 +583,86 @@ class TestNexusGetObjects:
         assert result[0]["interfaces"][0]["name"] == "mgmt0"
         assert result[0]["interfaces"][0]["mgmt_only"] is True
 
+    def test_get_switches_includes_interfaces_found_only_in_analyze_or_detail(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = []
+
+        analyze_iface_resp = MagicMock()
+        analyze_iface_resp.raise_for_status = MagicMock()
+        analyze_iface_resp.json.return_value = {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "physicalInterface": True,
+                    "speed": "25Gb",
+                    "ip": "10.10.10.1/31",
+                    "channelId": 7,
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "description": "analyze-only",
+                }
+            ]
+        }
+
+        detail_resp = MagicMock()
+        detail_resp.raise_for_status = MagicMock()
+        detail_resp.json.return_value = [
+            {
+                "interfaceName": "loopback100",
+                "interfaceType": "loopback",
+                "operData": {
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "operDescription": "detail-only",
+                    "speed": "",
+                },
+            }
+        ]
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return analyze_iface_resp
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return detail_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        interfaces = {iface["name"]: iface for iface in result[0]["interfaces"]}
+        assert interfaces["Ethernet1/10"]["type"] == "25gbase-x-sfp28"
+        assert interfaces["Ethernet1/10"]["speed"] == 25000
+        assert interfaces["Ethernet1/10"]["ip_address"] == "10.10.10.1/31"
+        assert interfaces["Ethernet1/10"]["lag_name"] == "port-channel7"
+        assert interfaces["loopback100"]["type"] == "virtual"
+        assert interfaces["loopback100"]["description"] == "detail-only"
+
     def test_get_switches_interface_fetch_error_returns_empty(self):
         src = self._connected_source()
         src._fetch_interfaces = True
@@ -1223,6 +1303,59 @@ class TestNexusEnrichInterface:
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
         assert result["lag_name"] == "port-channel500"
+
+    def test_interface_detail_state_overrides_legacy_and_analyze_state(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/7",
+            "ifType": "INTERFACE_ETHERNET",
+            "adminState": "down",
+            "operStatus": "down",
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/7",
+            "adminStatus": "down",
+            "operationalStatus": "down",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/7",
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["enabled"] is True
+
+    def test_detail_and_analyze_speed_override_auto_placeholders(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/8",
+            "ifType": "INTERFACE_ETHERNET",
+            "speed": "Auto",
+            "adminSpeed": "Auto",
+            "operSpeed": "Auto",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/8",
+            "adminSpeed": "100000000000",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/8",
+            "operData": {
+                "speed": "100Gb",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["speed"] == 100000
+        assert result["type"] == "100gbase-x-qsfp28"
 
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
         src = NexusDashboardSource()
