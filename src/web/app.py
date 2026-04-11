@@ -83,6 +83,17 @@ def create_app() -> Flask:
     def _basename_filter(path: str) -> str:
         return os.path.basename(path)
 
+    @app.template_filter("mapping_path")
+    def _mapping_path_filter(path: str) -> str:
+        if not path:
+            return path
+        try:
+            resolved = Path(path).resolve()
+            root = Path(_ROOT).resolve()
+            return str(resolved.relative_to(root))
+        except Exception:
+            return path
+
     @app.context_processor
     def inject_security_helpers() -> dict[str, Any]:
         code_version = get_code_version()
