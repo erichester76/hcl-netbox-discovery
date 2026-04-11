@@ -1,0 +1,313 @@
+# Cisco Nexus Dashboard Fabric Controller (NDFC) → NetBox collector mapping
+# (modules variant)
+#
+# Companion to nexus.hcl.example. This variant keeps the same device/interface
+# sync but also models selected Nexus hardware components as NetBox modules.
+#
+# Required environment variables:
+#   NDFC_HOST         Nexus Dashboard hostname or IP (no https://)
+#   NDFC_USER         Nexus Dashboard username
+#   NDFC_PASS         Nexus Dashboard password
+#   NETBOX_URL        NetBox base URL
+#   NETBOX_TOKEN      NetBox API token
+#
+# Optional:
+#   NDFC_VERIFY_SSL           true | false  (default: true)
+#   NDFC_FETCH_INTERFACES     true | false  (default: false)
+#   NDFC_FETCH_MODULES        true | false  (default: false)
+#   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
+#   NETBOX_CACHE_URL          Redis URL or SQLite path
+#   DRY_RUN                   Set to "true" to log payloads without writing
+#   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
+#   COLLECTOR_SYNC_MODULES    true | false  (default: true)
+
+source "nexus" {
+  api_type          = "nexus"
+  url               = "env('NDFC_HOST')"
+  username          = "env('NDFC_USER')"
+  password          = "env('NDFC_PASS')"
+  verify_ssl        = "env('NDFC_VERIFY_SSL', 'true')"
+  fetch_interfaces  = "env('NDFC_FETCH_INTERFACES', 'false')"
+  fetch_modules     = "env('NDFC_FETCH_MODULES', 'false')"
+}
+
+netbox {
+  url        = "env('NETBOX_URL')"
+  token      = "env('NETBOX_TOKEN')"
+  cache      = "env('NETBOX_CACHE_BACKEND', 'none')"
+  cache_url  = "env('NETBOX_CACHE_URL', '')"
+  rate_limit = "env('NETBOX_RATE_LIMIT', '0')"
+}
+
+collector {
+  max_workers      = 4
+  dry_run          = "env('DRY_RUN', 'false')"
+  sync_tag         = "ndfc-sync"
+  regex_dir        = "./regex"
+  sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+  sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
+}
+
+object "device" {
+  source_collection = "switches"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["name", "site"]
+  max_workers       = 4
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "source('manufacturer')" }
+    optional = false
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "when(source('model'), source('model'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "when(source('role'), source('role'), 'Network Device')" }
+    optional = false
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), 'Unknown')" }
+    optional = false
+  }
+
+  prerequisite "platform" {
+    method   = "ensure_platform"
+    args     = {
+      name         = "when(source('platform_name'), source('platform_name'), 'NX-OS')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = true
+  }
+
+  field "name" {
+    value = "when(source('name'), source('name'), 'Unknown')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "serial" {
+    value = "source('serial') or None"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync']"
+  }
+
+  interface {
+    source_items = "interfaces"
+    enabled_if   = "collector.sync_interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "when(source('type'), source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "description" {
+      value = "when(source('description'), source('description'), '')"
+    }
+
+    field "mgmt_only" {
+      value = "source('mgmt_only')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    field "speed" {
+      value = "source('speed')"
+    }
+
+    field "lag" {
+      type     = "fk"
+      resource = "dcim.interfaces"
+      lookup   = {
+        device = "when(source('lag_name') != '', parent_id, None)"
+        name   = "when(source('lag_name') != '', source('lag_name'), None)"
+      }
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      primary_if   = "first"
+      enabled_if   = "not source('mgmt_only')"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      oob_if       = "first"
+      enabled_if   = "source('mgmt_only')"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Power supply']"
+    profile      = "Power supply"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    power_input {
+      name = "'Power Input ' + str(source('position') or source('bay_name'))"
+      type = "'iec-60320-c14'"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "hardware_revision" {
+      value = "source('hardware_revision')"
+    }
+
+    attribute "software_revision" {
+      value = "source('software_revision')"
+    }
+
+    attribute "asset_id" {
+      value = "source('asset_id')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Fan']"
+    profile      = "Fan"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Transceiver']"
+    profile      = "Transceiver"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name') or source('model')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "module_type" {
+      value = "source('module_type')"
+    }
+
+    attribute "module_version" {
+      value = "source('module_version')"
+    }
+  }
+}

@@ -25,6 +25,8 @@ Normalised fields
   status            ``"active"`` if alive, otherwise ``"offline"``
   interfaces        List of normalised interface dicts (when fetch_interfaces
                     is enabled)
+  modules           List of normalised module dicts (when ``fetch_modules`` is
+                    enabled)
 
 Raw fields (passthrough from NDFC)
   hostName, switchName, deviceName, logicalName, siteName,
@@ -43,6 +45,17 @@ Interface dict fields (when fetch_interfaces is enabled)
   speed             Speed in Mbps (integer)
   ip_address        IP address with prefix length (e.g. ``"10.0.0.1/24"``)
   ifName, ifType, adminState, operStatus (raw passthrough)
+
+Module dict fields (when fetch_modules is enabled)
+  profile           NetBox module type profile name (e.g. ``"Power supply"``)
+  name              Installed module name
+  bay_name          Stable module bay label on the device
+  position          Best-effort slot / bay position string
+  model             Module model / part identifier
+  serial            Installed module serial number
+  manufacturer      Always ``"Cisco"``
+  status            Raw operational status
+  description       Human-readable module description
 """
 
 from __future__ import annotations
@@ -143,6 +156,48 @@ def _derive_site_name(switch: Any) -> str:
     return _last_hierarchy_part(
         _first_non_empty(switch, "siteNameHierarchy", "fabricNameHierarchy", "sitePath")
     )
+
+
+def _module_profile(module: Any) -> str:
+    """Return the NetBox module profile for a Nexus module payload."""
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            _safe_get(module, "name", ""),
+            _safe_get(module, "modelName", ""),
+            _safe_get(module, "type", ""),
+            " ".join(str(item) for item in (_safe_get(module, "moduleType", []) or [])),
+        )
+    ).lower()
+
+    if any(token in haystack for token in ("powersupply", "power supply", "psu", "nxa-pac", "pac-")):
+        return "Power supply"
+    if "fan" in haystack:
+        return "Fan"
+    if any(token in haystack for token in ("qsfp", "sfp", "transceiver", "optic")):
+        return "Transceiver"
+    return ""
+
+
+def _module_bay_name(module: Any) -> str:
+    """Return a stable bay label for a Nexus module payload."""
+    for key in ("name", "slot", "serialNumber", "modelName"):
+        value = _safe_get(module, key)
+        if value not in (None, ""):
+            text = str(value).strip()
+            if text:
+                if key == "slot":
+                    return f"Slot {text}"
+                return text
+    return ""
+
+
+def _module_position(module: Any) -> str:
+    """Return a stable position string for a Nexus module payload."""
+    value = _safe_get(module, "slot")
+    if value in (None, ""):
+        return ""
+    return str(value).strip()
 
 
 def _derive_interface_name(iface: Any) -> str:
@@ -929,6 +984,7 @@ class NexusDashboardSource(DataSource):
         self._session: requests.Session | None = None
         self._base_url: str = ""
         self._fetch_interfaces: bool = False
+        self._fetch_modules: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
@@ -956,6 +1012,7 @@ class NexusDashboardSource(DataSource):
 
         extra = config.extra or {}
         self._fetch_interfaces = str(extra.get("fetch_interfaces", "false")).lower() == "true"
+        self._fetch_modules = str(extra.get("fetch_modules", "false")).lower() == "true"
 
         self._session = requests.Session()
         self._session.verify = verify_ssl
@@ -1112,6 +1169,9 @@ class NexusDashboardSource(DataSource):
                     )
                 else:
                     enriched["interfaces"] = []
+            if self._fetch_modules:
+                switch_db_id = enriched.get("switchDbID") or enriched.get("switch_db_id")
+                enriched["modules"] = self._fetch_switch_modules(switch_db_id) if switch_db_id else []
             switches.append(enriched)
 
         if self._fetch_interfaces:
@@ -1121,6 +1181,29 @@ class NexusDashboardSource(DataSource):
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
 
+    def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
+        """Return normalized module records for one switch."""
+        try:
+            data = self._get(
+                f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/module?switchId={switch_db_id}"
+            )
+        except Exception as exc:
+            logger.warning("NDFC: failed to fetch modules for switchDbID %s: %s", switch_db_id, exc)
+            return []
+
+        modules = _safe_get(data, "modules", None)
+        if not isinstance(modules, list):
+            modules = []
+
+        normalized: list[dict[str, Any]] = []
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+            enriched = self._enrich_module(module)
+            if enriched:
+                normalized.append(enriched)
+
+        return normalized
     def _fetch_switch_interfaces(
         self,
         serial: str,
@@ -1383,6 +1466,32 @@ class NexusDashboardSource(DataSource):
             "systemMode":   system_mode,
             "switchDbID":   switch_db_id,
             "switch_db_id": switch_db_id,
+        }
+
+    def _enrich_module(self, module: dict[str, Any]) -> dict[str, Any] | None:
+        """Return a normalized module dict or ``None`` when unsupported."""
+        profile = _module_profile(module)
+        if not profile:
+            return None
+
+        module_type_values = _safe_get(module, "moduleType", []) or []
+        module_version_values = _safe_get(module, "moduleVersion", []) or []
+        return {
+            "profile": profile,
+            "name": _first_non_empty(module, "name", "modelName", "serialNumber"),
+            "bay_name": _module_bay_name(module),
+            "position": _module_position(module),
+            "model": _first_non_empty(module, "modelName", "name"),
+            "serial": _first_non_empty(module, "serialNumber"),
+            "manufacturer": "Cisco",
+            "status": _first_non_empty(module, "operStatus"),
+            "description": _first_non_empty(module, "name", "modelName"),
+            "module_type": ", ".join(str(item) for item in module_type_values if str(item).strip()),
+            "module_version": ", ".join(str(item) for item in module_version_values if str(item).strip()),
+            "hardware_revision": _first_non_empty(module, "hardwareRevision"),
+            "software_revision": _first_non_empty(module, "softwareRevision"),
+            "asset_id": _first_non_empty(module, "assetId"),
+            "raw_type": _first_non_empty(module, "type"),
         }
 
     def _enrich_interface(
