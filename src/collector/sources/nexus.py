@@ -345,188 +345,6 @@ def _debug_switch_modules(switch: dict[str, Any]) -> None:
     )
 
 
-def _debug_dashboard_payload_shape(kind: str, switch_id: Any, payload: Any) -> None:
-    """Emit a compact DEBUG preview of a dashboard endpoint payload shape."""
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-
-    preview_keys = (
-        "ifName",
-        "name",
-        "portName",
-        "speed",
-        "portSpeed",
-        "ifSpeed",
-        "adminSpeed",
-        "operSpeed",
-        "bandwidth",
-        "mediaType",
-        "portType",
-        "moduleName",
-        "moduleType",
-        "model",
-        "serialNumber",
-        "productId",
-        "partNumber",
-        "status",
-        "adminStatus",
-        "operStatus",
-    )
-
-    def _preview_dict(obj: dict[str, Any]) -> dict[str, Any]:
-        return {
-            key: value
-            for key in preview_keys
-            if key in obj and (value := obj.get(key)) not in (None, "")
-        }
-
-    def _preview_value(value: Any) -> Any:
-        if isinstance(value, dict):
-            return _preview_dict(value)
-        if isinstance(value, list):
-            first_item = value[0] if value else None
-            if isinstance(first_item, dict):
-                return _preview_dict(first_item)
-            return first_item
-        return value
-
-    if isinstance(payload, list):
-        first_item = next((item for item in payload if isinstance(item, dict)), None)
-        if first_item:
-            logger.debug(
-                "NDFC dashboard %s switch_id=%s count=%d first_keys=%s preview=%s",
-                kind,
-                switch_id,
-                len(payload),
-                sorted(first_item.keys()),
-                _preview_dict(first_item),
-            )
-            return
-        logger.debug(
-            "NDFC dashboard %s switch_id=%s list count=%d first_type=%s",
-            kind,
-            switch_id,
-            len(payload),
-            type(payload[0]).__name__ if payload else "none",
-        )
-        return
-
-    if isinstance(payload, dict):
-        logger.debug(
-            "NDFC dashboard %s switch_id=%s dict keys=%s",
-            kind,
-            switch_id,
-            sorted(payload.keys()),
-        )
-        for nested_key in ("logicalInterfaces", "moduleInfo", "fexDetails"):
-            nested = payload.get(nested_key)
-            if isinstance(nested, list):
-                first_item = next((item for item in nested if isinstance(item, dict)), None)
-                logger.debug(
-                    "NDFC dashboard %s switch_id=%s %s count=%d first_keys=%s preview=%s",
-                    kind,
-                    switch_id,
-                    nested_key,
-                    len(nested),
-                    sorted(first_item.keys()) if first_item else [],
-                    _preview_dict(first_item) if first_item else {},
-                )
-            elif isinstance(nested, dict):
-                flattened = _flatten_dashboard_grouped_records(nested, root_group=nested_key)
-                first_flattened = flattened[0] if flattened else None
-                first_bucket_key = next(iter(nested), "")
-                first_bucket_value = nested[first_bucket_key] if first_bucket_key else None
-                logger.debug(
-                    "NDFC dashboard %s switch_id=%s %s dict keys=%s flattened_count=%d first_group=%r first_keys=%s preview=%s first_bucket=%r first_bucket_type=%s first_bucket_preview=%r",
-                    kind,
-                    switch_id,
-                    nested_key,
-                    sorted(nested.keys()),
-                    len(flattened),
-                    first_flattened.get("dashboard_group", "") if first_flattened else "",
-                    sorted(first_flattened.keys()) if first_flattened else [],
-                    _preview_dict(first_flattened) if first_flattened else {},
-                    first_bucket_key,
-                    type(first_bucket_value).__name__ if first_bucket_key else "none",
-                    _preview_value(first_bucket_value) if first_bucket_key else None,
-                )
-            elif nested not in (None, ""):
-                logger.debug(
-                    "NDFC dashboard %s switch_id=%s %s type=%s preview=%r",
-                    kind,
-                    switch_id,
-                    nested_key,
-                    type(nested).__name__,
-                    nested,
-                )
-        return
-
-    logger.debug(
-        "NDFC dashboard %s switch_id=%s type=%s preview=%r",
-        kind,
-        switch_id,
-        type(payload).__name__,
-        payload,
-    )
-
-
-_DASHBOARD_RECORD_HINT_KEYS = (
-    "ifName",
-    "name",
-    "portName",
-    "displayName",
-    "shortName",
-    "speed",
-    "portSpeed",
-    "ifSpeed",
-    "adminSpeed",
-    "operSpeed",
-    "bandwidth",
-    "mediaType",
-    "portType",
-    "moduleName",
-    "moduleType",
-    "model",
-    "serialNumber",
-    "productId",
-    "partNumber",
-)
-
-
-def _flatten_dashboard_grouped_records(
-    payload: Any, *, root_group: str = ""
-) -> list[dict[str, Any]]:
-    """Flatten grouped dashboard payloads into plain records with group metadata."""
-
-    def _visit(value: Any, group_path: tuple[str, ...]) -> list[dict[str, Any]]:
-        if isinstance(value, list):
-            records: list[dict[str, Any]] = []
-            for item in value:
-                records.extend(_visit(item, group_path))
-            return records
-
-        if not isinstance(value, dict):
-            return []
-
-        if not value:
-            return []
-
-        looks_like_record = any(key in value for key in _DASHBOARD_RECORD_HINT_KEYS)
-        if looks_like_record:
-            record = dict(value)
-            if group_path:
-                record.setdefault("dashboard_group", "/".join(group_path))
-            return [record]
-
-        records: list[dict[str, Any]] = []
-        for key, nested in value.items():
-            records.extend(_visit(nested, (*group_path, str(key))))
-        return records
-
-    initial_path = (root_group,) if root_group else ()
-    return _visit(payload, initial_path)
-
-
 _LAG_CANDIDATE_KEYS = (
     "portChannelInterfaceDn",
     "portChannelInterface",
@@ -929,6 +747,12 @@ def _merge_dashboard_interface(raw_iface: dict[str, Any], dashboard_iface: dict[
     return merged
 
 
+def _is_blankish_speed(value: Any) -> bool:
+    """Return ``True`` for empty or placeholder speed values."""
+    text = str(value or "").strip().lower()
+    return text in {"", "auto"}
+
+
 def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
     """Clear duplicated interface IPs so shared addresses do not churn in NetBox."""
     addresses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
@@ -1099,12 +923,15 @@ class NexusDashboardSource(DataSource):
 
     #: NDFC application path prefix (Nexus Dashboard 2.x / NDFC 12.x)
     _API_BASE = "/appcenter/cisco/ndfc/api/v1"
+    _ANALYZE_BASE = "/api/v1/analyze"
 
     def __init__(self) -> None:
         self._session: requests.Session | None = None
         self._base_url: str = ""
         self._fetch_interfaces: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
+        self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # DataSource interface
@@ -1212,13 +1039,13 @@ class NexusDashboardSource(DataSource):
     # Collection fetchers
     # ------------------------------------------------------------------
 
-    def _get(self, path: str) -> Any:
+    def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
         """Perform an authenticated GET and return parsed JSON."""
         if not path.startswith("/"):
             path = "/" + path
         url = self._base_url + path
         logger.debug("NDFC GET %s", url)
-        resp = self._session.get(url, timeout=30)  # type: ignore[union-attr]
+        resp = self._session.get(url, params=params, timeout=30)  # type: ignore[union-attr]
         resp.raise_for_status()
         return resp.json()
 
@@ -1274,14 +1101,14 @@ class NexusDashboardSource(DataSource):
         switches: list[dict] = []
         for raw in data:
             enriched = self._enrich_switch(raw)
-            enriched.update(self._fetch_dashboard_switch_details(enriched))
             if self._fetch_interfaces:
                 serial = enriched.get("serialNumber", "")
+                fabric_name = enriched.get("fabricName", "")
                 if serial:
                     enriched["interfaces"] = self._fetch_switch_interfaces(
                         serial,
+                        fabric_name=fabric_name,
                         switch_ip_address=enriched.get("ip_address", ""),
-                        dashboard_logical_interfaces=enriched.get("dashboard_logical_interfaces", []),
                     )
                 else:
                     enriched["interfaces"] = []
@@ -1294,63 +1121,17 @@ class NexusDashboardSource(DataSource):
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
 
-    def _fetch_dashboard_switch_details(self, switch: dict[str, Any]) -> dict[str, Any]:
-        """Fetch and flatten documented dashboard switch endpoints for one switch."""
-        switch_db_id = _safe_get(switch, "switchDbID") or _safe_get(switch, "switch_db_id")
-        details = {
-            "dashboard_logical_interfaces": [],
-            "dashboard_module_info": [],
-            "dashboard_fex_details": [],
-        }
-        if switch_db_id in (None, ""):
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("NDFC dashboard switch endpoints skipped: missing switchDbID")
-            return details
-
-        endpoints = {
-            "switch/interface": f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/interface?switchId={switch_db_id}",
-            "switch/module": f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/module?switchId={switch_db_id}",
-        }
-        for kind, path in endpoints.items():
-            try:
-                payload = self._get(path)
-            except Exception as exc:
-                logger.debug(
-                    "NDFC dashboard %s switch_id=%s fetch failed: %s",
-                    kind,
-                    switch_db_id,
-                    exc,
-                )
-                continue
-            _debug_dashboard_payload_shape(kind, switch_db_id, payload)
-            if kind == "switch/interface":
-                details["dashboard_logical_interfaces"] = _flatten_dashboard_grouped_records(
-                    _safe_get(payload, "logicalInterfaces", {}),
-                    root_group="logicalInterfaces",
-                )
-            elif kind == "switch/module":
-                details["dashboard_module_info"] = _flatten_dashboard_grouped_records(
-                    _safe_get(payload, "moduleInfo", {}),
-                    root_group="moduleInfo",
-                )
-                details["dashboard_fex_details"] = _flatten_dashboard_grouped_records(
-                    _safe_get(payload, "fexDetails", {}),
-                    root_group="fexDetails",
-                )
-
-        return details
-
     def _fetch_switch_interfaces(
         self,
         serial: str,
+        fabric_name: str = "",
         switch_ip_address: str = "",
-        dashboard_logical_interfaces: list[dict[str, Any]] | None = None,
     ) -> list[dict]:
         """Return a list of normalised interface dicts for the given switch *serial*."""
         try:
             data = self._get(
-                f"{self._API_BASE}/lan-fabric/rest/interface"
-                f"?serialNumber={serial}"
+                f"{self._API_BASE}/lan-fabric/rest/interface",
+                params={"serialNumber": serial},
             )
         except Exception as exc:
             logger.warning(
@@ -1402,22 +1183,34 @@ class NexusDashboardSource(DataSource):
             )
 
         debug_enabled = logger.isEnabledFor(logging.DEBUG)
-        dashboard_index = _index_dashboard_interfaces(dashboard_logical_interfaces or [])
+        analyze_interfaces = self._get_analyze_interfaces(fabric_name, serial)
+        detail_interfaces = self._get_interface_details(serial)
+        analyze_index = _index_dashboard_interfaces(analyze_interfaces)
+        detail_index = _index_dashboard_interfaces(detail_interfaces)
         interfaces: list[dict] = []
+        seen_names: set[str] = set()
         for iface in data:
             if not isinstance(iface, dict):
                 continue
 
-            dashboard_iface = dashboard_index.get(_derive_interface_name(iface).strip().lower())
+            iface_name = _derive_interface_name(iface).strip().lower()
+            analyze_iface = analyze_index.get(iface_name)
+            detail_iface = detail_index.get(iface_name)
             enriched = self._enrich_interface(
                 iface,
                 switch_ip_address=switch_ip_address,
-                dashboard_iface=dashboard_iface,
+                analyze_iface=analyze_iface,
+                detail_iface=detail_iface,
             )
             interfaces.append(enriched)
+            if iface_name:
+                seen_names.add(iface_name)
             if debug_enabled:
                 nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
-                merged_iface = _merge_dashboard_interface(iface, dashboard_iface)
+                merged_iface = _merge_dashboard_interface(
+                    _merge_dashboard_interface(iface, analyze_iface),
+                    detail_iface,
+                )
                 _, speed_str = _derive_interface_speed_mbps(merged_iface, nvpair_values)
                 _, name_source, name_candidates = _derive_interface_name_details(iface)
                 _debug_interface_normalization(
@@ -1441,9 +1234,103 @@ class NexusDashboardSource(DataSource):
                     speed_str=speed_str,
                 )
 
+        for extra_iface in analyze_interfaces:
+            iface_name = _derive_interface_name(extra_iface).strip().lower()
+            if not iface_name or iface_name in seen_names:
+                continue
+            interfaces.append(
+                self._enrich_interface(
+                    {},
+                    switch_ip_address=switch_ip_address,
+                    analyze_iface=extra_iface,
+                    detail_iface=detail_index.get(iface_name),
+                )
+            )
+            seen_names.add(iface_name)
+
+        for extra_iface in detail_interfaces:
+            iface_name = _derive_interface_name(extra_iface).strip().lower()
+            if not iface_name or iface_name in seen_names:
+                continue
+            interfaces.append(
+                self._enrich_interface(
+                    {},
+                    switch_ip_address=switch_ip_address,
+                    analyze_iface=analyze_index.get(iface_name),
+                    detail_iface=extra_iface,
+                )
+            )
+            seen_names.add(iface_name)
+
         interfaces.sort(key=_interface_sort_key)
         _debug_interface_fetch_summary(serial, interfaces, fetched_count=len(data))
         return interfaces
+
+    def _get_analyze_interfaces(self, fabric_name: str, switch_id: str) -> list[dict[str, Any]]:
+        """Return Analyze interface records for one fabric/switch pair."""
+        if not fabric_name or not switch_id:
+            return []
+
+        cache_key = (fabric_name, switch_id)
+        if cache_key in self._analyze_cache:
+            return self._analyze_cache[cache_key]
+
+        try:
+            data = self._get(
+                f"{self._ANALYZE_BASE}/interfaces",
+                params={"fabricName": fabric_name, "switchId": switch_id},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Nexus Analyze interface enrichment failed for fabric %s switch %s: %s",
+                fabric_name,
+                switch_id,
+                exc,
+            )
+            self._analyze_cache[cache_key] = []
+            return []
+
+        if isinstance(data, dict):
+            data = data.get("interfaces", [])
+        if not isinstance(data, list):
+            data = []
+
+        interfaces = [item for item in data if isinstance(item, dict)]
+        self._analyze_cache[cache_key] = interfaces
+        return interfaces
+
+    def _get_interface_details(self, serial: str) -> list[dict[str, Any]]:
+        """Return detailed NDFC interface records for one switch serial."""
+        if not serial:
+            return []
+
+        if serial in self._detail_cache:
+            return self._detail_cache[serial]
+
+        try:
+            data = self._get(
+                f"{self._API_BASE}/lan-fabric/rest/interface/detail/filter",
+                params={"serialNumber": serial},
+            )
+        except Exception as exc:
+            logger.warning("NDFC interface detail enrichment failed for serial %s: %s", serial, exc)
+            self._detail_cache[serial] = []
+            return []
+
+        if isinstance(data, dict):
+            for key in ("interfaces", "items", "data"):
+                if key in data and isinstance(data[key], list):
+                    data = data[key]
+                    break
+            else:
+                data = [data] if data.get("interfaceName") else []
+
+        if not isinstance(data, list):
+            data = []
+
+        details = [item for item in data if isinstance(item, dict)]
+        self._detail_cache[serial] = details
+        return details
 
     def _enrich_switch(self, switch: Any) -> dict:
         """Return a normalised dict for a single NDFC switch record."""
@@ -1476,11 +1363,7 @@ class NexusDashboardSource(DataSource):
             "fabric_name":  fabric_name,
             "site_name":    site_name,
             "ip_address":   ip_address,
-            "switch_db_id": switch_db_id,
             "status":       status,
-            "dashboard_logical_interfaces": [],
-            "dashboard_module_info": [],
-            "dashboard_fex_details": [],
             # --- passthrough raw fields ---
             "hostName":     hostname,
             "switchName":   _safe_get(switch, "switchName", "") or "",
@@ -1499,41 +1382,72 @@ class NexusDashboardSource(DataSource):
             "rawStatus":    raw_status,
             "systemMode":   system_mode,
             "switchDbID":   switch_db_id,
+            "switch_db_id": switch_db_id,
         }
 
     def _enrich_interface(
         self,
         iface: dict,
         switch_ip_address: str = "",
-        dashboard_iface: dict[str, Any] | None = None,
+        analyze_iface: dict[str, Any] | None = None,
+        detail_iface: dict[str, Any] | None = None,
     ) -> dict:
         """Return a normalised dict for a single NDFC interface record."""
         nvpair_values = _flatten_nv_pairs(_safe_get(iface, "nvPairs"))
-        source_iface = _merge_dashboard_interface(iface, dashboard_iface)
+        analyze_iface = analyze_iface or {}
+        detail_iface = detail_iface or {}
+        detail_oper = _safe_get(detail_iface, "operData", {}) or {}
+        source_iface = _merge_dashboard_interface(
+            _merge_dashboard_interface(iface, analyze_iface),
+            detail_iface,
+        )
 
         def nv(*keys: str) -> str:
             return _nvpair_get_from_flattened(nvpair_values, *keys)
 
-        if_name     = _safe_get(source_iface, "ifName", "") or ""
+        if_name     = _first_non_empty(source_iface, "ifName", "interfaceName", "displayName", "name")
         name        = _derive_interface_name(source_iface)
         if_type     = (
             _first_non_empty(source_iface, "ifType", "interfaceType", "portType", "mediaType")
             or nv("ifType", "interfaceType", "portType", "mediaType")
         )
-        admin_state = _first_non_empty(source_iface, "adminState", "adminStatus") or nv("adminState", "adminStatus")
-        oper_status = _first_non_empty(source_iface, "operStatus", "operState", "operStatusStr") or nv(
-            "operStatus", "operState", "operStatusStr"
+        admin_state = (
+            _safe_get(detail_oper, "adminStatus", "")
+            or _first_non_empty(source_iface, "adminState", "adminStatus")
+            or nv("adminState", "adminStatus")
+        )
+        oper_status = (
+            _safe_get(detail_oper, "operationalStatus", "")
+            or _first_non_empty(source_iface, "operStatus", "operState", "operStatusStr", "operationalStatus")
+            or nv("operStatus", "operState", "operStatusStr")
         )
         description = (
-            _safe_get(source_iface, "ifDescr", "")
+            _safe_get(detail_oper, "operDescription", "")
+            or _safe_get(source_iface, "ifDescr", "")
             or _safe_get(source_iface, "description", "")
+            or _safe_get(source_iface, "displayName", "")
             or nv("ifDescr", "description", "desc", "portDescription")
         )
         mac_address = _safe_get(source_iface, "macAddress", "") or nv("macAddress", "mac")
-        ip_address  = _safe_get(source_iface, "ipAddress", "") or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
+        ip_address  = (
+            _first_non_empty(source_iface, "ip", "ipv4Address", "ipAddress")
+            or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
+        )
         ip_prefix   = nv("prefix", "prefixLength", "subnetPrefix", "mask", "subnetMask")
-        speed_mbps, speed_str = _derive_interface_speed_mbps(source_iface, nvpair_values)
+        speed_source = dict(source_iface)
+        if _safe_get(detail_oper, "speed", "") and _is_blankish_speed(speed_source.get("speed")):
+            speed_source["speed"] = _safe_get(detail_oper, "speed", "")
+        if _safe_get(analyze_iface, "speed", "") and _is_blankish_speed(speed_source.get("speed")):
+            speed_source["speed"] = _safe_get(analyze_iface, "speed", "")
+        if _safe_get(analyze_iface, "adminSpeed", "") and _is_blankish_speed(speed_source.get("adminSpeed")):
+            speed_source["adminSpeed"] = _safe_get(analyze_iface, "adminSpeed", "")
+        if _safe_get(analyze_iface, "operSpeed", "") and _is_blankish_speed(speed_source.get("operSpeed")):
+            speed_source["operSpeed"] = _safe_get(analyze_iface, "operSpeed", "")
+        speed_mbps, _speed_str = _derive_interface_speed_mbps(speed_source, nvpair_values)
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
+        channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
+        if not lag_name and channel_id not in ("", None, 0, "0"):
+            lag_name = _normalize_port_channel_name(channel_id)
         vpc_name    = _derive_vpc_name(source_iface, nvpair_values=nvpair_values)
         mgmt_only   = if_type in {"INTERFACE_MANAGEMENT", "mgmt"} or name.lower().startswith("mgmt")
         if mgmt_only and not ip_address:

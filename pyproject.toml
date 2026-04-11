@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "hcl-netbox-discovery"
-version = "1.0.27"
+version = "1.0.29"
 description = "Modular HCL-driven NetBox discovery engine"
 authors = ["HCL NetBox Discovery Maintainers <noreply@example.com>"]
 packages = [
