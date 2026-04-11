@@ -1064,10 +1064,7 @@ class TestLoadConfigIterator:
 
 
 class TestXClarityMappings:
-    PATHS = [
-        "mappings/xclarity.hcl.example",
-        "mappings/xclarity-modules.hcl.example",
-    ]
+    PATHS = ["mappings/xclarity.hcl.example"]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
     CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
     STATUS_EXPR = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
@@ -1256,10 +1253,7 @@ class TestSourcePayloadContracts:
         assert placement.args["datacenter_candidate"] == "source('dataCenter')"
 
     def test_xclarity_examples_prefer_serial_in_lookup_contract(self):
-        for mapping_path in (
-            "mappings/xclarity.hcl.example",
-            "mappings/xclarity-modules.hcl.example",
-        ):
+        for mapping_path in ("mappings/xclarity.hcl.example",):
             cfg = load_config(mapping_path)
             devices = [o for o in cfg.objects if o.netbox_resource == "dcim.devices"]
             assert devices, f"missing dcim.devices objects in {mapping_path}"

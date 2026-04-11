@@ -64,7 +64,7 @@ duplication, or coupling to justify a future focused change.
 **Files**
 - `src/collector/engine.py`
 - `src/collector/prerequisites.py`
-- `mappings/xclarity-modules.hcl.example`
+- `mappings/xclarity.hcl.example`
 
 **Why**
 - XClarity module-profile churn and null-schema bugs required fixes in both the
