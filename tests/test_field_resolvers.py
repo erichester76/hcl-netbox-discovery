@@ -379,6 +379,18 @@ class TestResolverNetBoxLookup:
 
         assert r.evaluate("nb_id('dcim.devices', {'name': ''})") is None
 
+    def test_nb_id_returns_none_when_multikey_lookup_has_missing_component(self):
+        from unittest.mock import Mock
+
+        nb = SimpleNamespace(get=Mock(return_value={"id": 101}))
+        r = _make_resolver({}, nb=nb)
+
+        assert (
+            r.evaluate("nb_id('dcim.interfaces', {'device_id': None, 'name': 'Ethernet1/1'})")
+            is None
+        )
+        nb.get.assert_not_called()
+
     def test_nb_id_returns_none_in_dry_run(self):
         nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
         opts = CollectorOptions(

@@ -913,9 +913,10 @@ def _collect_duplicate_ip_refs(
             duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
             if not duplicate_address:
                 continue
-            if not _normalize_ip_with_prefix(duplicate_address):
+            normalized_address = _normalize_ip_with_prefix(duplicate_address)
+            if not normalized_address:
                 continue
-            addresses.setdefault(duplicate_address, []).append((switch, iface))
+            addresses.setdefault(normalized_address, []).append((switch, iface))
     return addresses
 
 

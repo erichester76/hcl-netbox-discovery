@@ -9,6 +9,8 @@ import types
 from functools import lru_cache
 from typing import Any
 
+from .prerequisites import extract_id
+
 try:
     from .db import get_config as _get_config
 except ImportError:
@@ -31,16 +33,6 @@ def _get_attr(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
-
-
-def _extract_id(obj: Any) -> int | None:
-    """Return the integer ``id`` from a NetBox record, dict, or ``None``."""
-    if obj is None:
-        return None
-    if isinstance(obj, dict):
-        return obj.get("id")
-    return getattr(obj, "id", None)
-
 
 def _matches_filter(item: Any, key: str) -> bool:
     """Return True if *item* matches the filter key.
@@ -360,20 +352,17 @@ class Resolver:
             if not isinstance(lookup, dict):
                 return None
 
-            params = {
-                key: value
-                for key, value in lookup.items()
-                if value is not None and value != "" and value != []
-            }
-            if not params:
+            if not lookup:
+                return None
+            if any(value is None or value == "" or value == [] for value in lookup.values()):
                 return None
 
             try:
-                obj = ctx.nb.get(resource, **params)
+                obj = ctx.nb.get(resource, **lookup)
             except Exception as exc:
-                logger.debug("nb_id lookup failed resource=%s lookup=%s: %s", resource, params, exc)
+                logger.debug("nb_id lookup failed resource=%s lookup=%s: %s", resource, lookup, exc)
                 return None
-            return _extract_id(obj)
+            return extract_id(obj)
 
         # ---- collector namespace ----
         col_attrs = {
