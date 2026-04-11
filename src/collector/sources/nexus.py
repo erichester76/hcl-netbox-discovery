@@ -204,19 +204,19 @@ def _derive_interface_name(iface: Any) -> str:
     """Return the best-available interface name from common NDFC fields."""
     return _normalize_interface_name(
         _first_non_empty(
-        iface,
-        "ifName",
-        "name",
-        "interfaceName",
-        "portName",
-        "displayName",
-        "shortName",
+            iface,
+            "ifName",
+            "name",
+            "interfaceName",
+            "portName",
+            "displayName",
+            "shortName",
         )
     )
 
 
 def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[str, str]]:
-    """Return the interface name, source field, and raw candidate values."""
+    """Return the interface name, source field, and normalized candidate values."""
     candidates: dict[str, str] = {}
     for key in ("ifName", "name", "interfaceName", "portName", "displayName", "shortName"):
         value = _safe_get(iface, key)
@@ -895,12 +895,27 @@ def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, A
         if len(roles) != 1:
             continue
 
+        sorted_refs = sorted(
+            refs,
+            key=lambda ref: (
+                str(ref[0].get("name", "") or ""),
+                str(ref[1].get("name", "") or ""),
+            ),
+        )
+        site_names = {
+            str(switch.get("site_name", "") or "")
+            for switch, _ in sorted_refs
+            if str(switch.get("site_name", "") or "")
+        }
+        if len(site_names) > 1:
+            continue
+
         role = next(iter(roles))
-        first_switch, first_iface = refs[0]
+        first_switch, first_iface = sorted_refs[0]
         first_name = str(first_iface.get("name", "") or "")
         references = [
             f"{switch.get('name', '')}:{iface.get('name', '')}"
-            for switch, iface in refs
+            for switch, iface in sorted_refs
         ]
         match = re.search(r"(\d+)$", first_name)
         shared_records.append(

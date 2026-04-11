@@ -1277,6 +1277,50 @@ class TestSharedIpRecords:
         assert records[0]["role"] == "Anycast"
         assert records[0]["group_id"] == 254
 
+    def test_build_shared_ip_records_sorts_references_and_skips_cross_site(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert records[0]["references"] == ["leaf-a:Vlan3965", "leaf-b:Vlan3965"]
+        assert records[0]["site_name"] == "Fabric-A"
+
+        cross_site_records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert cross_site_records == []
+
     def test_serial_uppercased(self):
         src = NexusDashboardSource()
         sw = {
