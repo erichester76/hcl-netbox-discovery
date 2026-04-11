@@ -166,7 +166,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assignment_fields = {field.name: field.value for field in shared_fhrp_assignment.fields}
     assert assignment_fields["interface_type"] == "'dcim.interface'"
     assert assignment_fields["interface_id"] == (
-        "nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': source('device_name')}), 'name': source('interface_name')})"
+        "nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': source('device_name'), 'site': nb_id('dcim.sites', {'name': when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), None)})}), 'name': source('interface_name')})"
     )
     assert assignment_fields["priority"] == "source('priority')"
 
