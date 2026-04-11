@@ -13,9 +13,13 @@ import pytest
 
 from collector.sources.nexus import (
     NexusDashboardSource,
+    _build_fabric_records,
     _build_shared_fhrp_assignments,
     _build_shared_fhrp_groups,
     _build_shared_ip_records,
+    _build_topology_custom_field_records,
+    _build_vpc_domain_records,
+    _build_vpc_peer_link_records,
     _derive_interface_name_details,
     _flatten_interface_payload,
     _infer_iface_type_from_speed,
@@ -372,6 +376,26 @@ class TestNexusGetObjects:
         src = self._connected_source()
         with pytest.raises(ValueError, match="unknown collection"):
             src.get_objects("routers")
+
+    def test_returns_cached_fabric_vpc_and_peer_link_collections(self):
+        src = self._connected_source()
+        src._switches = [{"name": "leaf-a"}]
+        src._fabrics = [{"identifier": "ITC-CUProd"}]
+        src._vpc_domains = [{"identifier": "ITC-CUProd:27"}]
+        src._vpc_peer_links = [{"identifier": "ITC-CUProd:27:peer-link"}]
+        src._topology_custom_fields = [{"name": "ndfc_fabric"}]
+
+        assert src.get_objects("fabrics") == [{"identifier": "ITC-CUProd"}]
+        assert src.get_objects("vpc_domains") == [{"identifier": "ITC-CUProd:27"}]
+        assert src.get_objects("vpc_peer_links") == [{"identifier": "ITC-CUProd:27:peer-link"}]
+        assert src.get_objects("topology_custom_fields") == [{"name": "ndfc_fabric"}]
+
+    def test_get_topology_custom_fields_builds_static_records_without_switch_fetch(self):
+        src = self._connected_source()
+
+        result = src.get_objects("topology_custom_fields")
+
+        assert result == _build_topology_custom_field_records()
 
     def test_get_switches_returns_enriched_dicts(self):
         src = self._connected_source()
@@ -1438,6 +1462,189 @@ class TestSharedIpRecords:
         )
 
         assert records[0]["site_name"] == ""
+
+
+class TestNexusFabricAndVpcRecords:
+    def test_enrich_switch_emits_vpc_and_tenant_metadata(self):
+        src = NexusDashboardSource()
+        result = src._enrich_switch(
+            {
+                "hostName": "leaf-a.example.com",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL123",
+                "switchDbID": 22530,
+                "release": "10.4(2)",
+                "fabricName": "ITC-CUProd",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.1",
+                "status": "alive",
+                "systemMode": "Normal",
+                "vpcDomain": "27",
+                "peer": "leaf-b",
+                "principal": True,
+                "sendIntf": "Eth1/47",
+                "recvIntf": "Eth1/48",
+                "peerlinkState": "up",
+                "hsTenantName": "CUProd",
+            }
+        )
+
+        assert result["tenant_name"] == "CUProd"
+        assert result["vpc_domain_id"] == "27"
+        assert result["vpc_role"] == "primary"
+        assert result["vpc_peer_name"] == "leaf-b"
+        assert result["peer_link_interfaces"] == ["Ethernet1/47", "Ethernet1/48"]
+        assert result["peer_link_status"] == "up"
+        assert result["hsTenantName"] == "CUProd"
+
+    def test_enrich_interface_emits_vpc_parent_lag_vrf_and_fabric(self):
+        src = NexusDashboardSource()
+        result = src._enrich_interface(
+            {
+                "ifName": "vpc27",
+                "nvPairs": {
+                    "ifType": "INTERFACE_ST",
+                    "vpcId": "27",
+                    "peer1Pcid": "27",
+                    "vrfName": "Tenant-A",
+                    "fabricName": "ITC-CUProd",
+                },
+            }
+        )
+
+        assert result["vpc_name"] == "vpc27"
+        assert result["vpc_parent_lag_name"] == "port-channel27"
+        assert result["vrf_name"] == "Tenant-A"
+        assert result["fabric_name"] == "ITC-CUProd"
+
+    def test_build_fabric_records_aggregates_sites_devices_and_tenants(self):
+        records = _build_fabric_records(
+            [
+                {"fabric_name": "ITC-CUProd", "site_name": "ITC", "name": "leaf-a", "tenant_name": "Tenant-A"},
+                {"fabric_name": "ITC-CUProd", "site_name": "ITC", "name": "leaf-b", "tenant_name": "Tenant-B"},
+            ]
+        )
+
+        assert records == [
+            {
+                "identifier": "ITC-CUProd",
+                "fabric_name": "ITC-CUProd",
+                "site_names": ["ITC"],
+                "device_names": ["leaf-a", "leaf-b"],
+                "tenant_names": ["Tenant-A", "Tenant-B"],
+            }
+        ]
+
+    def test_build_vpc_domain_records_aggregates_control_plane_and_lags(self):
+        records = _build_vpc_domain_records(
+            [
+                {
+                    "fabric_name": "ITC-CUProd",
+                    "name": "leaf-a",
+                    "tenant_name": "Tenant-A",
+                    "vpc_domain_id": "27",
+                    "vpc_role": "primary",
+                    "vpc_peer_name": "leaf-b",
+                    "interfaces": [
+                        {
+                            "name": "vpc27",
+                            "vpc_name": "vpc27",
+                            "vpc_parent_lag_name": "port-channel27",
+                            "vrf_name": "Tenant-A",
+                        }
+                    ],
+                },
+                {
+                    "fabric_name": "ITC-CUProd",
+                    "name": "leaf-b",
+                    "tenant_name": "Tenant-B",
+                    "vpc_domain_id": "27",
+                    "vpc_role": "secondary",
+                    "vpc_peer_name": "leaf-a",
+                    "interfaces": [
+                        {
+                            "name": "vpc27",
+                            "vpc_name": "vpc27",
+                            "vpc_parent_lag_name": "port-channel27",
+                            "vrf_name": "Tenant-B",
+                        }
+                    ],
+                },
+            ]
+        )
+
+        assert records == [
+            {
+                "identifier": "ITC-CUProd:27",
+                "fabric_name": "ITC-CUProd",
+                "fabric_identifier": "ITC-CUProd",
+                "vpc_domain_id": "27",
+                "vpc_name": "vpc27",
+                "primary_device_name": "leaf-a",
+                "secondary_device_name": "leaf-b",
+                "peer_device_names": ["leaf-a", "leaf-b"],
+                "member_lag_refs": [
+                    {"device_name": "leaf-a", "name": "port-channel27"},
+                    {"device_name": "leaf-b", "name": "port-channel27"},
+                ],
+                "vpc_interface_refs": [
+                    {"device_name": "leaf-a", "name": "vpc27"},
+                    {"device_name": "leaf-b", "name": "vpc27"},
+                ],
+                "tenant_names": ["Tenant-A", "Tenant-B"],
+                "vrf_names": ["Tenant-A", "Tenant-B"],
+            }
+        ]
+
+    def test_build_vpc_peer_link_records_aggregates_interfaces_and_status(self):
+        records = _build_vpc_peer_link_records(
+            [
+                {
+                    "fabric_name": "ITC-CUProd",
+                    "name": "leaf-a",
+                    "tenant_name": "Tenant-A",
+                    "vpc_domain_id": "27",
+                    "peer_link_interfaces": ["Ethernet1/47", "Ethernet1/48"],
+                    "peer_link_status": "up",
+                    "interfaces": [
+                        {"name": "Ethernet1/47", "vrf_name": "Tenant-A"},
+                        {"name": "Ethernet1/48", "vrf_name": "Tenant-A"},
+                    ],
+                },
+                {
+                    "fabric_name": "ITC-CUProd",
+                    "name": "leaf-b",
+                    "tenant_name": "Tenant-B",
+                    "vpc_domain_id": "27",
+                    "peer_link_interfaces": ["Ethernet1/47", "Ethernet1/48"],
+                    "peer_link_status": "up",
+                    "interfaces": [
+                        {"name": "Ethernet1/47", "vrf_name": "Tenant-B"},
+                        {"name": "Ethernet1/48", "vrf_name": "Tenant-B"},
+                    ],
+                },
+            ]
+        )
+
+        assert records == [
+            {
+                "identifier": "ITC-CUProd:27:peer-link",
+                "vpc_domain_identifier": "ITC-CUProd:27",
+                "fabric_name": "ITC-CUProd",
+                "fabric_identifier": "ITC-CUProd",
+                "device_names": ["leaf-a", "leaf-b"],
+                "interface_refs": [
+                    {"device_name": "leaf-a", "name": "Ethernet1/47"},
+                    {"device_name": "leaf-a", "name": "Ethernet1/48"},
+                    {"device_name": "leaf-b", "name": "Ethernet1/47"},
+                    {"device_name": "leaf-b", "name": "Ethernet1/48"},
+                ],
+                "status_values": ["up"],
+                "status": "up",
+                "tenant_names": ["Tenant-A", "Tenant-B"],
+                "vrf_names": ["Tenant-A", "Tenant-B"],
+            }
+        ]
 
     def test_serial_uppercased(self):
         src = NexusDashboardSource()
