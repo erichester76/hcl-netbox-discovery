@@ -435,7 +435,6 @@ class TestNexusGetObjects:
                 "hostName": "nx-leaf-03",
                 "model": "N9K-C93180YC-EX",
                 "serialNumber": "SAL9876543",
-                "switchDbID": 22530,
                 "release": "9.3(7)",
                 "fabricName": "ProdFabric",
                 "switchRole": "leaf",
@@ -460,24 +459,55 @@ class TestNexusGetObjects:
             }
         ]
 
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {
-            "logicalInterfaces": {
-                "Ethernet": [
-                    {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
-                ],
-            },
+        analyze_iface_resp = MagicMock()
+        analyze_iface_resp.raise_for_status = MagicMock()
+        analyze_iface_resp.json.return_value = {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/1",
+                    "interfaceType": "ethernet",
+                    "physicalInterface": True,
+                    "speed": "100Gb",
+                    "ip": "10.127.117.32/24",
+                    "channelId": 500,
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "description": "Connected to host-20",
+                }
+            ]
         }
 
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {
-            "moduleInfo": {},
-            "fexDetails": {},
-        }
+        detail_resp = MagicMock()
+        detail_resp.raise_for_status = MagicMock()
+        detail_resp.json.return_value = [
+            {
+                "interfaceName": "Ethernet1/1",
+                "interfaceType": "ethernet",
+                "operData": {
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "operDescription": "XCVR present",
+                    "speed": "100Gb",
+                },
+                "channelId": 500,
+            }
+        ]
 
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp, iface_resp]
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                assert params == {"serialNumber": "SAL9876543"}
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                assert params == {"fabricName": "ProdFabric", "switchId": "SAL9876543"}
+                return analyze_iface_resp
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                assert params == {"serialNumber": "SAL9876543"}
+                return detail_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
 
         result = src.get_objects("switches")
         assert len(result) == 1
@@ -488,6 +518,8 @@ class TestNexusGetObjects:
         assert iface["enabled"] is True
         assert iface["mac_address"] == "00:1B:44:11:3A:B7"
         assert iface["speed"] == 100000
+        assert iface["ip_address"] == "10.127.117.32/24"
+        assert iface["lag_name"] == "port-channel500"
 
     def test_get_switches_with_wrapped_interfaces_fetched(self):
         src = self._connected_source()
@@ -525,12 +557,111 @@ class TestNexusGetObjects:
             }
         ]
 
-        src._session.get.side_effect = [switch_resp, iface_resp]
+        analyze_iface_resp = MagicMock()
+        analyze_iface_resp.raise_for_status = MagicMock()
+        analyze_iface_resp.json.return_value = {"interfaces": []}
+
+        detail_resp = MagicMock()
+        detail_resp.raise_for_status = MagicMock()
+        detail_resp.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return analyze_iface_resp
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return detail_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
 
         result = src.get_objects("switches")
 
         assert result[0]["interfaces"][0]["name"] == "mgmt0"
         assert result[0]["interfaces"][0]["mgmt_only"] is True
+
+    def test_get_switches_includes_interfaces_found_only_in_analyze_or_detail(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = []
+
+        analyze_iface_resp = MagicMock()
+        analyze_iface_resp.raise_for_status = MagicMock()
+        analyze_iface_resp.json.return_value = {
+            "interfaces": [
+                {
+                    "interfaceName": "Ethernet1/10",
+                    "interfaceType": "ethernet",
+                    "physicalInterface": True,
+                    "speed": "25Gb",
+                    "ip": "10.10.10.1/31",
+                    "channelId": 7,
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "description": "analyze-only",
+                }
+            ]
+        }
+
+        detail_resp = MagicMock()
+        detail_resp.raise_for_status = MagicMock()
+        detail_resp.json.return_value = [
+            {
+                "interfaceName": "loopback100",
+                "interfaceType": "loopback",
+                "operData": {
+                    "adminStatus": "up",
+                    "operationalStatus": "up",
+                    "operDescription": "detail-only",
+                    "speed": "",
+                },
+            }
+        ]
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return analyze_iface_resp
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return detail_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        interfaces = {iface["name"]: iface for iface in result[0]["interfaces"]}
+        assert interfaces["Ethernet1/10"]["type"] == "25gbase-x-sfp28"
+        assert interfaces["Ethernet1/10"]["speed"] == 25000
+        assert interfaces["Ethernet1/10"]["ip_address"] == "10.10.10.1/31"
+        assert interfaces["Ethernet1/10"]["lag_name"] == "port-channel7"
+        assert interfaces["loopback100"]["type"] == "virtual"
+        assert interfaces["loopback100"]["description"] == "detail-only"
 
     def test_get_switches_interface_fetch_error_returns_empty(self):
         src = self._connected_source()
@@ -552,10 +683,12 @@ class TestNexusGetObjects:
             }
         ]
 
-        def side_effect(url, **kwargs):
-            if "interface" in url:
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
                 raise Exception("timeout")
-            return switch_resp
+            return MagicMock(json=MagicMock(return_value={"interfaces": []}), raise_for_status=MagicMock())
 
         src._session.get.side_effect = side_effect
 
@@ -614,273 +747,6 @@ class TestNexusGetObjects:
 
         assert "NDFC switch modules list empty" in caplog.text
 
-    def test_get_switches_logs_dashboard_switch_endpoint_shapes_at_debug(self, caplog):
-        src = self._connected_source()
-        src._fetch_interfaces = False
-
-        switch_resp = MagicMock()
-        switch_resp.raise_for_status = MagicMock()
-        switch_resp.json.return_value = [
-            {
-                "hostName": "nx-leaf-05",
-                "model": "N9K-C93180YC-EX",
-                "serialNumber": "SAL0002222",
-                "switchDbID": 22530,
-                "release": "9.3(7)",
-                "fabricName": "ProdFabric",
-                "switchRole": "leaf",
-                "ipAddress": "10.0.0.6",
-                "status": "alive",
-                "systemMode": "Normal",
-                "modules": [],
-            }
-        ]
-
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {
-            "serialNumber": "SAL0002222",
-            "adminStatus": "up",
-            "logicalInterfaces": {
-                "Ethernet": [
-                    {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
-                ],
-            },
-        }
-
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {
-            "moduleInfo": {
-                "ok": [
-                    {"moduleName": "PSU1", "moduleType": "Power Supply"}
-                ],
-            },
-            "fexDetails": {
-                "attached": [
-                    {"moduleName": "FEX101", "model": "N2K-C2348TQ"}
-                ],
-            },
-        }
-
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
-
-        with caplog.at_level(logging.DEBUG, logger="collector.sources.nexus"):
-            result = src.get_objects("switches")
-
-        assert "NDFC dashboard switch/interface switch_id=22530" in caplog.text
-        assert "logicalInterfaces dict keys=['Ethernet'] flattened_count=1" in caplog.text
-        assert "first_bucket='Ethernet' first_bucket_type=list" in caplog.text
-        assert "NDFC dashboard switch/module switch_id=22530" in caplog.text
-        assert "moduleInfo dict keys=['ok'] flattened_count=1" in caplog.text
-        assert "first_bucket='ok' first_bucket_type=list" in caplog.text
-        assert "fexDetails dict keys=['attached'] flattened_count=1" in caplog.text
-        assert result[0]["dashboard_logical_interfaces"][0]["ifName"] == "Ethernet1/1"
-        assert result[0]["dashboard_logical_interfaces"][0]["dashboard_group"] == "logicalInterfaces/Ethernet"
-        assert result[0]["dashboard_module_info"][0]["moduleName"] == "PSU1"
-        assert result[0]["dashboard_module_info"][0]["dashboard_group"] == "moduleInfo/ok"
-        assert result[0]["dashboard_fex_details"][0]["moduleName"] == "FEX101"
-        assert result[0]["dashboard_fex_details"][0]["dashboard_group"] == "fexDetails/attached"
-
-    def test_get_switches_flattens_empty_dashboard_groups_to_no_records(self):
-        src = self._connected_source()
-        src._fetch_interfaces = False
-
-        switch_resp = MagicMock()
-        switch_resp.raise_for_status = MagicMock()
-        switch_resp.json.return_value = [
-            {
-                "hostName": "nx-leaf-05",
-                "model": "N9K-C93180YC-EX",
-                "serialNumber": "SAL0002222",
-                "switchDbID": 22530,
-                "release": "9.3(7)",
-                "fabricName": "ProdFabric",
-                "switchRole": "leaf",
-                "ipAddress": "10.0.0.6",
-                "status": "alive",
-                "systemMode": "Normal",
-                "modules": None,
-            }
-        ]
-
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {"logicalInterfaces": {}}
-
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {"moduleInfo": {}, "fexDetails": {}}
-
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
-
-        result = src.get_objects("switches")
-
-        assert result[0]["dashboard_logical_interfaces"] == []
-        assert result[0]["dashboard_module_info"] == []
-        assert result[0]["dashboard_fex_details"] == []
-
-    def test_get_switches_logs_group_bucket_value_shape_when_dashboard_groups_do_not_flatten(self, caplog):
-        src = self._connected_source()
-        src._fetch_interfaces = False
-
-        switch_resp = MagicMock()
-        switch_resp.raise_for_status = MagicMock()
-        switch_resp.json.return_value = [
-            {
-                "hostName": "nx-leaf-05",
-                "model": "N9K-C93180YC-EX",
-                "serialNumber": "SAL0002222",
-                "switchDbID": 22530,
-                "release": "9.3(7)",
-                "fabricName": "ProdFabric",
-                "switchRole": "leaf",
-                "ipAddress": "10.0.0.6",
-                "status": "alive",
-                "systemMode": "Normal",
-                "modules": None,
-            }
-        ]
-
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {
-            "logicalInterfaces": {
-                "Ethernet": {
-                    "summary": "opaque",
-                }
-            }
-        }
-
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {
-            "moduleInfo": {
-                "ok": {
-                    "summary": "opaque",
-                }
-            },
-            "fexDetails": {},
-        }
-
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
-
-        with caplog.at_level(logging.DEBUG, logger="collector.sources.nexus"):
-            result = src.get_objects("switches")
-
-        assert result[0]["dashboard_logical_interfaces"] == []
-        assert result[0]["dashboard_module_info"] == []
-        assert "first_bucket='Ethernet' first_bucket_type=dict" in caplog.text
-        assert "first_bucket='ok' first_bucket_type=dict" in caplog.text
-
-    def test_get_switches_does_not_emit_group_containers_as_dashboard_records(self):
-        src = self._connected_source()
-        src._fetch_interfaces = False
-
-        switch_resp = MagicMock()
-        switch_resp.raise_for_status = MagicMock()
-        switch_resp.json.return_value = [
-            {
-                "hostName": "nx-leaf-05",
-                "model": "N9K-C93180YC-EX",
-                "serialNumber": "SAL0002222",
-                "switchDbID": 22530,
-                "release": "9.3(7)",
-                "fabricName": "ProdFabric",
-                "switchRole": "leaf",
-                "ipAddress": "10.0.0.6",
-                "status": "alive",
-                "systemMode": "Normal",
-                "modules": None,
-            }
-        ]
-
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {
-            "logicalInterfaces": {
-                "Ethernet": "summary-only",
-                "Loopback": 0,
-            }
-        }
-
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {
-            "moduleInfo": {
-                "ok": "summary-only",
-                "n/a": 0,
-            },
-            "fexDetails": {},
-        }
-
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
-
-        result = src.get_objects("switches")
-
-        assert result[0]["dashboard_logical_interfaces"] == []
-        assert result[0]["dashboard_module_info"] == []
-        assert result[0]["dashboard_fex_details"] == []
-
-    def test_get_switches_flattens_nested_grouped_dashboard_records(self):
-        src = self._connected_source()
-        src._fetch_interfaces = False
-
-        switch_resp = MagicMock()
-        switch_resp.raise_for_status = MagicMock()
-        switch_resp.json.return_value = [
-            {
-                "hostName": "nx-leaf-05",
-                "model": "N9K-C93180YC-EX",
-                "serialNumber": "SAL0002222",
-                "switchDbID": 22530,
-                "release": "9.3(7)",
-                "fabricName": "ProdFabric",
-                "switchRole": "leaf",
-                "ipAddress": "10.0.0.6",
-                "status": "alive",
-                "systemMode": "Normal",
-                "modules": None,
-            }
-        ]
-
-        dashboard_iface_resp = MagicMock()
-        dashboard_iface_resp.raise_for_status = MagicMock()
-        dashboard_iface_resp.json.return_value = {
-            "logicalInterfaces": {
-                "Ethernet": {
-                    "up": [
-                        {"ifName": "Ethernet1/1", "adminSpeed": "100000000000"}
-                    ]
-                }
-            }
-        }
-
-        dashboard_module_resp = MagicMock()
-        dashboard_module_resp.raise_for_status = MagicMock()
-        dashboard_module_resp.json.return_value = {
-            "moduleInfo": {
-                "ok": {
-                    "power": [
-                        {"moduleName": "PSU1", "moduleType": "Power Supply"}
-                    ]
-                }
-            },
-            "fexDetails": {},
-        }
-
-        src._session.get.side_effect = [switch_resp, dashboard_iface_resp, dashboard_module_resp]
-
-        result = src.get_objects("switches")
-
-        assert result[0]["dashboard_logical_interfaces"][0]["ifName"] == "Ethernet1/1"
-        assert (
-            result[0]["dashboard_logical_interfaces"][0]["dashboard_group"]
-            == "logicalInterfaces/Ethernet/up"
-        )
-        assert result[0]["dashboard_module_info"][0]["moduleName"] == "PSU1"
-        assert result[0]["dashboard_module_info"][0]["dashboard_group"] == "moduleInfo/ok/power"
-
     def test_get_switches_suppresses_duplicate_interface_ips_across_switches(self):
         src = self._connected_source()
         src._fetch_interfaces = True
@@ -934,7 +800,28 @@ class TestNexusGetObjects:
             }
         ]
 
-        src._session.get.side_effect = [switch_resp, iface_resp_one, iface_resp_two]
+        empty_analyze = MagicMock()
+        empty_analyze.raise_for_status = MagicMock()
+        empty_analyze.json.return_value = {"interfaces": []}
+
+        empty_detail = MagicMock()
+        empty_detail.raise_for_status = MagicMock()
+        empty_detail.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL9876543"}:
+                return iface_resp_one
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL9876544"}:
+                return iface_resp_two
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return empty_analyze
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return empty_detail
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
 
         result = src.get_objects("switches")
 
@@ -1387,7 +1274,7 @@ class TestNexusEnrichInterface:
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
-    def test_interface_speed_can_use_dashboard_record_when_legacy_speed_is_auto(self):
+    def test_interface_speed_can_use_analyze_and_detail_records_when_legacy_speed_is_auto(self):
         src = NexusDashboardSource()
         iface = {
             "ifName": "Ethernet1/3",
@@ -1397,16 +1284,78 @@ class TestNexusEnrichInterface:
                 "speed": "Auto",
             },
         }
-        dashboard_iface = {
-            "ifName": "Ethernet1/3",
-            "adminSpeed": "100000000000",
+        analyze_iface = {
+            "interfaceName": "Ethernet1/3",
+            "speed": "100Gb",
+            "channelId": 500,
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/3",
+            "operData": {
+                "adminStatus": "up",
+                "speed": "100Gb",
+            },
         }
 
-        result = src._enrich_interface(iface, dashboard_iface=dashboard_iface)
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
 
         assert result["speed"] == 100000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
+        assert result["lag_name"] == "port-channel500"
+
+    def test_interface_detail_state_overrides_legacy_and_analyze_state(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/7",
+            "ifType": "INTERFACE_ETHERNET",
+            "adminState": "down",
+            "operStatus": "down",
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/7",
+            "adminStatus": "down",
+            "operationalStatus": "down",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/7",
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["enabled"] is True
+
+    def test_detail_and_analyze_speed_override_auto_placeholders(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/8",
+            "ifType": "INTERFACE_ETHERNET",
+            "speed": "Auto",
+            "adminSpeed": "Auto",
+            "operSpeed": "Auto",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/8",
+            "adminSpeed": "100000000000",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/8",
+            "operData": {
+                "speed": "100Gb",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["speed"] == 100000
+        assert result["type"] == "100gbase-x-qsfp28"
 
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
         src = NexusDashboardSource()
