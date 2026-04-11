@@ -31,6 +31,18 @@ def test_nexus_modules_example_mapping_defines_module_blocks(monkeypatch):
     assert psu.power_input is not None
     assert psu.power_input.name == "'Power Input ' + str(source('position') or source('bay_name'))"
     assert psu.power_input.type == "'iec-60320-c14'"
+    psu_fields = {field.name: field.value for field in psu.fields}
+    assert psu_fields["description"] == "source('description')"
+    assert (
+        psu_fields["status"]
+        == "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    )
 
     transceiver = modules_by_profile["Transceiver"]
     assert transceiver.dedupe_by == "source('serial') or source('bay_name') or source('model')"
+    transceiver_fields = {field.name: field.value for field in transceiver.fields}
+    assert transceiver_fields["description"] == "source('description')"
+    assert (
+        transceiver_fields["status"]
+        == "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    )
