@@ -42,7 +42,7 @@ Interface dict fields (when fetch_interfaces is enabled)
   vpc_name          Best-available vPC interface name
   mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
-  speed             Speed in Mbps (integer)
+  speed             Speed in Kbps (integer, matching NetBox interface units)
   ip_address        IP address with prefix length (e.g. ``"10.0.0.1/24"``)
   ifName, ifType, adminState, operStatus (raw passthrough)
 
@@ -770,7 +770,8 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
         nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS
     )
     if bandwidth and str(bandwidth).strip().isdigit():
-        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
+        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for
+        # intermediate Nexus parsing and interface-type inference.
         bandwidth_mbps = int(str(bandwidth).strip()) // 1000
         if bandwidth_mbps > 0:
             return bandwidth_mbps, str(bandwidth).strip()
