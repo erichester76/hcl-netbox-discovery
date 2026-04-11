@@ -355,6 +355,7 @@ def test_job_detail_has_live_and_level_controls_for_queued_job(app):
     assert b'id="toggle-level-WARNING"' in resp.data
     assert b'id="toggle-level-ERROR"' in resp.data
     assert b'id="job-status-badge"' in resp.data
+    assert b">Rerun</button>" in resp.data
 
 
 def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
@@ -367,7 +368,7 @@ def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
 
     assert resp.status_code == 200
     assert b'data-level="CRITICAL"' in resp.data
-    assert b"levelVisibility[level] !== false" in resp.data
+    assert b'line.classList.toggle("log-hidden"' in resp.data
     assert b'class="log-row log-line-CRITICAL"' in resp.data
 
 
@@ -393,6 +394,21 @@ def test_job_detail_terminal_job_shows_live_update_off(app):
     assert resp.status_code == 200
     assert b"Live Update: Off" in resp.data
     assert b"LIVE OFF" in resp.data
+
+
+def test_index_shows_rerun_button_for_recent_jobs(app):
+    job_id = create_job("mappings/test.hcl", dry_run=True, debug_mode=True)
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b'action="/jobs/run"' in resp.data
+    assert b'name="hcl_file" value="mappings/test.hcl"' in resp.data
+    assert b'name="dry_run" value="1"' in resp.data
+    assert b'name="debug_mode" value="1"' in resp.data
+    assert b">Rerun</button>" in resp.data
 
 
 def test_job_detail_not_found(app):

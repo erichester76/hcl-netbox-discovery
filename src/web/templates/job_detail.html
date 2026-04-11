@@ -20,6 +20,13 @@
       Runtime Snapshot
     </button>
     {% endif %}
+    <form method="POST" action="/jobs/run" class="d-inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="hcl_file" value="{{ job.hcl_file }}" />
+      {% if job.dry_run %}<input type="hidden" name="dry_run" value="1" />{% endif %}
+      {% if job.debug_mode %}<input type="hidden" name="debug_mode" value="1" />{% endif %}
+      <button type="submit" class="btn btn-sm btn-outline-primary me-2">Rerun</button>
+    </form>
     {% if job.status in ['queued', 'running'] %}
     <form method="POST" action="/jobs/{{ job.id }}/stop" class="d-inline">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
@@ -129,8 +136,9 @@
   </div>
   <div class="card-body p-0">
     <div class="log-pre" id="log-output">
-{% for lg in logs %}<div class="log-row log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</div>
-{% endfor %}
+{%- for lg in logs -%}
+<div class="log-row log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</div>
+{%- endfor -%}
     </div>
   </div>
 </div>
@@ -175,7 +183,7 @@
   function applyLevelFilters() {
     pre.querySelectorAll("[data-level]").forEach((line) => {
       const level = line.dataset.level;
-      line.style.display = levelVisibility[level] !== false ? "" : "none";
+      line.classList.toggle("log-hidden", levelVisibility[level] === false);
     });
   }
 
