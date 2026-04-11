@@ -1421,6 +1421,24 @@ class TestSharedIpRecords:
             }
         ]
 
+    def test_build_shared_fhrp_groups_omits_site_when_varp_spans_multiple_sites(self):
+        records = _build_shared_fhrp_groups(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+            ]
+        )
+
+        assert records[0]["site_name"] == ""
+
     def test_serial_uppercased(self):
         src = NexusDashboardSource()
         sw = {

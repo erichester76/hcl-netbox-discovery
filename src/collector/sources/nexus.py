@@ -1011,6 +1011,11 @@ def _build_shared_fhrp_groups(switches: list[dict[str, Any]]) -> list[dict[str, 
         )
         first_switch, first_iface = sorted_refs[0]
         first_name = str(first_iface.get("name", "") or "")
+        site_names = {
+            str(switch.get("site_name", "") or "")
+            for switch, _ in sorted_refs
+            if str(switch.get("site_name", "") or "")
+        }
         references = [
             f"{switch.get('name', '')}:{iface.get('name', '')}"
             for switch, iface in sorted_refs
@@ -1022,7 +1027,7 @@ def _build_shared_fhrp_groups(switches: list[dict[str, Any]]) -> list[dict[str, 
                 "protocol": "other",
                 "group_name": f"{first_name} varp {address}",
                 "group_id": _derive_fhrp_group_id(first_name, address),
-                "site_name": str(first_switch.get("site_name", "") or ""),
+                "site_name": next(iter(site_names)) if len(site_names) == 1 else "",
                 "interface_name": first_name,
                 "references": references,
             }

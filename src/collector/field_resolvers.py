@@ -354,7 +354,12 @@ class Resolver:
 
             if not lookup:
                 return None
-            if any(value is None or value == "" or value == [] for value in lookup.values()):
+            if any(
+                value is None
+                or value == []
+                or (isinstance(value, str) and value.strip() == "")
+                for value in lookup.values()
+            ):
                 return None
 
             try:
