@@ -27,10 +27,13 @@ def _shared_fhrp_assignment_object(cfg):
 
 def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     monkeypatch.delenv("NDFC_FETCH_INTERFACES", raising=False)
+    monkeypatch.delenv("NDFC_FETCH_MODULES", raising=False)
     cfg = load_config("mappings/nexus.hcl.example")
 
     assert cfg.source.api_type == "nexus"
     assert cfg.source.extra.get("fetch_interfaces") == "false"
+    assert cfg.source.extra.get("fetch_modules") == "false"
+    assert cfg.collector.extra_flags["sync_modules"] is True
 
     device = _device_object(cfg)
     assert device is not None
@@ -192,3 +195,21 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
         tagged_vlan_fields["site"]
         == "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
     )
+
+    modules_by_profile = {module.profile: module for module in device.modules}
+    assert set(modules_by_profile) == {"Power supply", "Fan", "Transceiver"}
+
+    psu = modules_by_profile["Power supply"]
+    assert psu.enabled_if == "collector.sync_modules"
+    assert psu.dedupe_by == "source('serial') or source('bay_name')"
+    assert psu.power_input is not None
+    assert psu.power_input.name == "'Power Input ' + str(source('position') or source('bay_name'))"
+    assert psu.power_input.type == "'iec-60320-c14'"
+
+    fan = modules_by_profile["Fan"]
+    assert fan.enabled_if == "collector.sync_modules"
+    assert fan.dedupe_by == "source('serial') or source('bay_name')"
+
+    transceiver = modules_by_profile["Transceiver"]
+    assert transceiver.enabled_if == "collector.sync_modules"
+    assert transceiver.dedupe_by == "source('serial') or source('bay_name') or source('model')"

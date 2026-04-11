@@ -1,4 +1,4 @@
-"""Regression tests for the Nexus modules example mapping."""
+"""Regression tests for Nexus module blocks in the unified example mapping."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _object(cfg, name: str):
 def test_nexus_modules_example_mapping_defines_module_blocks(monkeypatch):
     monkeypatch.delenv("NDFC_FETCH_MODULES", raising=False)
     monkeypatch.delenv("NETBOX_USE_CUSTOM_OBJECTS", raising=False)
-    cfg = load_config("mappings/nexus-modules.hcl.example")
+    cfg = load_config("mappings/nexus.hcl.example")
 
     assert cfg.source.api_type == "nexus"
     assert cfg.source.extra.get("fetch_modules") == "false"

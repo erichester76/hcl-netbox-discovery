@@ -13,6 +13,7 @@
 #                             When true, interfaces are fetched per-switch and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   NDFC_FETCH_MODULES        true | false  (default: false)
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
 #   NETBOX_USE_CUSTOM_OBJECTS true | false  (default: false)
@@ -24,6 +25,7 @@
 #                             (with matching fields) to already exist.
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
+#   COLLECTOR_SYNC_MODULES    true | false  (default: true)
 
 source "nexus" {
   api_type          = "nexus"
@@ -32,6 +34,7 @@ source "nexus" {
   password          = "env('NDFC_PASS')"
   verify_ssl        = "env('NDFC_VERIFY_SSL', 'true')"
   fetch_interfaces  = "env('NDFC_FETCH_INTERFACES', 'false')"
+  fetch_modules     = "env('NDFC_FETCH_MODULES', 'false')"
 }
 
 netbox {
@@ -49,6 +52,7 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   use_custom_objects = "env('NETBOX_USE_CUSTOM_OBJECTS', 'false')"
+  sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
 }
 
 # ---------------------------------------------------------------------------
@@ -557,6 +561,148 @@ object "device" {
       field "site" {
         value = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
       }
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Power supply']"
+    profile      = "Power supply"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    power_input {
+      name = "'Power Input ' + str(source('position') or source('bay_name'))"
+      type = "'iec-60320-c14'"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "hardware_revision" {
+      value = "source('hardware_revision')"
+    }
+
+    attribute "software_revision" {
+      value = "source('software_revision')"
+    }
+
+    attribute "asset_id" {
+      value = "source('asset_id')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Fan']"
+    profile      = "Fan"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Transceiver']"
+    profile      = "Transceiver"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name') or source('model')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "module_type" {
+      value = "source('module_type')"
+    }
+
+    attribute "module_version" {
+      value = "source('module_version')"
     }
   }
 }
