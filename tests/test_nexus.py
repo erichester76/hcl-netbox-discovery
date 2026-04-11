@@ -13,11 +13,13 @@ import pytest
 
 from collector.sources.nexus import (
     NexusDashboardSource,
+    _build_shared_ip_records,
     _derive_interface_name_details,
     _flatten_interface_payload,
     _infer_iface_type_from_speed,
     _is_interface_enabled,
     _normalize_iface_type,
+    _normalize_interface_name,
     _normalize_model,
     _normalize_port_channel_name,
     _normalize_vpc_name,
@@ -137,6 +139,24 @@ class TestDeriveInterfaceNameDetails:
         assert candidates["ifName"] == ""
         assert candidates["interfaceName"] == "Ethernet1/10"
         assert candidates["portName"] == "Ethernet1/11"
+
+
+class TestNormalizeInterfaceName:
+    @pytest.mark.parametrize(
+        ("raw_name", "expected"),
+        [
+            ("eth1/1", "Ethernet1/1"),
+            ("Ethernet1/1", "Ethernet1/1"),
+            ("po500", "port-channel500"),
+            ("Port-Channel500", "port-channel500"),
+            ("lo100", "loopback100"),
+            ("Loopback100", "loopback100"),
+            ("vlan3965", "Vlan3965"),
+            ("vpc27", "vpc27"),
+        ],
+    )
+    def test_normalize_interface_name(self, raw_name, expected):
+        assert _normalize_interface_name(raw_name) == expected
 
 
 class TestFlattenInterfacePayload:
@@ -526,7 +546,7 @@ class TestNexusGetObjects:
         assert iface["type"] == "100gbase-x-qsfp28"
         assert iface["enabled"] is True
         assert iface["mac_address"] == "00:1B:44:11:3A:B7"
-        assert iface["speed"] == 100000
+        assert iface["speed"] == 100000000
         assert iface["ip_address"] == "10.127.117.32/24"
         assert iface["lag_name"] == "port-channel500"
 
@@ -631,6 +651,59 @@ class TestNexusGetObjects:
 
         assert "modules" not in result[0]
 
+    def test_get_switches_dedupes_short_and_long_interface_aliases(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-spine-01",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "spine",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        iface_resp = MagicMock()
+        iface_resp.raise_for_status = MagicMock()
+        iface_resp.json.return_value = [
+            {"ifName": "eth1/1", "ifType": "INTERFACE_ETHERNET", "ipAddress": "10.100.8.13/30"},
+            {"ifName": "Ethernet1/1", "ifType": "INTERFACE_ETHERNET", "ipAddress": "10.100.8.13/30"},
+        ]
+
+        empty_analyze = MagicMock()
+        empty_analyze.raise_for_status = MagicMock()
+        empty_analyze.json.return_value = {"interfaces": []}
+
+        empty_detail = MagicMock()
+        empty_detail.raise_for_status = MagicMock()
+        empty_detail.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface"):
+                return iface_resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return empty_analyze
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return empty_detail
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        assert len(result[0]["interfaces"]) == 1
+        assert result[0]["interfaces"][0]["name"] == "Ethernet1/1"
+
     def test_get_switches_with_wrapped_interfaces_fetched(self):
         src = self._connected_source()
         src._fetch_interfaces = True
@@ -692,6 +765,85 @@ class TestNexusGetObjects:
 
         assert result[0]["interfaces"][0]["name"] == "mgmt0"
         assert result[0]["interfaces"][0]["mgmt_only"] is True
+
+    def test_get_objects_shared_ips_returns_classified_records(self):
+        src = self._connected_source()
+        src._fetch_interfaces = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "leaf-a",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL1111111",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+            {
+                "hostName": "leaf-b",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL2222222",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.5",
+                "status": "alive",
+                "systemMode": "Normal",
+            },
+        ]
+
+        empty_analyze = MagicMock()
+        empty_analyze.raise_for_status = MagicMock()
+        empty_analyze.json.return_value = {"interfaces": []}
+
+        empty_detail = MagicMock()
+        empty_detail.raise_for_status = MagicMock()
+        empty_detail.json.return_value = []
+
+        def side_effect(url, params=None, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL1111111"}:
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = [
+                    {"ifName": "Vlan3965", "ifType": "INTERFACE_VLAN", "ipAddress": "10.20.22.65/28"}
+                ]
+                return resp
+            if url.endswith("/lan-fabric/rest/interface") and params == {"serialNumber": "SAL2222222"}:
+                resp = MagicMock()
+                resp.raise_for_status = MagicMock()
+                resp.json.return_value = [
+                    {"ifName": "Vlan3965", "ifType": "INTERFACE_VLAN", "ipAddress": "10.20.22.65/28"}
+                ]
+                return resp
+            if url.endswith("/api/v1/analyze/interfaces"):
+                return empty_analyze
+            if url.endswith("/lan-fabric/rest/interface/detail/filter"):
+                return empty_detail
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        shared = src.get_objects("shared_ips")
+
+        assert shared == [
+            {
+                "address": "10.20.22.65/28",
+                "role": "VIP",
+                "name": "Vlan3965 VIP 10.20.22.65/28",
+                "group_name": "Vlan3965 VIP",
+                "group_id": 3965,
+                "site_name": "ProdFabric",
+                "interface_name": "Vlan3965",
+                "references": ["leaf-a:Vlan3965", "leaf-b:Vlan3965"],
+            }
+        ]
 
     def test_get_switches_includes_interfaces_found_only_in_analyze_or_detail(self):
         src = self._connected_source()
@@ -767,7 +919,7 @@ class TestNexusGetObjects:
 
         interfaces = {iface["name"]: iface for iface in result[0]["interfaces"]}
         assert interfaces["Ethernet1/10"]["type"] == "25gbase-x-sfp28"
-        assert interfaces["Ethernet1/10"]["speed"] == 25000
+        assert interfaces["Ethernet1/10"]["speed"] == 25000000
         assert interfaces["Ethernet1/10"]["ip_address"] == "10.10.10.1/31"
         assert interfaces["Ethernet1/10"]["lag_name"] == "port-channel7"
         assert interfaces["loopback100"]["type"] == "virtual"
@@ -1067,6 +1219,108 @@ class TestNexusEnrichSwitch:
         result = src._enrich_switch(sw)
         assert result["role"] == "Border Gateway"
 
+
+class TestSharedIpRecords:
+    def test_build_shared_ip_records_classifies_vlan_as_vip(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert records == [
+            {
+                "address": "10.20.22.65/28",
+                "role": "VIP",
+                "name": "Vlan3965 VIP 10.20.22.65/28",
+                "group_name": "Vlan3965 VIP",
+                "group_id": 3965,
+                "site_name": "Fabric-A",
+                "interface_name": "Vlan3965",
+                "references": ["leaf-a:Vlan3965", "leaf-b:Vlan3965"],
+            }
+        ]
+
+    def test_build_shared_ip_records_classifies_loopback_as_anycast(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "spine-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}
+                    ],
+                },
+                {
+                    "name": "spine-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}
+                    ],
+                },
+            ]
+        )
+
+        assert records[0]["role"] == "Anycast"
+        assert records[0]["group_id"] == 254
+
+    def test_build_shared_ip_records_sorts_references_and_skips_cross_site(self):
+        records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert records[0]["references"] == ["leaf-a:Vlan3965", "leaf-b:Vlan3965"]
+        assert records[0]["site_name"] == "Fabric-A"
+
+        cross_site_records = _build_shared_ip_records(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [
+                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
+                    ],
+                },
+            ]
+        )
+
+        assert cross_site_records == []
+
     def test_serial_uppercased(self):
         src = NexusDashboardSource()
         sw = {
@@ -1239,7 +1493,7 @@ class TestNexusEnrichInterface:
         assert result["enabled"] is True
         assert result["description"] == "to-spine-01"
         assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
-        assert result["speed"] == 25000
+        assert result["speed"] == 25000000
 
     def test_port_channel_interface(self):
         src = NexusDashboardSource()
@@ -1423,7 +1677,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
@@ -1441,7 +1695,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "40gbase-x-qsfpp"
         assert result["enabled"] is True
 
@@ -1459,7 +1713,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
 
@@ -1488,10 +1742,57 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
         assert result["enabled"] is True
         assert result["lag_name"] == "port-channel500"
+
+    def test_interface_enrichment_tracks_kbps_mtu_mode_and_vlan_membership(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/13",
+            "ifType": "INTERFACE_ETHERNET",
+            "nvPairs": {
+                "adminState": "up",
+            },
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/13",
+            "interfaceType": "ethernet",
+            "physicalInterface": True,
+            "speed": "100Gb",
+            "allowedVlans": "100,103,200-201",
+            "nativeVlanId": 100,
+            "operMode": "trunk",
+            "mtu": 1500,
+            "macAddress": "aa:bb:cc:dd:ee:ff",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/13",
+            "configData": {
+                "mode": "access",
+                "networkOS": {
+                    "policy": {
+                        "accessVlan": 100,
+                    }
+                },
+            },
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+                "mtu": 9216,
+                "speed": "100Gb",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["speed"] == 100000000
+        assert result["mtu"] == 9216
+        assert result["mode"] == "access"
+        assert result["untagged_vlan_vid"] == 100
+        assert result["tagged_vlan_vids"] == [103, 200, 201]
+        assert result["mac_address"] == "AA:BB:CC:DD:EE:FF"
 
     def test_interface_detail_state_overrides_legacy_and_analyze_state(self):
         src = NexusDashboardSource()
@@ -1518,6 +1819,42 @@ class TestNexusEnrichInterface:
 
         assert result["enabled"] is True
 
+    def test_interface_vlan_enrichment_skips_tagged_all_and_invalid_vids(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/14",
+            "ifType": "INTERFACE_ETHERNET",
+            "adminState": "up",
+            "operStatus": "up",
+            "allowedVlans": "1-4094",
+            "nativeVlanId": 4095,
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/14",
+            "operMode": "tagged-all",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/14",
+            "configData": {
+                "mode": "tagged-all",
+                "networkOS": {
+                    "policy": {
+                        "accessVlan": 0,
+                    }
+                },
+            },
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["mode"] == "tagged-all"
+        assert result["untagged_vlan_vid"] is None
+        assert result["tagged_vlan_vids"] == []
+
     def test_detail_and_analyze_speed_override_auto_placeholders(self):
         src = NexusDashboardSource()
         iface = {
@@ -1543,7 +1880,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
 
     def test_interface_speed_can_fall_back_to_bandwidth_when_speed_is_auto(self):
@@ -1560,7 +1897,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "lag"
 
     def test_interface_bandwidth_is_not_parsed_as_generic_speed_string(self):
@@ -1575,7 +1912,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 40000
+        assert result["speed"] == 40000000
         assert result["type"] == "lag"
 
     def test_vpc_interface_does_not_emit_parent_lag_from_port_channel_id(self):
@@ -1624,7 +1961,7 @@ class TestNexusEnrichInterface:
 
         result = src._enrich_interface(iface)
 
-        assert result["speed"] == 100000
+        assert result["speed"] == 100000000
         assert result["type"] == "100gbase-x-qsfp28"
 
     @pytest.mark.parametrize(

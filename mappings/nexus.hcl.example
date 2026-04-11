@@ -44,6 +44,43 @@ collector {
 }
 
 # ---------------------------------------------------------------------------
+# Shared VIP / anycast addresses
+#
+# The Nexus adapter derives a separate collection of duplicated interface IPs
+# after canonicalizing interface names (for example ``eth1/1`` →
+# ``Ethernet1/1``). Shared VLAN IPs are modeled as VIPs and shared loopbacks
+# as Anycast addresses so NetBox retains the address without reassigning it
+# between interfaces every run.
+# ---------------------------------------------------------------------------
+
+object "shared_ip" {
+  source_collection = "shared_ips"
+  netbox_resource   = "ipam.ip_addresses"
+  lookup_by         = ["address"]
+
+  field "address" {
+    value = "source('address')"
+  }
+
+  field "role" {
+    value = "source('role')"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+
+  field "description" {
+    value = "join(', ', source('references') or [])"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync', 'ndfc-shared-ip']"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Nexus Fabric Switches
 #
 # The source adapter pre-normalises Cisco Nexus model strings and maps
@@ -176,6 +213,23 @@ object "device" {
       value = "source('speed')"
     }
 
+    field "mtu" {
+      value = "source('mtu')"
+    }
+
+    field "mode" {
+      value = "source('mode')"
+    }
+
+    field "untagged_vlan" {
+      type     = "fk"
+      resource = "ipam.vlans"
+      lookup   = {
+        vid  = "source('untagged_vlan_vid')"
+        site = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
+      }
+    }
+
     field "lag" {
       type     = "fk"
       resource = "dcim.interfaces"
@@ -210,6 +264,18 @@ object "device" {
 
       field "status" {
         value = "'active'"
+      }
+    }
+
+    tagged_vlan {
+      source_items = "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
+
+      field "vid" {
+        value = "source('vid')"
+      }
+
+      field "site" {
+        value = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
       }
     }
   }

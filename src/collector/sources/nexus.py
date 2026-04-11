@@ -42,7 +42,7 @@ Interface dict fields (when fetch_interfaces is enabled)
   vpc_name          Best-available vPC interface name
   mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
-  speed             Speed in Mbps (integer)
+  speed             Speed in Kbps (integer, matching NetBox interface units)
   ip_address        IP address with prefix length (e.g. ``"10.0.0.1/24"``)
   ifName, ifType, adminState, operStatus (raw passthrough)
 
@@ -202,23 +202,25 @@ def _module_position(module: Any) -> str:
 
 def _derive_interface_name(iface: Any) -> str:
     """Return the best-available interface name from common NDFC fields."""
-    return _first_non_empty(
-        iface,
-        "ifName",
-        "name",
-        "interfaceName",
-        "portName",
-        "displayName",
-        "shortName",
+    return _normalize_interface_name(
+        _first_non_empty(
+            iface,
+            "ifName",
+            "name",
+            "interfaceName",
+            "portName",
+            "displayName",
+            "shortName",
+        )
     )
 
 
 def _derive_interface_name_details(iface: Any) -> tuple[str, str | None, dict[str, str]]:
-    """Return the interface name, source field, and raw candidate values."""
+    """Return the interface name, source field, and normalized candidate values."""
     candidates: dict[str, str] = {}
     for key in ("ifName", "name", "interfaceName", "portName", "displayName", "shortName"):
         value = _safe_get(iface, key)
-        candidates[key] = "" if value is None else str(value).strip()
+        candidates[key] = _normalize_interface_name("" if value is None else str(value).strip())
 
     for key, value in candidates.items():
         if value:
@@ -471,6 +473,30 @@ def _flatten_interface_payload(payload: Any) -> list[dict]:
         return _flatten_interface_payload(nested)
 
     return [payload]
+
+
+def _normalize_interface_name(name: str) -> str:
+    """Return a canonical interface name for mixed NDFC short/long forms."""
+    text = str(name or "").strip()
+    if not text:
+        return ""
+
+    lower = text.lower()
+    patterns = (
+        (r"^eth(?:ernet)?(\d.*)$", "Ethernet"),
+        (r"^(?:po|port-channel)(\d.*)$", "port-channel"),
+        (r"^(?:lo|loopback)(\d.*)$", "loopback"),
+        (r"^vlan(\d.*)$", "Vlan"),
+        (r"^mgmt(\d.*)$", "mgmt"),
+        (r"^nve(\d.*)$", "nve"),
+        (r"^vpc(\d.*)$", "vpc"),
+    )
+    for pattern, prefix in patterns:
+        match = re.match(pattern, lower)
+        if match:
+            return f"{prefix}{match.group(1)}"
+
+    return text
 
 
 def _normalize_nvpair_key(key: Any) -> str:
@@ -770,7 +796,8 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
         nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS
     )
     if bandwidth and str(bandwidth).strip().isdigit():
-        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
+        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for
+        # intermediate Nexus parsing and interface-type inference.
         bandwidth_mbps = int(str(bandwidth).strip()) // 1000
         if bandwidth_mbps > 0:
             return bandwidth_mbps, str(bandwidth).strip()
@@ -810,21 +837,23 @@ def _is_blankish_speed(value: Any) -> bool:
 
 def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
     """Clear duplicated interface IPs so shared addresses do not churn in NetBox."""
-    addresses: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    addresses: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for switch in switches:
-        switch_name = str(switch.get("name", "") or switch.get("serialNumber", "") or "unknown")
         for iface in switch.get("interfaces", []) or []:
             if not isinstance(iface, dict):
                 continue
             address = str(iface.get("ip_address", "") or "").strip()
             if not address:
                 continue
-            addresses.setdefault(address, []).append((switch_name, iface))
+            addresses.setdefault(address, []).append((switch, iface))
 
     for address, refs in addresses.items():
         if len(refs) < 2:
             continue
-        reference_labels = [f"{switch_name}:{iface.get('name', '')}" for switch_name, iface in refs]
+        reference_labels = [
+            f"{switch.get('name', '')}:{iface.get('name', '')}"
+            for switch, iface in refs
+        ]
         logger.warning(
             "NDFC duplicate interface IP suppressed address=%s references=%s",
             address,
@@ -833,6 +862,77 @@ def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
         for _, iface in refs:
             iface["duplicate_ip_address"] = address
             iface["ip_address"] = ""
+
+
+def _classify_shared_ip(iface_name: str) -> str:
+    """Return the shared IP role for *iface_name* when it is safe to model."""
+    lower = str(iface_name or "").lower()
+    if lower.startswith("vlan"):
+        return "VIP"
+    if lower.startswith("loopback"):
+        return "Anycast"
+    return ""
+
+
+def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return normalized shared VIP/anycast records from duplicate interface IPs."""
+    addresses: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for switch in switches:
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
+            if not duplicate_address:
+                continue
+            addresses.setdefault(duplicate_address, []).append((switch, iface))
+
+    shared_records: list[dict[str, Any]] = []
+    for address, refs in sorted(addresses.items()):
+        roles = {
+            _classify_shared_ip(iface.get("name", ""))
+            for _, iface in refs
+        }
+        roles.discard("")
+        if len(roles) != 1:
+            continue
+
+        sorted_refs = sorted(
+            refs,
+            key=lambda ref: (
+                str(ref[0].get("name", "") or ""),
+                str(ref[1].get("name", "") or ""),
+            ),
+        )
+        site_names = {
+            str(switch.get("site_name", "") or "")
+            for switch, _ in sorted_refs
+            if str(switch.get("site_name", "") or "")
+        }
+        if len(site_names) > 1:
+            continue
+
+        role = next(iter(roles))
+        first_switch, first_iface = sorted_refs[0]
+        first_name = str(first_iface.get("name", "") or "")
+        references = [
+            f"{switch.get('name', '')}:{iface.get('name', '')}"
+            for switch, iface in sorted_refs
+        ]
+        match = re.search(r"(\d+)$", first_name)
+        shared_records.append(
+            {
+                "address": address,
+                "role": role,
+                "name": f"{first_name} {role} {address}",
+                "group_name": f"{first_name} {role}",
+                "group_id": int(match.group(1)) if match else None,
+                "site_name": str(first_switch.get("site_name", "") or ""),
+                "interface_name": first_name,
+                "references": references,
+            }
+        )
+
+    return shared_records
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -986,6 +1086,7 @@ class NexusDashboardSource(DataSource):
         self._fetch_interfaces: bool = False
         self._fetch_modules: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
+        self._shared_ips: list[dict[str, Any]] = []
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -1032,6 +1133,7 @@ class NexusDashboardSource(DataSource):
 
         collectors = {
             "switches": self._get_switches,
+            "shared_ips": self._get_shared_ips,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -1044,6 +1146,7 @@ class NexusDashboardSource(DataSource):
     def close(self) -> None:
         """Release the HTTP session."""
         self._session = close_http_session(self._session, "NexusDashboardSource")
+        self._shared_ips = []
 
     # ------------------------------------------------------------------
     # Authentication
@@ -1176,10 +1279,19 @@ class NexusDashboardSource(DataSource):
 
         if self._fetch_interfaces:
             _suppress_duplicate_interface_ips(switches)
+            self._shared_ips = _build_shared_ip_records(switches)
+        else:
+            self._shared_ips = []
 
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
         return switches
+
+    def _get_shared_ips(self) -> list[dict[str, Any]]:
+        """Return shared VIP/anycast IP records derived from switch interfaces."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._shared_ips)
 
     def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""
@@ -1231,6 +1343,20 @@ class NexusDashboardSource(DataSource):
                 data = []
 
         data = _flatten_interface_payload(data)
+        deduped_data: list[dict[str, Any]] = []
+        deduped_index: dict[str, int] = {}
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            normalized_name = _derive_interface_name(item).strip().lower()
+            if normalized_name and normalized_name in deduped_index:
+                idx = deduped_index[normalized_name]
+                deduped_data[idx] = _merge_dashboard_interface(deduped_data[idx], item)
+                continue
+            if normalized_name:
+                deduped_index[normalized_name] = len(deduped_data)
+            deduped_data.append(item)
+        data = deduped_data
 
         if (
             logger.isEnabledFor(logging.DEBUG)
@@ -1537,7 +1663,12 @@ class NexusDashboardSource(DataSource):
             or _safe_get(source_iface, "displayName", "")
             or nv("ifDescr", "description", "desc", "portDescription")
         )
-        mac_address = _safe_get(source_iface, "macAddress", "") or nv("macAddress", "mac")
+        mac_address = (
+            _first_non_empty(source_iface, "macAddress", "mac")
+            or _first_non_empty(analyze_iface, "macAddress", "mac")
+            or _first_non_empty(detail_oper, "macAddress", "mac")
+            or nv("macAddress", "mac")
+        )
         ip_address  = (
             _first_non_empty(source_iface, "ip", "ipv4Address", "ipAddress")
             or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
@@ -1553,6 +1684,46 @@ class NexusDashboardSource(DataSource):
         if _safe_get(analyze_iface, "operSpeed", "") and _is_blankish_speed(speed_source.get("operSpeed")):
             speed_source["operSpeed"] = _safe_get(analyze_iface, "operSpeed", "")
         speed_mbps, _speed_str = _derive_interface_speed_mbps(speed_source, nvpair_values)
+        mtu = (
+            _parse_mtu(_safe_get(detail_oper, "mtu", None))
+            or _parse_mtu(_safe_get(source_iface, "mtu", None))
+            or _parse_mtu(nv("mtu"))
+        )
+        mode = _normalize_interface_mode(
+            _first_non_empty(
+                _safe_get(detail_iface, "configData", {}) or {},
+                "mode",
+            )
+            or _first_non_empty(detail_oper, "mode")
+            or _first_non_empty(
+                analyze_iface,
+                "operMode",
+                "discoveredConfigMode",
+                "intendedConfigMode",
+                "portType",
+            )
+        )
+        untagged_vlan_vid: int | None = None
+        if mode == "access":
+            access_vlan = _first_non_empty(
+                _safe_get(_safe_get(detail_iface, "configData", {}) or {}, "networkOS", {}) or {},
+                "accessVlan",
+            ) or _first_non_empty(
+                _safe_get(_safe_get(_safe_get(detail_iface, "configData", {}) or {}, "networkOS", {}) or {}, "policy", {}) or {},
+                "accessVlan",
+            )
+            untagged_vlan_vid = _normalize_vlan_vid(access_vlan)
+        if untagged_vlan_vid is None:
+            native_vlan = _first_non_empty(source_iface, "nativeVlanId") or nv("nativeVlanId")
+            untagged_vlan_vid = _normalize_vlan_vid(native_vlan)
+        if mode == "tagged-all":
+            tagged_vlan_vids = []
+        else:
+            tagged_vlan_vids = _parse_vlan_list(
+                _first_non_empty(source_iface, "allowedVlans") or nv("allowedVlans")
+            )
+        if untagged_vlan_vid is not None:
+            tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
         channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
         if not lag_name and channel_id not in ("", None, 0, "0"):
@@ -1574,7 +1745,11 @@ class NexusDashboardSource(DataSource):
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
-            "speed":       speed_mbps,
+            "speed":       _netbox_speed_kbps(speed_mbps),
+            "mtu":         mtu,
+            "mode":        mode,
+            "untagged_vlan_vid": untagged_vlan_vid,
+            "tagged_vlan_vids": tagged_vlan_vids,
             "duplicate_ip_address": "",
             # --- passthrough raw fields ---
             "ifName":      if_name,
@@ -1602,3 +1777,79 @@ def _parse_speed_mbps(speed_str: str) -> int | None:
     if text.isdigit() and int(text) >= 1_000_000:
         return parse_speed_mbps(text, numeric_is_bps=True)
     return parse_speed_mbps(text)
+
+
+def _netbox_speed_kbps(speed_mbps: int | None) -> int | None:
+    """Convert Mbps into NetBox's expected Kbps unit for interface speeds."""
+    if speed_mbps is None:
+        return None
+    return speed_mbps * 1000
+
+
+def _parse_mtu(value: Any) -> int | None:
+    """Return MTU as an integer when the input is parseable."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_vlan_list(value: Any) -> list[int]:
+    """Expand comma/range VLAN strings like ``100,103,200-202`` into ints."""
+    if value in (None, ""):
+        return []
+    result: list[int] = []
+    seen: set[int] = set()
+    for part in str(value).split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_text, end_text = token.split("-", 1)
+            try:
+                start = int(start_text)
+                end = int(end_text)
+            except ValueError:
+                continue
+            if end < start:
+                start, end = end, start
+            for vid in range(start, end + 1):
+                if 1 <= vid <= 4094 and vid not in seen:
+                    result.append(vid)
+                    seen.add(vid)
+            continue
+        try:
+            vid = int(token)
+        except ValueError:
+            continue
+        if 1 <= vid <= 4094 and vid not in seen:
+            result.append(vid)
+            seen.add(vid)
+    return result
+
+
+def _normalize_interface_mode(raw_mode: str | None) -> str | None:
+    """Map NDFC switchport modes onto NetBox interface mode values."""
+    value = str(raw_mode or "").strip().lower()
+    if not value:
+        return None
+    if value == "access":
+        return "access"
+    if value in {"trunk", "tagged"}:
+        return "tagged"
+    if value in {"tagged-all", "tagged_all"}:
+        return "tagged-all"
+    return None
+
+
+def _normalize_vlan_vid(value: Any) -> int | None:
+    """Return a valid 802.1Q VLAN ID or ``None``."""
+    if value in (None, ""):
+        return None
+    try:
+        vid = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return vid if 1 <= vid <= 4094 else None

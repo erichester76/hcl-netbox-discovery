@@ -9,6 +9,10 @@ def _device_object(cfg):
     return next((obj for obj in cfg.objects if obj.name == "device"), None)
 
 
+def _shared_ip_object(cfg):
+    return next((obj for obj in cfg.objects if obj.name == "shared_ip"), None)
+
+
 def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     monkeypatch.delenv("NDFC_FETCH_INTERFACES", raising=False)
     cfg = load_config("mappings/nexus.hcl.example")
@@ -39,6 +43,8 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert interface_fields["description"] == "when(source('description'), source('description'), '')"
     assert interface_fields["mgmt_only"] == "source('mgmt_only')"
     assert interface_fields["speed"] == "source('speed')"
+    assert interface_fields["mtu"] == "source('mtu')"
+    assert interface_fields["mode"] == "source('mode')"
 
     lag_field = next((field for field in interface.fields if field.name == "lag"), None)
     assert lag_field is not None
@@ -49,7 +55,17 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
         "name": "when(source('lag_name') != '', source('lag_name'), None)",
     }
 
+    untagged_vlan_field = next((field for field in interface.fields if field.name == "untagged_vlan"), None)
+    assert untagged_vlan_field is not None
+    assert untagged_vlan_field.type == "fk"
+    assert untagged_vlan_field.resource == "ipam.vlans"
+    assert untagged_vlan_field.lookup == {
+        "vid": "source('untagged_vlan_vid')",
+        "site": "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)",
+    }
+
     assert len(interface.ip_addresses) == 2, "interface block must declare routed and mgmt ip blocks"
+    assert len(interface.tagged_vlans) == 1, "interface block must declare tagged vlan sync"
 
     routed_ip_block = interface.ip_addresses[0]
     assert routed_ip_block.primary_if == "first"
@@ -78,3 +94,24 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     mgmt_status_field = next((field for field in mgmt_ip_block.fields if field.name == "status"), None)
     assert mgmt_address_field is not None and mgmt_address_field.value == "source('address')"
     assert mgmt_status_field is not None and mgmt_status_field.value == "'active'"
+
+    shared_ip = _shared_ip_object(cfg)
+    assert shared_ip is not None
+    assert shared_ip.source_collection == "shared_ips"
+    assert shared_ip.netbox_resource == "ipam.ip_addresses"
+    assert shared_ip.lookup_by == ["address"]
+
+    shared_fields = {field.name: field.value for field in shared_ip.fields}
+    assert shared_fields["address"] == "source('address')"
+    assert shared_fields["role"] == "source('role')"
+    assert shared_fields["status"] == "'active'"
+    assert shared_fields["description"] == "join(', ', source('references') or [])"
+    assert shared_fields["tags"] == "['ndfc-sync', 'ndfc-shared-ip']"
+    tagged_vlan_block = interface.tagged_vlans[0]
+    assert tagged_vlan_block.source_items == "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
+    tagged_vlan_fields = {field.name: field.value for field in tagged_vlan_block.fields}
+    assert tagged_vlan_fields["vid"] == "source('vid')"
+    assert (
+        tagged_vlan_fields["site"]
+        == "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
+    )
