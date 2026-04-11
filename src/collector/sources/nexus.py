@@ -19,6 +19,13 @@ Supported collections
 ``"vpc_peer_links"`` – aggregated fabric-scoped vPC peer-link records.
 ``"topology_custom_fields"`` – static custom-field definitions used by the
                                Nexus topology fallback mapping.
+``"topology_custom_object_types"`` – static NetBox Custom Object type
+                                     definitions used by the Nexus topology
+                                     custom-object mapping.
+``"topology_custom_object_type_fields"`` – static NetBox Custom Object type
+                                           field definitions used by the
+                                           Nexus topology custom-object
+                                           mapping.
 
 Each returned switch dict includes both normalised convenience fields and
 the original NDFC response attributes:
@@ -1461,6 +1468,312 @@ def _build_topology_custom_field_records() -> list[dict[str, Any]]:
     ]
 
 
+def _build_topology_custom_object_type_records() -> list[dict[str, Any]]:
+    """Return NetBox Custom Object type definitions for Nexus topology modeling."""
+    return [
+        {
+            "name": "ndfc_fabrics",
+            "slug": "ndfc-fabrics",
+            "verbose_name": "NDFC Fabric",
+            "verbose_name_plural": "NDFC Fabrics",
+            "group_name": "NDFC",
+            "description": "NDFC fabric topology objects synchronized by hcl-netbox-discovery.",
+            "tags": ["ndfc-sync"],
+        },
+        {
+            "name": "ndfc_vpc_domains",
+            "slug": "ndfc-vpc-domains",
+            "verbose_name": "NDFC vPC Domain",
+            "verbose_name_plural": "NDFC vPC Domains",
+            "group_name": "NDFC",
+            "description": "NDFC vPC domain topology objects synchronized by hcl-netbox-discovery.",
+            "tags": ["ndfc-sync"],
+        },
+        {
+            "name": "ndfc_vpc_peer_links",
+            "slug": "ndfc-vpc-peer-links",
+            "verbose_name": "NDFC vPC Peer Link",
+            "verbose_name_plural": "NDFC vPC Peer Links",
+            "group_name": "NDFC",
+            "description": "NDFC vPC peer-link topology objects synchronized by hcl-netbox-discovery.",
+            "tags": ["ndfc-sync"],
+        },
+    ]
+
+
+def _build_topology_custom_object_type_field_records() -> list[dict[str, Any]]:
+    """Return NetBox Custom Object type field definitions for Nexus topology modeling."""
+    return [
+        {
+            "custom_object_type_slug": "ndfc-fabrics",
+            "name": "identifier",
+            "label": "Identifier",
+            "description": "Stable fabric identifier.",
+            "type": "text",
+            "primary": True,
+            "required": True,
+            "unique": True,
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-fabrics",
+            "name": "fabric_name",
+            "label": "Fabric Name",
+            "description": "NDFC fabric name.",
+            "type": "text",
+            "required": True,
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-fabrics",
+            "name": "site_names",
+            "label": "Site Names",
+            "description": "NetBox site names associated with the fabric.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-fabrics",
+            "name": "tenant_names",
+            "label": "Tenant Names",
+            "description": "NDFC tenant names present in the fabric.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-fabrics",
+            "name": "devices",
+            "label": "Devices",
+            "description": "Devices participating in the fabric.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "device",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "identifier",
+            "label": "Identifier",
+            "description": "Stable fabric-scoped vPC domain identifier.",
+            "type": "text",
+            "primary": True,
+            "required": True,
+            "unique": True,
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "fabric_identifier",
+            "label": "Fabric",
+            "description": "Parent NDFC fabric object.",
+            "type": "object",
+            "app_label": "custom-objects",
+            "model": "ndfc-fabrics",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "fabric_name",
+            "label": "Fabric Name",
+            "description": "NDFC fabric name.",
+            "type": "text",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "vpc_domain_id",
+            "label": "vPC Domain ID",
+            "description": "NDFC vPC domain identifier.",
+            "type": "text",
+            "required": True,
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "vpc_name",
+            "label": "vPC Name",
+            "description": "Derived vPC domain name.",
+            "type": "text",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "primary_device",
+            "label": "Primary Device",
+            "description": "Primary vPC peer device.",
+            "type": "object",
+            "app_label": "dcim",
+            "model": "device",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "secondary_device",
+            "label": "Secondary Device",
+            "description": "Secondary vPC peer device.",
+            "type": "object",
+            "app_label": "dcim",
+            "model": "device",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "peer_devices",
+            "label": "Peer Devices",
+            "description": "All devices participating in the vPC domain.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "device",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "member_lags",
+            "label": "Member LAGs",
+            "description": "Local port-channel interfaces participating in the vPC domain.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "interface",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "vpc_interfaces",
+            "label": "vPC Interfaces",
+            "description": "Logical vPC interfaces associated with the domain.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "interface",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "tenant_names",
+            "label": "Tenant Names",
+            "description": "NDFC tenant names present in the vPC domain.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-domains",
+            "name": "vrf_names",
+            "label": "VRF Names",
+            "description": "VRFs associated with the vPC domain.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "identifier",
+            "label": "Identifier",
+            "description": "Stable fabric-scoped vPC peer-link identifier.",
+            "type": "text",
+            "primary": True,
+            "required": True,
+            "unique": True,
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "fabric_identifier",
+            "label": "Fabric",
+            "description": "Parent NDFC fabric object.",
+            "type": "object",
+            "app_label": "custom-objects",
+            "model": "ndfc-fabrics",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "fabric_name",
+            "label": "Fabric Name",
+            "description": "NDFC fabric name.",
+            "type": "text",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "vpc_domain_identifier",
+            "label": "vPC Domain",
+            "description": "Parent NDFC vPC domain object.",
+            "type": "object",
+            "app_label": "custom-objects",
+            "model": "ndfc-vpc-domains",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "devices",
+            "label": "Devices",
+            "description": "Devices participating in the peer link.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "device",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "interfaces",
+            "label": "Interfaces",
+            "description": "Interfaces participating in the peer link.",
+            "type": "multiobject",
+            "app_label": "dcim",
+            "model": "interface",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "status",
+            "label": "Status",
+            "description": "Observed peer-link status values.",
+            "type": "text",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "tenant_names",
+            "label": "Tenant Names",
+            "description": "NDFC tenant names present on the peer link.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "custom_object_type_slug": "ndfc-vpc-peer-links",
+            "name": "vrf_names",
+            "label": "VRF Names",
+            "description": "VRFs associated with the peer link.",
+            "type": "json",
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+    ]
+
+
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
     """Sort LAGs before dependent interfaces so same-device FK lookups resolve."""
     name = str(iface.get("name", "") or "").lower()
@@ -1619,6 +1932,8 @@ class NexusDashboardSource(DataSource):
         self._vpc_domains: list[dict[str, Any]] = []
         self._vpc_peer_links: list[dict[str, Any]] = []
         self._topology_custom_fields: list[dict[str, Any]] = []
+        self._topology_custom_object_types: list[dict[str, Any]] = []
+        self._topology_custom_object_type_fields: list[dict[str, Any]] = []
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -1672,6 +1987,8 @@ class NexusDashboardSource(DataSource):
             "vpc_domains": self._get_vpc_domains,
             "vpc_peer_links": self._get_vpc_peer_links,
             "topology_custom_fields": self._get_topology_custom_fields,
+            "topology_custom_object_types": self._get_topology_custom_object_types,
+            "topology_custom_object_type_fields": self._get_topology_custom_object_type_fields,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -1691,6 +2008,8 @@ class NexusDashboardSource(DataSource):
         self._vpc_domains = []
         self._vpc_peer_links = []
         self._topology_custom_fields = []
+        self._topology_custom_object_types = []
+        self._topology_custom_object_type_fields = []
 
     # ------------------------------------------------------------------
     # Authentication
@@ -1837,6 +2156,8 @@ class NexusDashboardSource(DataSource):
         self._vpc_domains = _build_vpc_domain_records(switches)
         self._vpc_peer_links = _build_vpc_peer_link_records(switches)
         self._topology_custom_fields = _build_topology_custom_field_records()
+        self._topology_custom_object_types = _build_topology_custom_object_type_records()
+        self._topology_custom_object_type_fields = _build_topology_custom_object_type_field_records()
 
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
@@ -1883,6 +2204,20 @@ class NexusDashboardSource(DataSource):
         if not self._topology_custom_fields:
             self._topology_custom_fields = _build_topology_custom_field_records()
         return list(self._topology_custom_fields)
+
+    def _get_topology_custom_object_types(self) -> list[dict[str, Any]]:
+        """Return NetBox Custom Object type definitions for Nexus topology metadata."""
+        if not self._topology_custom_object_types:
+            self._topology_custom_object_types = _build_topology_custom_object_type_records()
+        return list(self._topology_custom_object_types)
+
+    def _get_topology_custom_object_type_fields(self) -> list[dict[str, Any]]:
+        """Return NetBox Custom Object type-field definitions for Nexus topology metadata."""
+        if not self._topology_custom_object_type_fields:
+            self._topology_custom_object_type_fields = (
+                _build_topology_custom_object_type_field_records()
+            )
+        return list(self._topology_custom_object_type_fields)
 
     def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""
