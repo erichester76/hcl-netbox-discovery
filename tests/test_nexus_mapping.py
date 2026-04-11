@@ -158,6 +158,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
 
     shared_fhrp_assignment = _shared_fhrp_assignment_object(cfg)
     assert shared_fhrp_assignment is not None
+    assert cfg.objects.index(shared_fhrp_assignment) > cfg.objects.index(device)
     assert shared_fhrp_assignment.source_collection == "shared_fhrp_assignments"
     assert shared_fhrp_assignment.netbox_resource == "ipam.fhrp_group_assignments"
     assert shared_fhrp_assignment.lookup_by == ["group", "interface_type", "interface_id"]

@@ -1440,7 +1440,7 @@ class NexusDashboardSource(DataSource):
         return switches
 
     def _get_shared_ips(self) -> list[dict[str, Any]]:
-        """Return shared VIP/anycast IP records derived from switch interfaces."""
+        """Return standalone shared anycast IP records derived from switch interfaces."""
         if not self._switches:
             self._get_switches()
         return list(self._shared_ips)
