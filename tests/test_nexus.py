@@ -1565,6 +1565,42 @@ class TestNexusEnrichInterface:
 
         assert result["enabled"] is True
 
+    def test_interface_vlan_enrichment_skips_tagged_all_and_invalid_vids(self):
+        src = NexusDashboardSource()
+        iface = {
+            "ifName": "Ethernet1/14",
+            "ifType": "INTERFACE_ETHERNET",
+            "adminState": "up",
+            "operStatus": "up",
+            "allowedVlans": "1-4094",
+            "nativeVlanId": 4095,
+        }
+        analyze_iface = {
+            "interfaceName": "Ethernet1/14",
+            "operMode": "tagged-all",
+        }
+        detail_iface = {
+            "interfaceName": "Ethernet1/14",
+            "configData": {
+                "mode": "tagged-all",
+                "networkOS": {
+                    "policy": {
+                        "accessVlan": 0,
+                    }
+                },
+            },
+            "operData": {
+                "adminStatus": "up",
+                "operationalStatus": "up",
+            },
+        }
+
+        result = src._enrich_interface(iface, analyze_iface=analyze_iface, detail_iface=detail_iface)
+
+        assert result["mode"] == "tagged-all"
+        assert result["untagged_vlan_vid"] is None
+        assert result["tagged_vlan_vids"] == []
+
     def test_detail_and_analyze_speed_override_auto_placeholders(self):
         src = NexusDashboardSource()
         iface = {

@@ -1587,21 +1587,16 @@ class NexusDashboardSource(DataSource):
                 _safe_get(_safe_get(_safe_get(detail_iface, "configData", {}) or {}, "networkOS", {}) or {}, "policy", {}) or {},
                 "accessVlan",
             )
-            if access_vlan:
-                try:
-                    untagged_vlan_vid = int(access_vlan)
-                except ValueError:
-                    untagged_vlan_vid = None
+            untagged_vlan_vid = _normalize_vlan_vid(access_vlan)
         if untagged_vlan_vid is None:
             native_vlan = _first_non_empty(source_iface, "nativeVlanId") or nv("nativeVlanId")
-            if native_vlan:
-                try:
-                    untagged_vlan_vid = int(native_vlan)
-                except ValueError:
-                    untagged_vlan_vid = None
-        tagged_vlan_vids = _parse_vlan_list(
-            _first_non_empty(source_iface, "allowedVlans") or nv("allowedVlans")
-        )
+            untagged_vlan_vid = _normalize_vlan_vid(native_vlan)
+        if mode == "tagged-all":
+            tagged_vlan_vids = []
+        else:
+            tagged_vlan_vids = _parse_vlan_list(
+                _first_non_empty(source_iface, "allowedVlans") or nv("allowedVlans")
+            )
         if untagged_vlan_vid is not None:
             tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
@@ -1696,7 +1691,7 @@ def _parse_vlan_list(value: Any) -> list[int]:
             if end < start:
                 start, end = end, start
             for vid in range(start, end + 1):
-                if vid not in seen:
+                if 1 <= vid <= 4094 and vid not in seen:
                     result.append(vid)
                     seen.add(vid)
             continue
@@ -1704,13 +1699,13 @@ def _parse_vlan_list(value: Any) -> list[int]:
             vid = int(token)
         except ValueError:
             continue
-        if vid not in seen:
+        if 1 <= vid <= 4094 and vid not in seen:
             result.append(vid)
             seen.add(vid)
     return result
 
 
-def _normalize_interface_mode(raw_mode: str) -> str | None:
+def _normalize_interface_mode(raw_mode: str | None) -> str | None:
     """Map NDFC switchport modes onto NetBox interface mode values."""
     value = str(raw_mode or "").strip().lower()
     if not value:
@@ -1722,3 +1717,14 @@ def _normalize_interface_mode(raw_mode: str) -> str | None:
     if value in {"tagged-all", "tagged_all"}:
         return "tagged-all"
     return None
+
+
+def _normalize_vlan_vid(value: Any) -> int | None:
+    """Return a valid 802.1Q VLAN ID or ``None``."""
+    if value in (None, ""):
+        return None
+    try:
+        vid = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return vid if 1 <= vid <= 4094 else None
