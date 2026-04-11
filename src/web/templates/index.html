@@ -121,7 +121,7 @@
                 <a href="/jobs/{{ j.id }}" class="btn btn-sm btn-outline-secondary">Logs</a>
                 <form method="POST" action="/jobs/run" class="d-inline">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-                  <input type="hidden" name="hcl_file" value="{{ j.hcl_file }}" />
+                  <input type="hidden" name="hcl_file" value="{{ j.hcl_file | mapping_path }}" />
                   {% if j.dry_run %}<input type="hidden" name="dry_run" value="1" />{% endif %}
                   {% if j.debug_mode %}<input type="hidden" name="debug_mode" value="1" />{% endif %}
                   <button type="submit" class="btn btn-sm btn-outline-primary">Rerun</button>

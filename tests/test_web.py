@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -409,6 +410,17 @@ def test_index_shows_rerun_button_for_recent_jobs(app):
     assert b'name="dry_run" value="1"' in resp.data
     assert b'name="debug_mode" value="1"' in resp.data
     assert b">Rerun</button>" in resp.data
+
+
+def test_job_detail_rerun_uses_repo_relative_mapping_path(app):
+    repo_mapping = str(Path(__file__).resolve().parents[1] / "mappings" / "test.hcl")
+    job_id = create_job(repo_mapping, dry_run=True, debug_mode=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'name="hcl_file" value="mappings/test.hcl"' in resp.data
+    assert f'name="hcl_file" value="{repo_mapping}"'.encode() not in resp.data
 
 
 def test_job_detail_not_found(app):
