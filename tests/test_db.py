@@ -515,11 +515,18 @@ def test_init_db_backfills_plaintext_sensitive_overrides(monkeypatch):
     assert get_config("VCENTER_PASS", "") == "legacy-secret"
 
 
-def test_catc_runtime_settings_are_seeded():
-    settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
+def test_runtime_settings_are_seeded():
+    catc_settings = {row["key"]: row for row in get_settings_by_group()["Cisco Catalyst Center"]}
+    ndfc_settings = {
+        row["key"]: row for row in get_settings_by_group()["Cisco Nexus Dashboard Fabric Controller"]
+    }
+    collector_settings = {row["key"]: row for row in get_settings_by_group()["Per-source sync flags"]}
 
-    assert settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
-    assert settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
+    assert catc_settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
+    assert catc_settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
+    assert ndfc_settings["NDFC_FETCH_INTERFACES"]["default_value"] == "false"
+    assert ndfc_settings["NDFC_FETCH_MODULES"]["default_value"] == "false"
+    assert collector_settings["COLLECTOR_SYNC_MODULES"]["default_value"] == "true"
 
 
 def test_startup_config_stays_env_only(monkeypatch):

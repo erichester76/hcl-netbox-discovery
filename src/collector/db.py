@@ -437,6 +437,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" to fetch per-switch interface lists from NDFC',
         "Cisco Nexus Dashboard Fabric Controller",
     ),
+    (
+        "NDFC_FETCH_MODULES",
+        "false",
+        'Set to "true" to fetch per-switch module inventories from NDFC',
+        "Cisco Nexus Dashboard Fabric Controller",
+    ),
     # --- F5 BIG-IP ---
     ("F5_HOST", "f5.example.com", "", "F5 BIG-IP"),
     ("F5_USER", "admin", "", "F5 BIG-IP"),
@@ -482,6 +488,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
+    ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
     (
         "TENABLE_HOST",
