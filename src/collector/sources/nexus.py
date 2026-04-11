@@ -63,6 +63,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+import zlib
 from typing import Any
 
 import requests
@@ -900,18 +901,10 @@ def _suppress_duplicate_interface_ips(switches: list[dict[str, Any]]) -> None:
             iface["ip_address"] = ""
 
 
-def _classify_shared_ip(iface_name: str) -> str:
-    """Return the shared IP role for *iface_name* when it is safe to model."""
-    lower = str(iface_name or "").lower()
-    if lower.startswith("vlan"):
-        return "vip"
-    if lower.startswith("loopback"):
-        return "anycast"
-    return ""
-
-
-def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return normalized shared VIP/anycast records from duplicate interface IPs."""
+def _collect_duplicate_ip_refs(
+    switches: list[dict[str, Any]],
+) -> dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]:
+    """Return duplicate interface IP references grouped by address."""
     addresses: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
     for switch in switches:
         for iface in switch.get("interfaces", []) or []:
@@ -920,16 +913,44 @@ def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, A
             duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
             if not duplicate_address:
                 continue
+            if not _normalize_ip_with_prefix(duplicate_address):
+                continue
             addresses.setdefault(duplicate_address, []).append((switch, iface))
+    return addresses
+
+
+def _shared_ip_kind(iface_name: str) -> str:
+    """Return the normalized shared-address kind for *iface_name*."""
+    lower = str(iface_name or "").lower()
+    if lower.startswith("vlan"):
+        return "varp"
+    if lower.startswith("loopback"):
+        return "anycast"
+    return ""
+
+
+def _derive_fhrp_group_id(iface_name: str, address: str) -> int:
+    """Return a deterministic NetBox FHRP group ID for a shared VLAN VIP."""
+    match = re.search(r"(\d+)$", str(iface_name or ""))
+    if match:
+        vlan_id = int(match.group(1))
+        if 0 <= vlan_id <= 32767:
+            return vlan_id
+    return zlib.crc32(address.encode("utf-8")) % 32768
+
+
+def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return normalized standalone anycast IP records from duplicate interface IPs."""
+    addresses = _collect_duplicate_ip_refs(switches)
 
     shared_records: list[dict[str, Any]] = []
     for address, refs in sorted(addresses.items()):
-        roles = {
-            _classify_shared_ip(iface.get("name", ""))
+        kinds = {
+            _shared_ip_kind(iface.get("name", ""))
             for _, iface in refs
         }
-        roles.discard("")
-        if len(roles) != 1:
+        kinds.discard("")
+        if kinds != {"anycast"}:
             continue
 
         sorted_refs = sorted(
@@ -947,28 +968,103 @@ def _build_shared_ip_records(switches: list[dict[str, Any]]) -> list[dict[str, A
         if len(site_names) > 1:
             continue
 
-        role = next(iter(roles))
         first_switch, first_iface = sorted_refs[0]
         first_name = str(first_iface.get("name", "") or "")
         references = [
             f"{switch.get('name', '')}:{iface.get('name', '')}"
             for switch, iface in sorted_refs
         ]
-        match = re.search(r"(\d+)$", first_name)
         shared_records.append(
             {
                 "address": address,
-                "role": role,
-                "name": f"{first_name} {role} {address}",
-                "group_name": f"{first_name} {role}",
-                "group_id": int(match.group(1)) if match else None,
+                "role": "anycast",
+                "name": f"{first_name} anycast {address}",
+                "site_name": str(first_switch.get("site_name", "") or ""),
+                "references": references,
+            }
+        )
+
+    return shared_records
+
+
+def _build_shared_fhrp_groups(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return shared VLAN VIPs normalized as NetBox FHRP groups."""
+    addresses = _collect_duplicate_ip_refs(switches)
+
+    groups: list[dict[str, Any]] = []
+    for address, refs in sorted(addresses.items()):
+        kinds = {
+            _shared_ip_kind(iface.get("name", ""))
+            for _, iface in refs
+        }
+        kinds.discard("")
+        if kinds != {"varp"}:
+            continue
+
+        sorted_refs = sorted(
+            refs,
+            key=lambda ref: (
+                str(ref[0].get("name", "") or ""),
+                str(ref[1].get("name", "") or ""),
+            ),
+        )
+        first_switch, first_iface = sorted_refs[0]
+        first_name = str(first_iface.get("name", "") or "")
+        references = [
+            f"{switch.get('name', '')}:{iface.get('name', '')}"
+            for switch, iface in sorted_refs
+        ]
+        groups.append(
+            {
+                "address": address,
+                "role": "vip",
+                "protocol": "other",
+                "group_name": f"{first_name} varp {address}",
+                "group_id": _derive_fhrp_group_id(first_name, address),
                 "site_name": str(first_switch.get("site_name", "") or ""),
                 "interface_name": first_name,
                 "references": references,
             }
         )
 
-    return shared_records
+    return groups
+
+
+def _build_shared_fhrp_assignments(groups: list[dict[str, Any]], switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return FHRP group assignment records for shared VLAN VIP interfaces."""
+    group_by_address = {str(group.get("address", "") or ""): group for group in groups}
+    assignments: list[dict[str, Any]] = []
+    for switch in switches:
+        switch_name = str(switch.get("name", "") or "")
+        site_name = str(switch.get("site_name", "") or "")
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
+            group = group_by_address.get(duplicate_address)
+            if not group:
+                continue
+            iface_name = str(iface.get("name", "") or "")
+            if _shared_ip_kind(iface_name) != "varp":
+                continue
+            assignments.append(
+                {
+                    "group_name": str(group.get("group_name", "") or ""),
+                    "device_name": switch_name,
+                    "site_name": site_name,
+                    "interface_name": iface_name,
+                    "priority": 100,
+                }
+            )
+
+    assignments.sort(
+        key=lambda item: (
+            item.get("group_name", ""),
+            item.get("device_name", ""),
+            item.get("interface_name", ""),
+        )
+    )
+    return assignments
 
 
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
@@ -1123,6 +1219,8 @@ class NexusDashboardSource(DataSource):
         self._fetch_modules: bool = False
         self._switches: list[dict] = []  # cached after _get_switches()
         self._shared_ips: list[dict[str, Any]] = []
+        self._shared_fhrp_groups: list[dict[str, Any]] = []
+        self._shared_fhrp_assignments: list[dict[str, Any]] = []
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -1170,6 +1268,8 @@ class NexusDashboardSource(DataSource):
         collectors = {
             "switches": self._get_switches,
             "shared_ips": self._get_shared_ips,
+            "shared_fhrp_groups": self._get_shared_fhrp_groups,
+            "shared_fhrp_assignments": self._get_shared_fhrp_assignments,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -1183,6 +1283,8 @@ class NexusDashboardSource(DataSource):
         """Release the HTTP session."""
         self._session = close_http_session(self._session, "NexusDashboardSource")
         self._shared_ips = []
+        self._shared_fhrp_groups = []
+        self._shared_fhrp_assignments = []
 
     # ------------------------------------------------------------------
     # Authentication
@@ -1316,8 +1418,15 @@ class NexusDashboardSource(DataSource):
         if self._fetch_interfaces:
             _suppress_duplicate_interface_ips(switches)
             self._shared_ips = _build_shared_ip_records(switches)
+            self._shared_fhrp_groups = _build_shared_fhrp_groups(switches)
+            self._shared_fhrp_assignments = _build_shared_fhrp_assignments(
+                self._shared_fhrp_groups,
+                switches,
+            )
         else:
             self._shared_ips = []
+            self._shared_fhrp_groups = []
+            self._shared_fhrp_assignments = []
 
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
@@ -1328,6 +1437,18 @@ class NexusDashboardSource(DataSource):
         if not self._switches:
             self._get_switches()
         return list(self._shared_ips)
+
+    def _get_shared_fhrp_groups(self) -> list[dict[str, Any]]:
+        """Return shared VARP VLAN VIPs normalized as NetBox FHRP groups."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._shared_fhrp_groups)
+
+    def _get_shared_fhrp_assignments(self) -> list[dict[str, Any]]:
+        """Return FHRP membership rows for interfaces participating in VARP."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._shared_fhrp_assignments)
 
     def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""

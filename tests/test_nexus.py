@@ -13,6 +13,8 @@ import pytest
 
 from collector.sources.nexus import (
     NexusDashboardSource,
+    _build_shared_fhrp_assignments,
+    _build_shared_fhrp_groups,
     _build_shared_ip_records,
     _derive_interface_name_details,
     _flatten_interface_payload,
@@ -766,7 +768,7 @@ class TestNexusGetObjects:
         assert result[0]["interfaces"][0]["name"] == "mgmt0"
         assert result[0]["interfaces"][0]["mgmt_only"] is True
 
-    def test_get_objects_shared_ips_returns_classified_records(self):
+    def test_get_objects_shared_fhrp_collections_return_varp_records(self):
         src = self._connected_source()
         src._fetch_interfaces = True
 
@@ -830,19 +832,37 @@ class TestNexusGetObjects:
 
         src._session.get.side_effect = side_effect
 
-        shared = src.get_objects("shared_ips")
+        groups = src.get_objects("shared_fhrp_groups")
+        assignments = src.get_objects("shared_fhrp_assignments")
 
-        assert shared == [
+        assert src.get_objects("shared_ips") == []
+        assert groups == [
             {
                 "address": "10.20.22.65/28",
+                "protocol": "other",
                 "role": "vip",
-                "name": "Vlan3965 vip 10.20.22.65/28",
-                "group_name": "Vlan3965 vip",
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
                 "group_id": 3965,
                 "site_name": "ProdFabric",
                 "interface_name": "Vlan3965",
                 "references": ["leaf-a:Vlan3965", "leaf-b:Vlan3965"],
             }
+        ]
+        assert assignments == [
+            {
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+                "device_name": "leaf-a",
+                "site_name": "ProdFabric",
+                "interface_name": "Vlan3965",
+                "priority": 100,
+            },
+            {
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+                "device_name": "leaf-b",
+                "site_name": "ProdFabric",
+                "interface_name": "Vlan3965",
+                "priority": 100,
+            },
         ]
 
     def test_get_switches_includes_interfaces_found_only_in_analyze_or_detail(self):
@@ -1221,8 +1241,8 @@ class TestNexusEnrichSwitch:
 
 
 class TestSharedIpRecords:
-    def test_build_shared_ip_records_classifies_vlan_as_vip(self):
-        records = _build_shared_ip_records(
+    def test_build_shared_fhrp_groups_classifies_vlan_as_varp(self):
+        records = _build_shared_fhrp_groups(
             [
                 {
                     "name": "leaf-a",
@@ -1244,9 +1264,9 @@ class TestSharedIpRecords:
         assert records == [
             {
                 "address": "10.20.22.65/28",
+                "protocol": "other",
                 "role": "vip",
-                "name": "Vlan3965 vip 10.20.22.65/28",
-                "group_name": "Vlan3965 vip",
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
                 "group_id": 3965,
                 "site_name": "Fabric-A",
                 "interface_name": "Vlan3965",
@@ -1275,7 +1295,7 @@ class TestSharedIpRecords:
         )
 
         assert records[0]["role"] == "anycast"
-        assert records[0]["group_id"] == 254
+        assert "group_id" not in records[0]
 
     def test_build_shared_ip_records_sorts_references_and_skips_cross_site(self):
         records = _build_shared_ip_records(
@@ -1283,21 +1303,17 @@ class TestSharedIpRecords:
                 {
                     "name": "leaf-b",
                     "site_name": "Fabric-A",
-                    "interfaces": [
-                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
-                    ],
+                    "interfaces": [{"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}],
                 },
                 {
                     "name": "leaf-a",
                     "site_name": "Fabric-A",
-                    "interfaces": [
-                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
-                    ],
+                    "interfaces": [{"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}],
                 },
             ]
         )
 
-        assert records[0]["references"] == ["leaf-a:Vlan3965", "leaf-b:Vlan3965"]
+        assert records[0]["references"] == ["leaf-a:loopback254", "leaf-b:loopback254"]
         assert records[0]["site_name"] == "Fabric-A"
 
         cross_site_records = _build_shared_ip_records(
@@ -1305,21 +1321,76 @@ class TestSharedIpRecords:
                 {
                     "name": "leaf-a",
                     "site_name": "Fabric-A",
-                    "interfaces": [
-                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
-                    ],
+                    "interfaces": [{"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}],
                 },
                 {
                     "name": "leaf-b",
                     "site_name": "Fabric-B",
-                    "interfaces": [
-                        {"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}
-                    ],
+                    "interfaces": [{"name": "loopback254", "duplicate_ip_address": "10.100.3.1/32"}],
                 },
             ]
         )
 
         assert cross_site_records == []
+
+    def test_build_shared_fhrp_groups_keeps_cross_site_varp_records(self):
+        records = _build_shared_fhrp_groups(
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+            ]
+        )
+
+        assert records[0]["references"] == ["leaf-a:Vlan3965", "leaf-b:Vlan3965"]
+
+    def test_build_shared_fhrp_assignments_expands_one_per_member(self):
+        groups = [
+            {
+                "address": "10.20.22.65/28",
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+            }
+        ]
+
+        assignments = _build_shared_fhrp_assignments(
+            groups,
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+                {
+                    "name": "leaf-b",
+                    "site_name": "Fabric-B",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/28"}],
+                },
+            ],
+        )
+
+        assert assignments == [
+            {
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+                "device_name": "leaf-a",
+                "site_name": "Fabric-A",
+                "interface_name": "Vlan3965",
+                "priority": 100,
+            },
+            {
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+                "device_name": "leaf-b",
+                "site_name": "Fabric-B",
+                "interface_name": "Vlan3965",
+                "priority": 100,
+            },
+        ]
 
     def test_serial_uppercased(self):
         src = NexusDashboardSource()

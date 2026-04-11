@@ -13,6 +13,18 @@ def _shared_ip_object(cfg):
     return next((obj for obj in cfg.objects if obj.name == "shared_ip"), None)
 
 
+def _shared_fhrp_group_object(cfg):
+    return next((obj for obj in cfg.objects if obj.name == "shared_fhrp_group"), None)
+
+
+def _shared_fhrp_vip_object(cfg):
+    return next((obj for obj in cfg.objects if obj.name == "shared_fhrp_vip"), None)
+
+
+def _shared_fhrp_assignment_object(cfg):
+    return next((obj for obj in cfg.objects if obj.name == "shared_fhrp_assignment"), None)
+
+
 def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     monkeypatch.delenv("NDFC_FETCH_INTERFACES", raising=False)
     cfg = load_config("mappings/nexus.hcl.example")
@@ -107,6 +119,62 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert shared_fields["status"] == "'active'"
     assert shared_fields["description"] == "join(', ', source('references') or [])"
     assert shared_fields["tags"] == "['ndfc-sync']"
+
+    shared_fhrp_group = _shared_fhrp_group_object(cfg)
+    assert shared_fhrp_group is not None
+    assert shared_fhrp_group.source_collection == "shared_fhrp_groups"
+    assert shared_fhrp_group.netbox_resource == "ipam.fhrp_groups"
+    assert shared_fhrp_group.lookup_by == ["name"]
+
+    fhrp_group_fields = {field.name: field.value for field in shared_fhrp_group.fields}
+    assert fhrp_group_fields["name"] == "source('group_name')"
+    assert fhrp_group_fields["protocol"] == "source('protocol')"
+    assert fhrp_group_fields["group_id"] == "source('group_id')"
+    assert fhrp_group_fields["description"] == "join(', ', source('references') or [])"
+    assert fhrp_group_fields["tags"] == "['ndfc-sync']"
+
+    shared_fhrp_vip = _shared_fhrp_vip_object(cfg)
+    assert shared_fhrp_vip is not None
+    assert shared_fhrp_vip.source_collection == "shared_fhrp_groups"
+    assert shared_fhrp_vip.netbox_resource == "ipam.ip_addresses"
+    assert shared_fhrp_vip.lookup_by == ["address"]
+
+    fhrp_vip_fields = {field.name: field.value for field in shared_fhrp_vip.fields}
+    assert fhrp_vip_fields["address"] == "source('address')"
+    assert fhrp_vip_fields["role"] == "source('role')"
+    assert fhrp_vip_fields["status"] == "'active'"
+    assert fhrp_vip_fields["assigned_object_type"] == "'ipam.fhrpgroup'"
+    assert fhrp_vip_fields["description"] == "join(', ', source('references') or [])"
+    assert fhrp_vip_fields["tags"] == "['ndfc-sync']"
+
+    assigned_object_id_field = next(
+        (field for field in shared_fhrp_vip.fields if field.name == "assigned_object_id"),
+        None,
+    )
+    assert assigned_object_id_field is not None
+    assert assigned_object_id_field.type == "fk"
+    assert assigned_object_id_field.resource == "ipam.fhrp_groups"
+    assert assigned_object_id_field.lookup == {"name": "source('group_name')"}
+
+    shared_fhrp_assignment = _shared_fhrp_assignment_object(cfg)
+    assert shared_fhrp_assignment is not None
+    assert shared_fhrp_assignment.source_collection == "shared_fhrp_assignments"
+    assert shared_fhrp_assignment.netbox_resource == "ipam.fhrp_group_assignments"
+    assert shared_fhrp_assignment.lookup_by == ["group", "interface_type", "interface_id"]
+
+    assignment_fields = {field.name: field.value for field in shared_fhrp_assignment.fields}
+    assert assignment_fields["interface_type"] == "'dcim.interface'"
+    assert assignment_fields["interface_id"] == (
+        "nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': source('device_name')}), 'name': source('interface_name')})"
+    )
+    assert assignment_fields["priority"] == "source('priority')"
+
+    group_field = next((field for field in shared_fhrp_assignment.fields if field.name == "group"), None)
+    assert group_field is not None
+    assert group_field.type == "fk"
+    assert group_field.resource == "ipam.fhrp_groups"
+    assert group_field.lookup == {"name": "source('group_name')"}
+
     tagged_vlan_block = interface.tagged_vlans[0]
     assert tagged_vlan_block.source_items == "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
     tagged_vlan_fields = {field.name: field.value for field in tagged_vlan_block.fields}

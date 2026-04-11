@@ -545,6 +545,22 @@ Cast a value to string or integer.
 
 Reference a resolved prerequisite by name. Use dot notation to access attributes of multi-value prerequisites (e.g., `prereq("placement.site_id")`).
 
+### `nb_id("resource", {"lookup": "value"})`
+
+Resolve the numeric ID of an existing NetBox object during expression evaluation.
+This is useful for relationship payloads that need a specific foreign-key ID but
+are not modeled as a normal `type = "fk"` field, such as generic assignments.
+
+```hcl
+nb_id("dcim.devices", {"name": source("device_name")})
+nb_id("dcim.interfaces", {
+  "device_id": nb_id("dcim.devices", {"name": source("device_name")}),
+  "name": source("interface_name"),
+})
+```
+
+Returns `None` when the lookup cannot be resolved or during `dry_run`.
+
 ### `parent` / `parent_id`
 
 Inside nested blocks such as `interface {}`, `ip_address {}`, `inventory_item {}`, and `module {}`, the current NetBox parent object is exposed as `parent` and its numeric ID as `parent_id`. This is useful for sibling lookups, for example resolving an interface LAG on the same device:
