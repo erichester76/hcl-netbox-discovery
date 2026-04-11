@@ -8,6 +8,17 @@ Supported collections
 ``"switches"`` – all managed Nexus switches across all fabrics, optionally
                  including embedded interface lists when ``fetch_interfaces``
                  is enabled in the source config.
+``"shared_ips"`` – shared loopback/VARP addresses derived from duplicate
+                   interface IP detection.
+``"shared_fhrp_groups"`` – shared VLAN gateway groups derived from duplicate
+                           VARP-style interface IPs.
+``"shared_fhrp_assignments"`` – per-interface memberships for the derived
+                                shared FHRP groups.
+``"fabrics"`` – aggregated per-fabric topology records.
+``"vpc_domains"`` – aggregated fabric-scoped vPC domain records.
+``"vpc_peer_links"`` – aggregated fabric-scoped vPC peer-link records.
+``"topology_custom_fields"`` – static custom-field definitions used by the
+                               Nexus topology fallback mapping.
 
 Each returned switch dict includes both normalised convenience fields and
 the original NDFC response attributes:
