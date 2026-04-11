@@ -1392,6 +1392,35 @@ class TestSharedIpRecords:
             },
         ]
 
+    def test_build_shared_fhrp_assignments_normalizes_duplicate_address_lookup(self):
+        groups = [
+            {
+                "address": "10.20.22.65/28",
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+            }
+        ]
+
+        assignments = _build_shared_fhrp_assignments(
+            groups,
+            [
+                {
+                    "name": "leaf-a",
+                    "site_name": "Fabric-A",
+                    "interfaces": [{"name": "Vlan3965", "duplicate_ip_address": "10.20.22.65/255.255.255.240"}],
+                }
+            ],
+        )
+
+        assert assignments == [
+            {
+                "group_name": "Vlan3965 varp 10.20.22.65/28",
+                "device_name": "leaf-a",
+                "site_name": "Fabric-A",
+                "interface_name": "Vlan3965",
+                "priority": 100,
+            }
+        ]
+
     def test_serial_uppercased(self):
         src = NexusDashboardSource()
         sw = {

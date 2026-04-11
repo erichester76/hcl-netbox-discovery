@@ -1041,7 +1041,8 @@ def _build_shared_fhrp_assignments(groups: list[dict[str, Any]], switches: list[
         for iface in switch.get("interfaces", []) or []:
             if not isinstance(iface, dict):
                 continue
-            duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
+            raw_duplicate_address = str(iface.get("duplicate_ip_address", "") or "").strip()
+            duplicate_address = _normalize_ip_with_prefix(raw_duplicate_address) or raw_duplicate_address
             group = group_by_address.get(duplicate_address)
             if not group:
                 continue
