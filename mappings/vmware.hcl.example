@@ -110,6 +110,7 @@ object "host" {
   netbox_resource   = "dcim.devices"
   lookup_by         = ["name"]
   max_workers       = 8
+  enabled_if        = "not source('parent.name').startswith('Staging')"
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
@@ -302,6 +303,7 @@ object "vm" {
   netbox_resource   = "virtualization.virtual_machines"
   lookup_by         = ["name", "cluster"]
   max_workers       = 8
+  enabled_if        = "not source('runtime.host.parent.name').startswith('Staging')"
 
   prerequisite "cluster" {
     method   = "ensure_cluster"
