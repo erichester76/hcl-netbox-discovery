@@ -203,7 +203,7 @@ object "host" {
 | Attribute | Required | Description |
 |---|---|---|
 | `source_collection` | yes | Collection name passed to `source.get_objects()` |
-| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`) |
+| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`). Plugin resources use the same dotted form, for example `"plugins.custom_objects.projects"` or a custom-object instance endpoint such as `"plugins.custom_objects.ndfc_fabrics"` |
 | `lookup_by` | no | Field names used as the upsert key (default: `["name"]`) |
 | `enabled_if` | no | Expression evaluated per source item; falsey items are skipped before processing |
 | `max_workers` | no | Thread pool size for this object (overrides `collector.max_workers`) |

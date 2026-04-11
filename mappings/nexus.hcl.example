@@ -15,6 +15,13 @@
 #                             interface {} block below can sync them to NetBox.
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
+#   NETBOX_USE_CUSTOM_OBJECTS true | false  (default: false)
+#                             When true, emit Nexus fabric / vPC topology into
+#                             NetBox Custom Objects. This requires the
+#                             ``netbox-custom-objects`` plugin to be installed
+#                             and the ``ndfc_fabrics``, ``ndfc_vpc_domains``,
+#                             and ``ndfc_vpc_peer_links`` custom object types
+#                             (with matching fields) to already exist.
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 
@@ -41,6 +48,7 @@ collector {
   sync_tag         = "ndfc-sync"
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+  use_custom_objects = "env('NETBOX_USE_CUSTOM_OBJECTS', 'false')"
 }
 
 # ---------------------------------------------------------------------------
@@ -137,6 +145,153 @@ object "shared_fhrp_vip" {
 
   field "description" {
     value = "join(', ', source('references') or [])"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync']"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Optional Nexus topology custom objects
+#
+# These blocks assume the corresponding custom object types and fields already
+# exist in NetBox. Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``.
+# ---------------------------------------------------------------------------
+
+object "ndfc_fabric" {
+  source_collection = "fabrics"
+  netbox_resource   = "plugins.custom_objects.ndfc_fabrics"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "site_names" {
+    value = "source('site_names')"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "devices" {
+    value = "[{'name': name} for name in (source('device_names') or [])]"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync']"
+  }
+}
+
+object "ndfc_vpc_domain" {
+  source_collection = "vpc_domains"
+  netbox_resource   = "plugins.custom_objects.ndfc_vpc_domains"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_identifier" {
+    value = "source('fabric_identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "vpc_domain_id" {
+    value = "source('vpc_domain_id')"
+  }
+
+  field "vpc_name" {
+    value = "source('vpc_name')"
+  }
+
+  field "primary_device" {
+    value = "when(source('primary_device_name') != '', {'name': source('primary_device_name')}, None)"
+  }
+
+  field "secondary_device" {
+    value = "when(source('secondary_device_name') != '', {'name': source('secondary_device_name')}, None)"
+  }
+
+  field "peer_devices" {
+    value = "[{'name': name} for name in (source('peer_device_names') or [])]"
+  }
+
+  field "member_lags" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('member_lag_refs') or [])]"
+  }
+
+  field "vpc_interfaces" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('vpc_interface_refs') or [])]"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "vrf_names" {
+    value = "source('vrf_names')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "['ndfc-sync']"
+  }
+}
+
+object "ndfc_vpc_peer_link" {
+  source_collection = "vpc_peer_links"
+  netbox_resource   = "plugins.custom_objects.ndfc_vpc_peer_links"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_identifier" {
+    value = "source('fabric_identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "vpc_domain_identifier" {
+    value = "source('vpc_domain_identifier')"
+  }
+
+  field "devices" {
+    value = "[{'name': name} for name in (source('device_names') or [])]"
+  }
+
+  field "interfaces" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('interface_refs') or [])]"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "vrf_names" {
+    value = "source('vrf_names')"
   }
 
   field "tags" {

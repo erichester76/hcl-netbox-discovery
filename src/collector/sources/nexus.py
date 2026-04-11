@@ -113,6 +113,21 @@ def _last_hierarchy_part(value: str) -> str:
     return parts[-1] if parts else ""
 
 
+def _sorted_unique(values: list[str]) -> list[str]:
+    """Return sorted unique non-empty strings."""
+    return sorted({value for value in values if value})
+
+
+def _split_interface_refs(value: Any) -> list[str]:
+    """Split one or more interface labels from common NDFC string fields."""
+    if value in (None, ""):
+        return []
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part for part in re.split(r"[,\s]+", text) if part]
+
+
 def _first_non_empty(obj: Any, *keys: str) -> str:
     """Return the first non-empty string-like field from *obj* for *keys*."""
     for key in keys:
@@ -156,6 +171,57 @@ def _derive_site_name(switch: Any) -> str:
         return site_name
     return _last_hierarchy_part(
         _first_non_empty(switch, "siteNameHierarchy", "fabricNameHierarchy", "sitePath")
+    )
+
+
+def _derive_vpc_domain_id(switch: Any) -> str:
+    """Return the best-available vPC domain identifier for a switch."""
+    return _first_non_empty(
+        switch,
+        "vpcDomain",
+        "vpcDomainId",
+        "vpcDomainID",
+        "vpcDomainName",
+    )
+
+
+def _derive_vpc_role(switch: Any) -> str:
+    """Return a normalized vPC control-plane role for a switch."""
+    principal = _safe_get(switch, "principal", None)
+    peer = _first_non_empty(switch, "peer", "peerName", "peerSerialNumber", "peerSwitchDbId")
+
+    if isinstance(principal, bool):
+        return "primary" if principal else ("secondary" if peer else "")
+
+    text = str(principal or "").strip().lower()
+    if text in {"true", "1", "yes", "on", "primary", "principal"}:
+        return "primary"
+    if text in {"false", "0", "no", "off", "secondary", "backup"}:
+        return "secondary"
+    if peer:
+        return "secondary"
+    return ""
+
+
+def _derive_peer_link_interfaces(switch: Any) -> list[str]:
+    """Return normalized peer-link interface names from switch inventory fields."""
+    names: list[str] = []
+    for raw in (_safe_get(switch, "sendIntf", None), _safe_get(switch, "recvIntf", None)):
+        for part in _split_interface_refs(raw):
+            normalized = _normalize_interface_name(part)
+            if normalized:
+                names.append(normalized)
+    return _sorted_unique(names)
+
+
+def _derive_vpc_peer_name(switch: Any) -> str:
+    """Return the best-available peer switch label for a vPC switch."""
+    return _first_non_empty(
+        switch,
+        "peer",
+        "peerName",
+        "peerSerialNumber",
+        "peerSwitchDbId",
     )
 
 
@@ -761,6 +827,41 @@ def _derive_vpc_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     return ""
 
 
+def _derive_vpc_parent_lag_name(
+    iface: Any,
+    *,
+    nvpair_values: dict[str, str] | None = None,
+    analyze_iface: Any | None = None,
+    detail_iface: Any | None = None,
+) -> str:
+    """Return the parent port-channel metadata for a vPC interface."""
+    if not _derive_vpc_name(iface, nvpair_values=nvpair_values):
+        return ""
+
+    candidates = _candidate_iface_values(
+        iface,
+        "peer1Pcid",
+        "peer2Pcid",
+        "peer1PcId",
+        "peer2PcId",
+        "portChannelId",
+        "channelId",
+        nvpair_values=nvpair_values,
+    )
+    for value in (
+        _safe_get(detail_iface, "channelId", ""),
+        _safe_get(analyze_iface, "channelId", ""),
+    ):
+        if value not in ("", None, 0, "0"):
+            candidates.append(str(value))
+
+    for value in candidates:
+        normalized = _normalize_port_channel_name(value)
+        if normalized:
+            return normalized
+    return ""
+
+
 def _debug_unparsed_speed(
     serial: str,
     raw_iface: Any,
@@ -1074,6 +1175,281 @@ def _build_shared_fhrp_assignments(groups: list[dict[str, Any]], switches: list[
     return assignments
 
 
+def _build_fabric_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one record per Nexus fabric."""
+    fabrics: dict[str, dict[str, Any]] = {}
+    for switch in switches:
+        fabric_name = str(switch.get("fabric_name", "") or "").strip()
+        if not fabric_name:
+            continue
+        record = fabrics.setdefault(
+            fabric_name,
+            {
+                "identifier": fabric_name,
+                "fabric_name": fabric_name,
+                "site_names": set(),
+                "device_names": set(),
+                "tenant_names": set(),
+            },
+        )
+        site_name = str(switch.get("site_name", "") or "").strip()
+        tenant_name = str(switch.get("tenant_name", "") or "").strip()
+        device_name = str(switch.get("name", "") or "").strip()
+        if site_name:
+            record["site_names"].add(site_name)
+        if device_name:
+            record["device_names"].add(device_name)
+        if tenant_name:
+            record["tenant_names"].add(tenant_name)
+
+    return [
+        {
+            **record,
+            "site_names": sorted(record["site_names"]),
+            "device_names": sorted(record["device_names"]),
+            "tenant_names": sorted(record["tenant_names"]),
+        }
+        for _, record in sorted(fabrics.items())
+    ]
+
+
+def _build_vpc_domain_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one record per fabric-scoped vPC domain."""
+    domains: dict[tuple[str, str], dict[str, Any]] = {}
+    for switch in switches:
+        fabric_name = str(switch.get("fabric_name", "") or "").strip()
+        vpc_domain_id = str(switch.get("vpc_domain_id", "") or "").strip()
+        if not fabric_name or not vpc_domain_id:
+            continue
+
+        identifier = f"{fabric_name}:{vpc_domain_id}"
+        record = domains.setdefault(
+            (fabric_name, vpc_domain_id),
+            {
+                "identifier": identifier,
+                "fabric_name": fabric_name,
+                "fabric_identifier": fabric_name,
+                "vpc_domain_id": vpc_domain_id,
+                "vpc_name": f"vpc{vpc_domain_id}",
+                "primary_device_name": "",
+                "secondary_device_name": "",
+                "peer_device_names": set(),
+                "member_lag_refs": set(),
+                "vpc_interface_refs": set(),
+                "tenant_names": set(),
+                "vrf_names": set(),
+            },
+        )
+
+        device_name = str(switch.get("name", "") or "").strip()
+        role = str(switch.get("vpc_role", "") or "").strip().lower()
+        tenant_name = str(switch.get("tenant_name", "") or "").strip()
+        peer_name = str(switch.get("vpc_peer_name", "") or "").strip()
+        if role == "primary" and device_name:
+            record["primary_device_name"] = device_name
+        elif role == "secondary" and device_name:
+            record["secondary_device_name"] = device_name
+        if device_name:
+            record["peer_device_names"].add(device_name)
+        if peer_name:
+            record["peer_device_names"].add(peer_name)
+        if tenant_name:
+            record["tenant_names"].add(tenant_name)
+
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            iface_name = str(iface.get("name", "") or "").strip()
+            if not iface_name or not device_name:
+                continue
+            lag_name = str(iface.get("vpc_parent_lag_name", "") or "").strip()
+            vpc_name = str(iface.get("vpc_name", "") or "").strip()
+            vrf_name = str(iface.get("vrf_name", "") or "").strip()
+            if lag_name:
+                record["member_lag_refs"].add((device_name, lag_name))
+            if vpc_name:
+                record["vpc_interface_refs"].add((device_name, iface_name))
+            if vrf_name:
+                record["vrf_names"].add(vrf_name)
+
+    results: list[dict[str, Any]] = []
+    for _, record in sorted(domains.items()):
+        results.append(
+            {
+                **record,
+                "peer_device_names": sorted(record["peer_device_names"]),
+                "member_lag_refs": [
+                    {"device_name": device_name, "name": name}
+                    for device_name, name in sorted(record["member_lag_refs"])
+                ],
+                "vpc_interface_refs": [
+                    {"device_name": device_name, "name": name}
+                    for device_name, name in sorted(record["vpc_interface_refs"])
+                ],
+                "tenant_names": sorted(record["tenant_names"]),
+                "vrf_names": sorted(record["vrf_names"]),
+            }
+        )
+    return results
+
+
+def _build_vpc_peer_link_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return one record per fabric-scoped vPC peer-link."""
+    links: dict[tuple[str, str], dict[str, Any]] = {}
+    for switch in switches:
+        fabric_name = str(switch.get("fabric_name", "") or "").strip()
+        vpc_domain_id = str(switch.get("vpc_domain_id", "") or "").strip()
+        if not fabric_name or not vpc_domain_id:
+            continue
+        peer_link_interfaces = switch.get("peer_link_interfaces", []) or []
+        if not peer_link_interfaces:
+            continue
+
+        identifier = f"{fabric_name}:{vpc_domain_id}:peer-link"
+        record = links.setdefault(
+            (fabric_name, vpc_domain_id),
+            {
+                "identifier": identifier,
+                "vpc_domain_identifier": f"{fabric_name}:{vpc_domain_id}",
+                "fabric_name": fabric_name,
+                "device_names": set(),
+                "interface_refs": set(),
+                "status_values": set(),
+                "tenant_names": set(),
+                "vrf_names": set(),
+            },
+        )
+
+        device_name = str(switch.get("name", "") or "").strip()
+        tenant_name = str(switch.get("tenant_name", "") or "").strip()
+        status = str(switch.get("peer_link_status", "") or "").strip()
+        if device_name:
+            record["device_names"].add(device_name)
+        if tenant_name:
+            record["tenant_names"].add(tenant_name)
+        if status:
+            record["status_values"].add(status)
+        peer_link_names = {str(name).strip() for name in peer_link_interfaces if str(name).strip()}
+        for iface in switch.get("interfaces", []) or []:
+            if not isinstance(iface, dict):
+                continue
+            iface_name = str(iface.get("name", "") or "").strip()
+            if iface_name not in peer_link_names:
+                continue
+            vrf_name = str(iface.get("vrf_name", "") or "").strip()
+            if vrf_name:
+                record["vrf_names"].add(vrf_name)
+        for iface_name in peer_link_interfaces:
+            if device_name and iface_name:
+                record["interface_refs"].add((device_name, iface_name))
+
+    results: list[dict[str, Any]] = []
+    for _, record in sorted(links.items()):
+        status_values = sorted(record["status_values"])
+        results.append(
+            {
+                **record,
+                "fabric_identifier": record["fabric_name"],
+                "device_names": sorted(record["device_names"]),
+                "interface_refs": [
+                    {"device_name": device_name, "name": name}
+                    for device_name, name in sorted(record["interface_refs"])
+                ],
+                "status_values": status_values,
+                "status": ", ".join(status_values),
+                "tenant_names": sorted(record["tenant_names"]),
+                "vrf_names": sorted(record["vrf_names"]),
+            }
+        )
+    return results
+
+
+def _build_topology_custom_field_records() -> list[dict[str, Any]]:
+    """Return NetBox custom field definitions for Nexus topology fallback metadata."""
+    return [
+        {
+            "name": "ndfc_fabric",
+            "label": "NDFC Fabric",
+            "group_name": "NDFC",
+            "description": "NDFC fabric membership synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.device", "dcim.interface"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vpc_domain",
+            "label": "NDFC vPC Domain",
+            "group_name": "NDFC",
+            "description": "NDFC vPC domain identifier synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.device"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vpc_role",
+            "label": "NDFC vPC Role",
+            "group_name": "NDFC",
+            "description": "NDFC vPC control-plane role synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.device"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vpc_peer",
+            "label": "NDFC vPC Peer",
+            "group_name": "NDFC",
+            "description": "NDFC vPC peer switch synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.device"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_tenant",
+            "label": "NDFC Tenant",
+            "group_name": "NDFC",
+            "description": "NDFC tenant metadata synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.device"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vrf",
+            "label": "NDFC VRF",
+            "group_name": "NDFC",
+            "description": "NDFC VRF metadata synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.interface"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vpc",
+            "label": "NDFC vPC",
+            "group_name": "NDFC",
+            "description": "NDFC vPC interface metadata synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.interface"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+        {
+            "name": "ndfc_vpc_parent_lag",
+            "label": "NDFC vPC Parent LAG",
+            "group_name": "NDFC",
+            "description": "NDFC parent port-channel for a vPC interface synchronized by hcl-netbox-discovery.",
+            "type": "text",
+            "object_types": ["dcim.interface"],
+            "ui_visible": "if-set",
+            "ui_editable": "no",
+        },
+    ]
+
+
 def _interface_sort_key(iface: dict[str, Any]) -> tuple[int, str]:
     """Sort LAGs before dependent interfaces so same-device FK lookups resolve."""
     name = str(iface.get("name", "") or "").lower()
@@ -1228,6 +1604,10 @@ class NexusDashboardSource(DataSource):
         self._shared_ips: list[dict[str, Any]] = []
         self._shared_fhrp_groups: list[dict[str, Any]] = []
         self._shared_fhrp_assignments: list[dict[str, Any]] = []
+        self._fabrics: list[dict[str, Any]] = []
+        self._vpc_domains: list[dict[str, Any]] = []
+        self._vpc_peer_links: list[dict[str, Any]] = []
+        self._topology_custom_fields: list[dict[str, Any]] = []
         self._analyze_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
         self._detail_cache: dict[str, list[dict[str, Any]]] = {}
 
@@ -1277,6 +1657,10 @@ class NexusDashboardSource(DataSource):
             "shared_ips": self._get_shared_ips,
             "shared_fhrp_groups": self._get_shared_fhrp_groups,
             "shared_fhrp_assignments": self._get_shared_fhrp_assignments,
+            "fabrics": self._get_fabrics,
+            "vpc_domains": self._get_vpc_domains,
+            "vpc_peer_links": self._get_vpc_peer_links,
+            "topology_custom_fields": self._get_topology_custom_fields,
         }
         fn = collectors.get(collection.lower())
         if fn is None:
@@ -1292,6 +1676,10 @@ class NexusDashboardSource(DataSource):
         self._shared_ips = []
         self._shared_fhrp_groups = []
         self._shared_fhrp_assignments = []
+        self._fabrics = []
+        self._vpc_domains = []
+        self._vpc_peer_links = []
+        self._topology_custom_fields = []
 
     # ------------------------------------------------------------------
     # Authentication
@@ -1434,6 +1822,10 @@ class NexusDashboardSource(DataSource):
             self._shared_ips = []
             self._shared_fhrp_groups = []
             self._shared_fhrp_assignments = []
+        self._fabrics = _build_fabric_records(switches)
+        self._vpc_domains = _build_vpc_domain_records(switches)
+        self._vpc_peer_links = _build_vpc_peer_link_records(switches)
+        self._topology_custom_fields = _build_topology_custom_field_records()
 
         self._switches = switches
         logger.debug("NDFC: returning %d switches", len(switches))
@@ -1456,6 +1848,30 @@ class NexusDashboardSource(DataSource):
         if not self._switches:
             self._get_switches()
         return list(self._shared_fhrp_assignments)
+
+    def _get_fabrics(self) -> list[dict[str, Any]]:
+        """Return fabric records derived from switch inventory."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._fabrics)
+
+    def _get_vpc_domains(self) -> list[dict[str, Any]]:
+        """Return vPC domain records derived from switch and interface inventory."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._vpc_domains)
+
+    def _get_vpc_peer_links(self) -> list[dict[str, Any]]:
+        """Return vPC peer-link records derived from switch inventory."""
+        if not self._switches:
+            self._get_switches()
+        return list(self._vpc_peer_links)
+
+    def _get_topology_custom_fields(self) -> list[dict[str, Any]]:
+        """Return NetBox custom field definitions for Nexus topology fallback metadata."""
+        if not self._topology_custom_fields:
+            self._topology_custom_fields = _build_topology_custom_field_records()
+        return list(self._topology_custom_fields)
 
     def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""
@@ -1719,6 +2135,12 @@ class NexusDashboardSource(DataSource):
         raw_ip_address = _safe_get(switch, "ipAddress", "") or ""
         raw_status  = _safe_get(switch, "status", "") or ""
         system_mode = _safe_get(switch, "systemMode", "") or ""
+        tenant_name = _first_non_empty(switch, "hsTenantName", "tenantName", "tenant")
+        vpc_domain_id = _derive_vpc_domain_id(switch)
+        vpc_role = _derive_vpc_role(switch)
+        vpc_peer_name = _derive_vpc_peer_name(switch)
+        peer_link_interfaces = _derive_peer_link_interfaces(switch)
+        peer_link_status = _first_non_empty(switch, "peerlinkState", "peerLinkState", "peerLinkStatus")
 
         name = _derive_switch_name(switch)
 
@@ -1737,6 +2159,12 @@ class NexusDashboardSource(DataSource):
             "site_name":    site_name,
             "ip_address":   ip_address,
             "status":       status,
+            "tenant_name":  tenant_name,
+            "vpc_domain_id": vpc_domain_id,
+            "vpc_role":     vpc_role,
+            "vpc_peer_name": vpc_peer_name,
+            "peer_link_interfaces": peer_link_interfaces,
+            "peer_link_status": peer_link_status,
             # --- passthrough raw fields ---
             "hostName":     hostname,
             "switchName":   _safe_get(switch, "switchName", "") or "",
@@ -1754,6 +2182,13 @@ class NexusDashboardSource(DataSource):
             "primaryIP":    _safe_get(switch, "primaryIP", "") or "",
             "rawStatus":    raw_status,
             "systemMode":   system_mode,
+            "vpcDomain":    _safe_get(switch, "vpcDomain", "") or "",
+            "peer":         _safe_get(switch, "peer", "") or "",
+            "principal":    _safe_get(switch, "principal", ""),
+            "sendIntf":     _safe_get(switch, "sendIntf", "") or "",
+            "recvIntf":     _safe_get(switch, "recvIntf", "") or "",
+            "peerlinkState": _safe_get(switch, "peerlinkState", "") or "",
+            "hsTenantName": _safe_get(switch, "hsTenantName", "") or "",
             "switchDbID":   switch_db_id,
             "switch_db_id": switch_db_id,
         }
@@ -1890,6 +2325,12 @@ class NexusDashboardSource(DataSource):
             tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
         vpc_name    = _derive_vpc_name(source_iface, nvpair_values=nvpair_values)
+        vpc_parent_lag_name = _derive_vpc_parent_lag_name(
+            source_iface,
+            nvpair_values=nvpair_values,
+            analyze_iface=analyze_iface,
+            detail_iface=detail_iface,
+        )
         channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
         if not lag_name and not vpc_name and channel_id not in ("", None, 0, "0"):
             lag_name = _normalize_port_channel_name(channel_id)
@@ -1898,6 +2339,15 @@ class NexusDashboardSource(DataSource):
             ip_address = _normalize_host_ip_prefix(switch_ip_address)
         elif ip_address:
             ip_address = _normalize_ip_with_prefix(ip_address, ip_prefix)
+        vrf_name = (
+            _safe_get(detail_oper, "vrfName", "")
+            or _first_non_empty(source_iface, "vrfName")
+            or nv("vrfName", "vrf", "sourceVrf")
+        )
+        fabric_name = (
+            _first_non_empty(source_iface, "fabricName", "fabricNameDisplay", "fabric")
+            or nv("fabricName", "fabricNameDisplay", "fabric")
+        )
         return {
             # --- normalised convenience fields ---
             "name":        name,
@@ -1906,6 +2356,7 @@ class NexusDashboardSource(DataSource):
             "description": description,
             "lag_name":    lag_name,
             "vpc_name":    vpc_name,
+            "vpc_parent_lag_name": vpc_parent_lag_name,
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
@@ -1914,6 +2365,8 @@ class NexusDashboardSource(DataSource):
             "mode":        mode,
             "untagged_vlan_vid": untagged_vlan_vid,
             "tagged_vlan_vids": tagged_vlan_vids,
+            "fabric_name": fabric_name,
+            "vrf_name":    vrf_name,
             "duplicate_ip_address": "",
             # --- passthrough raw fields ---
             "ifName":      if_name,
