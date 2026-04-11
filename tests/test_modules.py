@@ -1458,6 +1458,124 @@ class TestProcessModules:
         assert module_payload["status"] == "active"
         assert module_payload["serial"] == "ABC123"
 
+    def test_extra_module_fields_are_forwarded_to_dcim_modules(self):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "status": "offline",
+                    "description": "Socket CPU 1",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),
+            MagicMock(id=40),
+            MagicMock(id=50),
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="switches",
+            netbox_resource="dcim.devices",
+            modules=[
+                ModuleConfig(
+                    source_items="processors",
+                    profile="CPU",
+                    fields=[
+                        FieldConfig(name="bay_name", value="source('socket')"),
+                        FieldConfig(name="model", value="source('displayName')"),
+                        FieldConfig(name="serial", value="source('serialNumber')"),
+                        FieldConfig(name="manufacturer", value="source('manufacturer')"),
+                        FieldConfig(name="status", value="source('status')"),
+                        FieldConfig(name="description", value="source('description')"),
+                    ],
+                )
+            ],
+        )
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 1
+        module_payload = module_calls[0][0][1]
+        assert module_payload["status"] == "offline"
+        assert module_payload["description"] == "Socket CPU 1"
+
+    def test_reserved_module_instance_fields_do_not_override_engine_linkage(self):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "device": 12345,
+                    "module_bay": 23456,
+                    "module_type": 34567,
+                    "id": 999,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),
+            MagicMock(id=40),
+            MagicMock(id=50),
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="switches",
+            netbox_resource="dcim.devices",
+            modules=[
+                ModuleConfig(
+                    source_items="processors",
+                    profile="CPU",
+                    fields=[
+                        FieldConfig(name="bay_name", value="source('socket')"),
+                        FieldConfig(name="model", value="source('displayName')"),
+                        FieldConfig(name="serial", value="source('serialNumber')"),
+                        FieldConfig(name="manufacturer", value="source('manufacturer')"),
+                        FieldConfig(name="device", value="source('device')"),
+                        FieldConfig(name="module_bay", value="source('module_bay')"),
+                        FieldConfig(name="module_type", value="source('module_type')"),
+                        FieldConfig(name="id", value="source('id')"),
+                    ],
+                )
+            ],
+        )
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 1
+        module_payload = module_calls[0][0][1]
+        assert module_payload["device"] == 99
+        assert module_payload["module_bay"] == 20
+        assert module_payload["module_type"] == 40
+        assert "id" not in module_payload
+
     def test_skips_item_when_bay_name_missing(self):
         engine = self._make_engine()
         source_obj = {

@@ -2539,13 +2539,30 @@ class Engine:
                     continue
 
                 # 5. Install module
+                module_instance_fields = {
+                    key: value
+                    for key, value in raw_payload.items()
+                    if key not in {
+                        "id",
+                        "device",
+                        "module_bay",
+                        "module_type",
+                        "bay_name",
+                        "name",
+                        "position",
+                        "model",
+                        "serial",
+                        "manufacturer",
+                    }
+                }
                 module_payload: dict[str, Any] = {
                     "device": parent_id,
                     "module_bay": bay_id,
                     "module_type": module_type_id,
-                    "status": "active",
                 }
-                if serial:
+                module_payload.update(module_instance_fields)
+                module_payload.setdefault("status", "active")
+                if serial is not None and serial != "":
                     module_payload["serial"] = str(serial)
 
                 module_record = self._upsert(
@@ -2553,6 +2570,7 @@ class Engine:
                     "dcim.modules",
                     module_payload,
                     ["device", "module_bay"],
+                    field_configs=mod_cfg.fields,
                 )
 
                 # 6. Create power input port if configured

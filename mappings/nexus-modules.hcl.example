@@ -219,6 +219,14 @@ object "device" {
       value = "source('manufacturer')"
     }
 
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
     power_input {
       name = "'Power Input ' + str(source('position') or source('bay_name'))"
       type = "'iec-60320-c14'"
@@ -267,6 +275,14 @@ object "device" {
       value = "source('manufacturer')"
     }
 
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
     attribute "status" {
       value = "source('status')"
     }
@@ -296,6 +312,14 @@ object "device" {
 
     field "manufacturer" {
       value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
     }
 
     attribute "status" {
