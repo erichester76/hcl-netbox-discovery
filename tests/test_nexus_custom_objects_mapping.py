@@ -15,6 +15,22 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
 
     assert cfg.collector.extra_flags["use_custom_objects"] is False
 
+    fallback_custom_fields = _object(cfg, "ndfc_topology_custom_field")
+    assert fallback_custom_fields is not None
+    assert fallback_custom_fields.source_collection == "topology_custom_fields"
+    assert fallback_custom_fields.netbox_resource == "extras.custom_fields"
+    assert fallback_custom_fields.lookup_by == ["name"]
+    assert fallback_custom_fields.enabled_if == "not collector.use_custom_objects"
+    fallback_fields = {field.name: field.value for field in fallback_custom_fields.fields}
+    assert fallback_fields["name"] == "source('name')"
+    assert fallback_fields["label"] == "source('label')"
+    assert fallback_fields["group_name"] == "source('group_name')"
+    assert fallback_fields["description"] == "source('description')"
+    assert fallback_fields["type"] == "source('type')"
+    assert fallback_fields["object_types"] == "source('object_types')"
+    assert fallback_fields["ui_visible"] == "source('ui_visible')"
+    assert fallback_fields["ui_editable"] == "source('ui_editable')"
+
     fabric = _object(cfg, "ndfc_fabric")
     assert fabric is not None
     assert fabric.source_collection == "fabrics"

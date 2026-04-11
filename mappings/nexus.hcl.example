@@ -154,10 +154,59 @@ object "shared_fhrp_vip" {
 }
 
 # ---------------------------------------------------------------------------
+# Fallback Nexus topology custom fields
+#
+# When custom objects are disabled, bootstrap the custom fields needed to keep
+# fabric / vPC metadata on the device and interface records themselves.
+# ---------------------------------------------------------------------------
+
+object "ndfc_topology_custom_field" {
+  source_collection = "topology_custom_fields"
+  netbox_resource   = "extras.custom_fields"
+  lookup_by         = ["name"]
+  enabled_if        = "not collector.use_custom_objects"
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "label" {
+    value = "source('label')"
+  }
+
+  field "group_name" {
+    value = "source('group_name')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+
+  field "type" {
+    value = "source('type')"
+  }
+
+  field "object_types" {
+    value = "source('object_types')"
+  }
+
+  field "ui_visible" {
+    value = "source('ui_visible')"
+  }
+
+  field "ui_editable" {
+    value = "source('ui_editable')"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Optional Nexus topology custom objects
 #
 # These blocks assume the corresponding custom object types and fields already
-# exist in NetBox. Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``.
+# exist in NetBox. Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``. When
+# disabled, the mapping falls back to synchronized device/interface custom
+# fields, and the ``ndfc_topology_custom_field`` block above bootstraps those
+# fields in NetBox.
 # ---------------------------------------------------------------------------
 
 object "ndfc_fabric" {
@@ -393,6 +442,13 @@ object "device" {
     value = "['ndfc-sync']"
   }
 
+  # Fallback path for deployments without NetBox Custom Objects support.
+  # When custom objects are disabled, keep Nexus fabric / vPC metadata on the
+  # device record instead of dropping it.
+  field "custom_fields" {
+    value = "when(not collector.use_custom_objects, {k: v for k, v in {'ndfc_fabric': source('fabric_name'), 'ndfc_vpc_domain': source('vpc_domain_id'), 'ndfc_vpc_role': source('vpc_role'), 'ndfc_vpc_peer': source('vpc_peer_name'), 'ndfc_tenant': source('tenant_name')}.items() if v not in (None, '', [], {})}, {})"
+  }
+
   # ---------------------------------------------------------------------------
   # Network Interfaces
   #
@@ -457,6 +513,10 @@ object "device" {
         device = "when(source('lag_name') != '', parent_id, None)"
         name   = "when(source('lag_name') != '', source('lag_name'), None)"
       }
+    }
+
+    field "custom_fields" {
+      value = "when(not collector.use_custom_objects, {k: v for k, v in {'ndfc_fabric': source('fabric_name'), 'ndfc_vrf': source('vrf_name'), 'ndfc_vpc': source('vpc_name'), 'ndfc_vpc_parent_lag': source('vpc_parent_lag_name')}.items() if v not in (None, '', [], {})}, {})"
     }
 
     ip_address {
