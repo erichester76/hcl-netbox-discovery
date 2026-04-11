@@ -106,7 +106,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert shared_fields["role"] == "source('role')"
     assert shared_fields["status"] == "'active'"
     assert shared_fields["description"] == "join(', ', source('references') or [])"
-    assert shared_fields["tags"] == "['ndfc-sync', 'ndfc-shared-ip']"
+    assert shared_fields["tags"] == "['ndfc-sync']"
     tagged_vlan_block = interface.tagged_vlans[0]
     assert tagged_vlan_block.source_items == "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
     tagged_vlan_fields = {field.name: field.value for field in tagged_vlan_block.fields}
