@@ -135,11 +135,7 @@
     </div>
   </div>
   <div class="card-body p-0">
-    <div class="log-pre" id="log-output">
-{%- for lg in logs -%}
-<div class="log-row log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</div>
-{%- endfor -%}
-    </div>
+    <div class="log-pre" id="log-output">{%- for lg in logs -%}<div class="log-row log-line-{{ lg.level }}" data-level="{{ lg.level }}">{{ lg.timestamp }}  {{ '%-8s'|format(lg.level) }}  {{ lg.message }}</div>{%- endfor -%}</div>
   </div>
 </div>
 {% endblock %}
