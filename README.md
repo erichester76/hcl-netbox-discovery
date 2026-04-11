@@ -359,8 +359,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | File | Source System | Objects Synced |
 |---|---|---|
 | `mappings/vmware.hcl.example` | VMware vCenter | Clusters, hypervisor hosts, VMs, interfaces, IPs, virtual disks |
-| `mappings/xclarity.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **inventory items** |
-| `mappings/xclarity-modules.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, **modules** (ModuleBay/Module/ModuleType) |
+| `mappings/xclarity.hcl.example` | Lenovo XClarity | Servers, chassis, switches, storage, interfaces, inventory items, optional modules |
 | `mappings/azure.hcl.example` | Microsoft Azure | VMs, IP prefixes, subscriptions, interfaces, managed disks, appliances, standalone NICs |
 | `mappings/catalyst-center.hcl.example` | Cisco Catalyst Center | Network devices, interfaces, management IPs |
 | `mappings/nexus.hcl.example` | Cisco Nexus Dashboard (NDFC) | Fabric switches, interfaces |
@@ -373,7 +372,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/active-directory-users.hcl.example` | Active Directory (LDAP) | User accounts → NetBox contacts |
 | `mappings/tenable.hcl.example` | Tenable One / Nessus | Assets, vulnerabilities, findings → NetBox IP addresses / virtual machines |
 
-> **xclarity.hcl.example vs xclarity-modules.hcl.example** — Both files sync the same four device types from Lenovo XClarity.  The difference is how hardware components (CPUs, memory, drives, add-in cards, power supplies, fans) are recorded in NetBox: `xclarity.hcl.example` uses `dcim.inventory_items` while `xclarity-modules.hcl.example` uses the richer `dcim.module_bays` → `dcim.modules` → `dcim.module_types` object graph.  Use `xclarity-modules.hcl.example` when you need to track individual component installations, cable interfaces to specific PCIe cards, or leverage NetBox 4.0 module type profiles.
+> **xclarity.hcl.example** — The unified XClarity example supports both inventory items and optional module sync. `COLLECTOR_SYNC_INVENTORY=true` keeps the default inventory-item behavior, while `COLLECTOR_SYNC_MODULES=true` enables the richer `dcim.module_bays` -> `dcim.modules` -> `dcim.module_types` object graph for CPUs, memory, drives, add-in cards, power supplies, and fans.
 
 ---
 
@@ -453,7 +452,6 @@ hcl-netbox-discovery/
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example
-│   ├── xclarity-modules.hcl.example
 │   ├── azure.hcl.example
 │   ├── catalyst-center.hcl.example
 │   ├── nexus.hcl.example
