@@ -40,6 +40,7 @@ Interface dict fields (when fetch_interfaces is enabled)
   description       Interface description
   lag_name          Best-available parent LAG/port-channel interface name
   vpc_name          Best-available vPC interface name
+  vpc_parent_lag_name  Best-available parent port-channel for a vPC interface
   mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
   speed             Speed in Kbps (integer, matching NetBox interface units)
@@ -757,6 +758,41 @@ def _derive_vpc_name(iface: Any, *, nvpair_values: dict[str, str] | None = None)
     name = _derive_interface_name(iface)
     if name.lower().startswith("vpc"):
         return _normalize_vpc_name(name)
+    return ""
+
+
+def _derive_vpc_parent_lag_name(
+    iface: Any,
+    *,
+    nvpair_values: dict[str, str] | None = None,
+    analyze_iface: Any | None = None,
+    detail_iface: Any | None = None,
+) -> str:
+    """Return the parent port-channel metadata for a vPC interface."""
+    if not _derive_vpc_name(iface, nvpair_values=nvpair_values):
+        return ""
+
+    candidates = _candidate_iface_values(
+        iface,
+        "peer1Pcid",
+        "peer2Pcid",
+        "peer1PcId",
+        "peer2PcId",
+        "portChannelId",
+        "channelId",
+        nvpair_values=nvpair_values,
+    )
+    for value in (
+        _safe_get(detail_iface, "channelId", ""),
+        _safe_get(analyze_iface, "channelId", ""),
+    ):
+        if value not in ("", None, 0, "0"):
+            candidates.append(str(value))
+
+    for value in candidates:
+        normalized = _normalize_port_channel_name(value)
+        if normalized:
+            return normalized
     return ""
 
 
@@ -1762,6 +1798,12 @@ class NexusDashboardSource(DataSource):
             tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
         vpc_name    = _derive_vpc_name(source_iface, nvpair_values=nvpair_values)
+        vpc_parent_lag_name = _derive_vpc_parent_lag_name(
+            source_iface,
+            nvpair_values=nvpair_values,
+            analyze_iface=analyze_iface,
+            detail_iface=detail_iface,
+        )
         channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
         if not lag_name and not vpc_name and channel_id not in ("", None, 0, "0"):
             lag_name = _normalize_port_channel_name(channel_id)
@@ -1778,6 +1820,7 @@ class NexusDashboardSource(DataSource):
             "description": description,
             "lag_name":    lag_name,
             "vpc_name":    vpc_name,
+            "vpc_parent_lag_name": vpc_parent_lag_name,
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,

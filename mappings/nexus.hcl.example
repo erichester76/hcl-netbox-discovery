@@ -239,6 +239,14 @@ object "device" {
       }
     }
 
+    # Optional: if NetBox has a custom field such as ``nexus_vpc_parent_lag``,
+    # retain the vPC -> port-channel relationship as metadata without writing
+    # an invalid built-in ``lag`` on virtual interfaces.
+    #
+    # field "custom_fields" {
+    #   value = "({'nexus_vpc_parent_lag': source('vpc_parent_lag_name')} if source('vpc_parent_lag_name') != '' else {})"
+    # }
+
     ip_address {
       source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
       primary_if   = "first"

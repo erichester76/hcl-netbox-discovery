@@ -560,6 +560,17 @@ field "lag" {
 }
 ```
 
+For platforms like Nexus vPC where the source may expose a parent
+port-channel for a virtual interface but NetBox does not support storing that
+relationship as a built-in `lag`, expose it as source metadata and map it into
+an optional custom field instead:
+
+```hcl
+field "custom_fields" {
+  value = "({'nexus_vpc_parent_lag': source('vpc_parent_lag_name')} if source('vpc_parent_lag_name') != '' else {})"
+}
+```
+
 ### `collector.flag_name`
 
 Reference a boolean flag from the `collector {}` block (e.g., `collector.sync_interfaces`).
