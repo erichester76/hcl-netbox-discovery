@@ -310,6 +310,15 @@ class TestNexusConnect:
             src.connect(nexus_config)
         assert src._fetch_interfaces is False
 
+    def test_fetch_modules_flag_true(self, nexus_config):
+        nexus_config.extra = {"fetch_modules": "true"}
+        src = NexusDashboardSource()
+        with patch("collector.sources.nexus.requests.Session") as MockSession:
+            session = self._make_mock_session()
+            MockSession.return_value = session
+            src.connect(nexus_config)
+        assert src._fetch_modules is True
+
     def test_connect_raises_if_all_auth_endpoints_fail(self, nexus_config):
         src = NexusDashboardSource()
         with patch("collector.sources.nexus.requests.Session") as MockSession:
@@ -520,6 +529,101 @@ class TestNexusGetObjects:
         assert iface["speed"] == 100000
         assert iface["ip_address"] == "10.127.117.32/24"
         assert iface["lag_name"] == "port-channel500"
+
+    def test_get_switches_with_modules_fetched(self):
+        src = self._connected_source()
+        src._fetch_modules = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "switchDbID": 22530,
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        module_resp = MagicMock()
+        module_resp.raise_for_status = MagicMock()
+        module_resp.json.return_value = {
+            "modules": [
+                {
+                    "name": "PowerSupply-1",
+                    "modelName": "NXA-PAC-500W-PI",
+                    "serialNumber": "LIT22505EAA",
+                    "type": "chassis",
+                    "operStatus": "offEnvPower",
+                    "slot": "1",
+                    "moduleType": ["MI FPGA", "IO FPGA"],
+                    "moduleVersion": ["0x10", "0x17"],
+                    "hardwareRevision": "V03",
+                    "softwareRevision": "10.4(2)",
+                    "assetId": "73-18235-04",
+                },
+                {
+                    "name": "Fan-1",
+                    "modelName": "N9K-C9504-FAN",
+                    "serialNumber": "FAN123",
+                    "type": "chassis",
+                    "operStatus": "ok",
+                    "slot": "2",
+                },
+            ]
+        }
+
+        def side_effect(url, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/dashboard/switch/module?switchId=22530"):
+                return module_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        modules = result[0]["modules"]
+        assert len(modules) == 2
+        assert modules[0]["profile"] == "Power supply"
+        assert modules[0]["bay_name"] == "PowerSupply-1"
+        assert modules[0]["position"] == "1"
+        assert modules[0]["model"] == "NXA-PAC-500W-PI"
+        assert modules[0]["serial"] == "LIT22505EAA"
+        assert modules[1]["profile"] == "Fan"
+
+    def test_get_switches_without_fetch_modules_keeps_empty_modules_list(self):
+        src = self._connected_source()
+        src._fetch_modules = False
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        src._session.get.return_value = switch_resp
+
+        result = src.get_objects("switches")
+
+        assert result[0]["modules"] == []
 
     def test_get_switches_with_wrapped_interfaces_fetched(self):
         src = self._connected_source()
@@ -1024,6 +1128,85 @@ class TestNexusEnrichSwitch:
 
         assert result["switch_db_id"] == 22530
         assert result["switchDbID"] == 22530
+
+
+class TestNexusEnrichModule:
+    def test_power_supply_module_is_normalized(self):
+        src = NexusDashboardSource()
+        module = {
+            "name": "PowerSupply-1",
+            "modelName": "NXA-PAC-500W-PI",
+            "serialNumber": "LIT22505EAA",
+            "type": "chassis",
+            "operStatus": "offEnvPower",
+            "slot": "1",
+            "moduleType": ["MI FPGA", "IO FPGA"],
+            "moduleVersion": ["0x10", "0x17"],
+            "hardwareRevision": "V03",
+            "softwareRevision": "10.4(2)",
+            "assetId": "73-18235-04",
+        }
+
+        result = src._enrich_module(module)
+
+        assert result is not None
+        assert result["profile"] == "Power supply"
+        assert result["bay_name"] == "PowerSupply-1"
+        assert result["position"] == "1"
+        assert result["model"] == "NXA-PAC-500W-PI"
+        assert result["serial"] == "LIT22505EAA"
+        assert result["manufacturer"] == "Cisco"
+        assert result["module_type"] == "MI FPGA, IO FPGA"
+        assert result["module_version"] == "0x10, 0x17"
+
+    def test_fan_module_is_normalized(self):
+        src = NexusDashboardSource()
+        module = {
+            "name": "Fan-1",
+            "modelName": "N9K-C9504-FAN",
+            "serialNumber": "FAN123",
+            "type": "chassis",
+            "operStatus": "ok",
+            "slot": "2",
+        }
+
+        result = src._enrich_module(module)
+
+        assert result is not None
+        assert result["profile"] == "Fan"
+        assert result["bay_name"] == "Fan-1"
+
+    def test_transceiver_module_is_normalized(self):
+        src = NexusDashboardSource()
+        module = {
+            "name": "QSFP-1",
+            "modelName": "QSFP-100G-SR4-S",
+            "serialNumber": "QSFP123",
+            "type": "transceiver",
+            "operStatus": "ok",
+            "slot": "Ethernet1/49",
+        }
+
+        result = src._enrich_module(module)
+
+        assert result is not None
+        assert result["profile"] == "Transceiver"
+        assert result["position"] == "Ethernet1/49"
+
+    def test_unsupported_module_is_skipped(self):
+        src = NexusDashboardSource()
+
+        result = src._enrich_module(
+            {
+                "name": "Supervisor",
+                "modelName": "SUP-A",
+                "serialNumber": "SUP123",
+                "type": "chassis",
+                "slot": "3",
+            }
+        )
+
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
