@@ -176,6 +176,23 @@ object "device" {
       value = "source('speed')"
     }
 
+    field "mtu" {
+      value = "source('mtu')"
+    }
+
+    field "mode" {
+      value = "source('mode')"
+    }
+
+    field "untagged_vlan" {
+      type     = "fk"
+      resource = "ipam.vlans"
+      lookup   = {
+        vid  = "source('untagged_vlan_vid')"
+        site = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
+      }
+    }
+
     field "lag" {
       type     = "fk"
       resource = "dcim.interfaces"
@@ -210,6 +227,18 @@ object "device" {
 
       field "status" {
         value = "'active'"
+      }
+    }
+
+    tagged_vlan {
+      source_items = "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
+
+      field "vid" {
+        value = "source('vid')"
+      }
+
+      field "site" {
+        value = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
       }
     }
   }
