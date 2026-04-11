@@ -904,9 +904,9 @@ def _classify_shared_ip(iface_name: str) -> str:
     """Return the shared IP role for *iface_name* when it is safe to model."""
     lower = str(iface_name or "").lower()
     if lower.startswith("vlan"):
-        return "VIP"
+        return "vip"
     if lower.startswith("loopback"):
-        return "Anycast"
+        return "anycast"
     return ""
 
 

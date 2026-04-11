@@ -835,9 +835,9 @@ class TestNexusGetObjects:
         assert shared == [
             {
                 "address": "10.20.22.65/28",
-                "role": "VIP",
-                "name": "Vlan3965 VIP 10.20.22.65/28",
-                "group_name": "Vlan3965 VIP",
+                "role": "vip",
+                "name": "Vlan3965 vip 10.20.22.65/28",
+                "group_name": "Vlan3965 vip",
                 "group_id": 3965,
                 "site_name": "ProdFabric",
                 "interface_name": "Vlan3965",
@@ -1244,9 +1244,9 @@ class TestSharedIpRecords:
         assert records == [
             {
                 "address": "10.20.22.65/28",
-                "role": "VIP",
-                "name": "Vlan3965 VIP 10.20.22.65/28",
-                "group_name": "Vlan3965 VIP",
+                "role": "vip",
+                "name": "Vlan3965 vip 10.20.22.65/28",
+                "group_name": "Vlan3965 vip",
                 "group_id": 3965,
                 "site_name": "Fabric-A",
                 "interface_name": "Vlan3965",
@@ -1274,7 +1274,7 @@ class TestSharedIpRecords:
             ]
         )
 
-        assert records[0]["role"] == "Anycast"
+        assert records[0]["role"] == "anycast"
         assert records[0]["group_id"] == 254
 
     def test_build_shared_ip_records_sorts_references_and_skips_cross_site(self):

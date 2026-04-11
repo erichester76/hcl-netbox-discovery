@@ -76,7 +76,7 @@ object "shared_ip" {
 
   field "tags" {
     type  = "tags"
-    value = "['ndfc-sync', 'ndfc-shared-ip']"
+    value = "['ndfc-sync']"
   }
 }
 
