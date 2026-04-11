@@ -42,7 +42,7 @@ Interface dict fields (when fetch_interfaces is enabled)
   vpc_name          Best-available vPC interface name
   mgmt_only         ``True`` for management interfaces
   mac_address       MAC address (upper-cased)
-  speed             Speed in Mbps (integer)
+  speed             Speed in Kbps (integer, matching NetBox interface units)
   ip_address        IP address with prefix length (e.g. ``"10.0.0.1/24"``)
   ifName, ifType, adminState, operStatus (raw passthrough)
 
@@ -770,7 +770,8 @@ def _derive_interface_speed_mbps(iface: Any, nvpair_values: dict[str, str]) -> t
         nvpair_values, *_BANDWIDTH_CANDIDATE_KEYS
     )
     if bandwidth and str(bandwidth).strip().isdigit():
-        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for NetBox.
+        # NDFC ``bandwidth`` values are reported in Kbps; convert to Mbps for
+        # intermediate Nexus parsing and interface-type inference.
         bandwidth_mbps = int(str(bandwidth).strip()) // 1000
         if bandwidth_mbps > 0:
             return bandwidth_mbps, str(bandwidth).strip()
@@ -1537,7 +1538,12 @@ class NexusDashboardSource(DataSource):
             or _safe_get(source_iface, "displayName", "")
             or nv("ifDescr", "description", "desc", "portDescription")
         )
-        mac_address = _safe_get(source_iface, "macAddress", "") or nv("macAddress", "mac")
+        mac_address = (
+            _first_non_empty(source_iface, "macAddress", "mac")
+            or _first_non_empty(analyze_iface, "macAddress", "mac")
+            or _first_non_empty(detail_oper, "macAddress", "mac")
+            or nv("macAddress", "mac")
+        )
         ip_address  = (
             _first_non_empty(source_iface, "ip", "ipv4Address", "ipAddress")
             or nv("ipAddress", "primaryIpAddress", "primaryIP", "ip")
@@ -1553,6 +1559,46 @@ class NexusDashboardSource(DataSource):
         if _safe_get(analyze_iface, "operSpeed", "") and _is_blankish_speed(speed_source.get("operSpeed")):
             speed_source["operSpeed"] = _safe_get(analyze_iface, "operSpeed", "")
         speed_mbps, _speed_str = _derive_interface_speed_mbps(speed_source, nvpair_values)
+        mtu = (
+            _parse_mtu(_safe_get(detail_oper, "mtu", None))
+            or _parse_mtu(_safe_get(source_iface, "mtu", None))
+            or _parse_mtu(nv("mtu"))
+        )
+        mode = _normalize_interface_mode(
+            _first_non_empty(
+                _safe_get(detail_iface, "configData", {}) or {},
+                "mode",
+            )
+            or _first_non_empty(detail_oper, "mode")
+            or _first_non_empty(
+                analyze_iface,
+                "operMode",
+                "discoveredConfigMode",
+                "intendedConfigMode",
+                "portType",
+            )
+        )
+        untagged_vlan_vid: int | None = None
+        if mode == "access":
+            access_vlan = _first_non_empty(
+                _safe_get(_safe_get(detail_iface, "configData", {}) or {}, "networkOS", {}) or {},
+                "accessVlan",
+            ) or _first_non_empty(
+                _safe_get(_safe_get(_safe_get(detail_iface, "configData", {}) or {}, "networkOS", {}) or {}, "policy", {}) or {},
+                "accessVlan",
+            )
+            untagged_vlan_vid = _normalize_vlan_vid(access_vlan)
+        if untagged_vlan_vid is None:
+            native_vlan = _first_non_empty(source_iface, "nativeVlanId") or nv("nativeVlanId")
+            untagged_vlan_vid = _normalize_vlan_vid(native_vlan)
+        if mode == "tagged-all":
+            tagged_vlan_vids = []
+        else:
+            tagged_vlan_vids = _parse_vlan_list(
+                _first_non_empty(source_iface, "allowedVlans") or nv("allowedVlans")
+            )
+        if untagged_vlan_vid is not None:
+            tagged_vlan_vids = [vid for vid in tagged_vlan_vids if vid != untagged_vlan_vid]
         lag_name    = _derive_lag_name(source_iface, nvpair_values=nvpair_values)
         channel_id  = _safe_get(detail_iface, "channelId", "") or _safe_get(analyze_iface, "channelId", "")
         if not lag_name and channel_id not in ("", None, 0, "0"):
@@ -1574,7 +1620,11 @@ class NexusDashboardSource(DataSource):
             "mgmt_only":   mgmt_only,
             "mac_address": mac_address.upper() if mac_address else "",
             "ip_address":  ip_address,
-            "speed":       speed_mbps,
+            "speed":       _netbox_speed_kbps(speed_mbps),
+            "mtu":         mtu,
+            "mode":        mode,
+            "untagged_vlan_vid": untagged_vlan_vid,
+            "tagged_vlan_vids": tagged_vlan_vids,
             "duplicate_ip_address": "",
             # --- passthrough raw fields ---
             "ifName":      if_name,
@@ -1602,3 +1652,79 @@ def _parse_speed_mbps(speed_str: str) -> int | None:
     if text.isdigit() and int(text) >= 1_000_000:
         return parse_speed_mbps(text, numeric_is_bps=True)
     return parse_speed_mbps(text)
+
+
+def _netbox_speed_kbps(speed_mbps: int | None) -> int | None:
+    """Convert Mbps into NetBox's expected Kbps unit for interface speeds."""
+    if speed_mbps is None:
+        return None
+    return speed_mbps * 1000
+
+
+def _parse_mtu(value: Any) -> int | None:
+    """Return MTU as an integer when the input is parseable."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_vlan_list(value: Any) -> list[int]:
+    """Expand comma/range VLAN strings like ``100,103,200-202`` into ints."""
+    if value in (None, ""):
+        return []
+    result: list[int] = []
+    seen: set[int] = set()
+    for part in str(value).split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_text, end_text = token.split("-", 1)
+            try:
+                start = int(start_text)
+                end = int(end_text)
+            except ValueError:
+                continue
+            if end < start:
+                start, end = end, start
+            for vid in range(start, end + 1):
+                if 1 <= vid <= 4094 and vid not in seen:
+                    result.append(vid)
+                    seen.add(vid)
+            continue
+        try:
+            vid = int(token)
+        except ValueError:
+            continue
+        if 1 <= vid <= 4094 and vid not in seen:
+            result.append(vid)
+            seen.add(vid)
+    return result
+
+
+def _normalize_interface_mode(raw_mode: str | None) -> str | None:
+    """Map NDFC switchport modes onto NetBox interface mode values."""
+    value = str(raw_mode or "").strip().lower()
+    if not value:
+        return None
+    if value == "access":
+        return "access"
+    if value in {"trunk", "tagged"}:
+        return "tagged"
+    if value in {"tagged-all", "tagged_all"}:
+        return "tagged-all"
+    return None
+
+
+def _normalize_vlan_vid(value: Any) -> int | None:
+    """Return a valid 802.1Q VLAN ID or ``None``."""
+    if value in (None, ""):
+        return None
+    try:
+        vid = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return vid if 1 <= vid <= 4094 else None
