@@ -908,6 +908,29 @@ class TestEnsureModuleType:
         module_type_upsert = nb.upsert.call_args_list[1]
         assert "attributes" not in module_type_upsert[0][1]
 
+    def test_empty_attributes_seed_empty_object_when_attribute_names_exist(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=50)]
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attribute_names": ["cores", "speed", "architecture"],
+                "attributes": None,
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        module_type_upsert = nb.upsert.call_args_list[1]
+        assert module_type_upsert[0][1]["attributes"] == {}
+        module_type_attr_calls = [
+            c for c in nb.update.call_args_list if c[0][0] == "dcim.module_types"
+        ]
+        assert module_type_attr_calls == []
+
     def test_attributes_patch_skipped_when_existing_attributes_match(self):
         nb = MagicMock()
         nb.upsert.side_effect = [
