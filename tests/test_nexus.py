@@ -24,6 +24,7 @@ from collector.sources.nexus import (
     _build_vpc_peer_link_records,
     _derive_interface_name_details,
     _flatten_interface_payload,
+    _flatten_module_payload,
     _infer_iface_type_from_speed,
     _is_interface_enabled,
     _normalize_iface_type,
@@ -198,6 +199,40 @@ class TestFlattenInterfacePayload:
             {"ifName": "Ethernet1/1"},
             {"ifName": "Ethernet1/2"},
         ]
+
+
+class TestFlattenModulePayload:
+    def test_flattens_data_wrapped_module_list(self):
+        payload = {
+            "data": [
+                {
+                    "name": "PowerSupply-1",
+                    "modelName": "NXA-PAC-500W-PI",
+                    "serialNumber": "LIT22505EAA",
+                    "type": "chassis",
+                    "operStatus": "ok",
+                    "slot": "1",
+                }
+            ]
+        }
+
+        assert _flatten_module_payload(payload) == payload["data"]
+
+    def test_flattens_uppercase_data_wrapped_module_list(self):
+        payload = {
+            "DATA": [
+                {
+                    "name": "Fan-1",
+                    "modelName": "NXA-FAN-30CFM-F",
+                    "serialNumber": "FAN123",
+                    "type": "fan",
+                    "operStatus": "ok",
+                    "slot": "2",
+                }
+            ]
+        }
+
+        assert _flatten_module_payload(payload) == payload["DATA"]
 
 
 class TestInterfaceRelationshipNames:
@@ -736,6 +771,59 @@ class TestNexusGetObjects:
             url.endswith("/dashboard/switch/module?switchId=22530")
             for url in requested_urls
         )
+        assert len(modules) == 1
+        assert modules[0]["profile"] == "Power supply"
+
+    def test_get_switches_with_modules_fallback_to_dashboard_data_wrapper(self):
+        src = self._connected_source()
+        src._fetch_modules = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "switchDbID": 22530,
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        module_resp = MagicMock()
+        module_resp.raise_for_status = MagicMock()
+        module_resp.json.return_value = {
+            "data": [
+                {
+                    "name": "PowerSupply-1",
+                    "modelName": "NXA-PAC-500W-PI",
+                    "serialNumber": "LIT22505EAA",
+                    "type": "chassis",
+                    "operStatus": "ok",
+                    "slot": "1",
+                }
+            ]
+        }
+
+        def side_effect(url, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/api/v1/manage/fabrics/ProdFabric/switches/SAL9876543/modules"):
+                raise RuntimeError("manage endpoint unavailable")
+            if url.endswith("/dashboard/switch/module?switchId=22530"):
+                return module_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        modules = result[0]["modules"]
         assert len(modules) == 1
         assert modules[0]["profile"] == "Power supply"
 
