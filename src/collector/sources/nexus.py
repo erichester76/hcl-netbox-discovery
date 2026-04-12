@@ -83,6 +83,7 @@ import logging
 import re
 import zlib
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -2134,7 +2135,17 @@ class NexusDashboardSource(DataSource):
                     enriched["interfaces"] = []
             if self._fetch_modules:
                 switch_db_id = enriched.get("switchDbID") or enriched.get("switch_db_id")
-                enriched["modules"] = self._fetch_switch_modules(switch_db_id) if switch_db_id else []
+                switch_id = (
+                    enriched.get("serialNumber")
+                    or enriched.get("serial")
+                    or enriched.get("switchId")
+                    or ""
+                )
+                enriched["modules"] = self._fetch_switch_modules(
+                    switch_db_id=switch_db_id,
+                    fabric_name=str(enriched.get("fabricName") or enriched.get("fabric_name") or ""),
+                    switch_id=str(switch_id or ""),
+                )
             switches.append(enriched)
 
         if self._fetch_interfaces:
@@ -2216,19 +2227,45 @@ class NexusDashboardSource(DataSource):
             )
         return list(self._topology_custom_object_type_fields)
 
-    def _fetch_switch_modules(self, switch_db_id: Any) -> list[dict[str, Any]]:
+    def _fetch_switch_modules(
+        self,
+        switch_db_id: Any,
+        fabric_name: str = "",
+        switch_id: str = "",
+    ) -> list[dict[str, Any]]:
         """Return normalized module records for one switch."""
-        try:
-            data = self._get(
-                f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/module?switchId={switch_db_id}"
-            )
-        except Exception as exc:
-            logger.warning("NDFC: failed to fetch modules for switchDbID %s: %s", switch_db_id, exc)
-            return []
+        data = None
 
-        modules = _safe_get(data, "modules", None)
+        if fabric_name and switch_id:
+            try:
+                data = self._get(
+                    f"/api/v1/manage/fabrics/{quote(str(fabric_name), safe='')}"
+                    f"/switches/{quote(str(switch_id), safe='')}/modules"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "NDFC: manage module fetch failed for fabric %s switch %s: %s",
+                    fabric_name,
+                    switch_id,
+                    exc,
+                )
+
+        if data is None and switch_db_id:
+            try:
+                data = self._get(
+                    f"{self._API_BASE}/lan-fabric/rest/dashboard/switch/module?switchId={switch_db_id}"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "NDFC: failed to fetch modules for switchDbID %s: %s",
+                    switch_db_id,
+                    exc,
+                )
+                return []
+
+        modules = _safe_get(data, "modules", None) if isinstance(data, dict) else None
         if not isinstance(modules, list):
-            modules = []
+            modules = data if isinstance(data, list) else []
 
         normalized: list[dict[str, Any]] = []
         for module in modules:
