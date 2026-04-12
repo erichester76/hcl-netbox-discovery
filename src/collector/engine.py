@@ -1018,29 +1018,30 @@ class Engine:
             dry_run,
         )
 
-        nb = _build_nb_client(cfg.netbox)
+        nb = None
         nb_main = None
-        if cfg.netbox.branch:
-            main_cfg = deepcopy(cfg.netbox)
-            main_cfg.branch = None
-            nb_main = _build_nb_client(main_cfg)
-
-        if cfg.collector.sync_tag and not dry_run:
-            # Ensure the sync tag exists once (shared across all iterations)
-            tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
-            if not tag_ok:
-                logger.error(
-                    "Sync tag %r could not be created in NetBox; "
-                    "tag injection disabled for this run to prevent 400 errors",
-                    cfg.collector.sync_tag,
-                )
-                cfg.collector.sync_tag = ""
-
-        groups = build_source_groups(cfg)
-
         all_stats: list[RunStats] = []
 
         try:
+            nb = _build_nb_client(cfg.netbox)
+            if cfg.netbox.branch:
+                main_cfg = deepcopy(cfg.netbox)
+                main_cfg.branch = None
+                nb_main = _build_nb_client(main_cfg)
+
+            if cfg.collector.sync_tag and not dry_run:
+                # Ensure the sync tag exists once (shared across all iterations)
+                tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
+                if not tag_ok:
+                    logger.error(
+                        "Sync tag %r could not be created in NetBox; "
+                        "tag injection disabled for this run to prevent 400 errors",
+                        cfg.collector.sync_tag,
+                    )
+                    cfg.collector.sync_tag = ""
+
+            groups = build_source_groups(cfg)
+
             for rows, pass_workers in groups:
                 if self.stop_requested:
                     break
@@ -1103,7 +1104,8 @@ class Engine:
                         )
                         all_stats.extend(pass_stats)
         finally:
-            nb.close()
+            if nb is not None:
+                nb.close()
             if nb_main is not None:
                 nb_main.close()
 

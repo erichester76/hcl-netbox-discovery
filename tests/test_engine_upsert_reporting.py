@@ -8,9 +8,15 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from collector.config import CollectorOptions, FieldConfig
+from collector.config import (
+    CollectorConfig,
+    CollectorOptions,
+    FieldConfig,
+    NetBoxConfig,
+    SourceConfig,
+)
 from collector.engine import Engine, RunStats
 
 
@@ -648,6 +654,29 @@ class TestEngineUpsertReporting:
             "plugins.custom_objects.custom_object_types",
             slug="ndfc-fabrics",
         )
+
+    def test_run_closes_primary_client_when_branchless_client_creation_fails(self):
+        engine = Engine()
+        nb = MagicMock()
+        cfg = CollectorConfig(
+            source=SourceConfig(api_type="nexus", url="https://example.invalid"),
+            netbox=NetBoxConfig(url="https://netbox.example", token="token", branch="feature"),
+            collector=CollectorOptions(),
+            objects=[],
+        )
+
+        with patch("collector.engine.load_config", return_value=cfg), patch(
+            "collector.engine._build_nb_client",
+            side_effect=[nb, RuntimeError("boom")],
+        ):
+            try:
+                engine.run("fake.hcl")
+            except RuntimeError as exc:
+                assert str(exc) == "boom"
+            else:
+                raise AssertionError("expected RuntimeError")
+
+        nb.close.assert_called_once_with()
 
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()
