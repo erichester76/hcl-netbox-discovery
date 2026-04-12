@@ -613,15 +613,44 @@ class Engine:
                 payload.get("description")
             )
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
-        if filters and field_configs:
-            existing = ctx.nb.get(resource, **filters)
+        existing = None
+        resolved_from_ambiguity = False
+        if filters and (field_configs or "tags" in payload):
+            try:
+                existing = ctx.nb.get(resource, **filters)
+            except ValueError as exc:
+                if "more than one result" not in str(exc):
+                    raise
+                existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                    ctx,
+                    resource,
+                    filters,
+                )
+                if existing is None:
+                    raise
+                resolved_from_ambiguity = True
+        if filters and field_configs and existing is not None:
             payload = self._apply_field_update_modes(
                 existing,
                 payload,
                 lookup_fields,
                 field_configs,
             )
-        self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        if existing is not None and "tags" in payload:
+            existing_tags = (
+                existing.get("tags")
+                if isinstance(existing, dict)
+                else getattr(existing, "tags", None)
+            )
+            payload["tags"] = self._merge_tag_dicts(existing_tags, payload.get("tags"))
+        else:
+            self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        effective_lookup_fields = lookup_fields
+        existing_id = extract_id(existing)
+        if resolved_from_ambiguity and existing_id is not None:
+            payload = dict(payload)
+            payload["id"] = existing_id
+            effective_lookup_fields = ["id"]
         outcome = "created"
         obj = None
         upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
@@ -629,16 +658,16 @@ class Engine:
             result = ctx.nb.upsert_with_outcome(
                 resource,
                 payload,
-                lookup_fields=lookup_fields,
+                lookup_fields=effective_lookup_fields,
             )
             candidate_outcome = getattr(result, "outcome", None)
             if candidate_outcome in {"created", "updated", "noop"}:
                 outcome = candidate_outcome
                 obj = getattr(result, "object", None)
             else:
-                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+                obj = ctx.nb.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         else:
-            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            obj = ctx.nb.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         return obj, outcome, payload
 
     @staticmethod
@@ -747,6 +776,79 @@ class Engine:
                 matched_ids.append(candidate_id)
         return len(candidates), matched_ids
 
+    @classmethod
+    def _lookup_candidate_matches_filters(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        candidate: Any,
+        filters: dict[str, Any],
+    ) -> bool:
+        for field, expected in filters.items():
+            compare_key = field[:-3] if field.endswith("_id") else field
+            actual = cls._record_attr_value(candidate, field)
+            if actual is None and compare_key != field:
+                actual = cls._record_attr_value(candidate, compare_key)
+
+            expected_id = expected if isinstance(expected, int) else extract_id(expected)
+            actual_id = actual if isinstance(actual, int) else extract_id(actual)
+            if expected_id is not None or actual_id is not None:
+                if actual_id != expected_id:
+                    return False
+                continue
+
+            normalized_expected = cls._normalize_compare_field(
+                ctx,
+                resource,
+                compare_key,
+                expected,
+            )
+            normalized_actual = cls._normalize_compare_field(
+                ctx,
+                resource,
+                compare_key,
+                actual,
+            )
+            if normalized_actual != normalized_expected:
+                return False
+        return True
+
+    @classmethod
+    def _resolve_ambiguous_lookup_candidate(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        filters: dict[str, Any],
+    ) -> tuple[Any | None, int | None, list[Any]]:
+        list_helper = getattr(ctx.nb, "list", None)
+        if not callable(list_helper):
+            return None, None, []
+        try:
+            candidates = list_helper(resource, **filters)
+        except Exception as exc:
+            logger.debug(
+                "Live ambiguous lookup candidate listing failed  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            return None, None, []
+        if not isinstance(candidates, (list, tuple)):
+            return None, None, []
+        matched_ids: list[Any] = []
+        for candidate in candidates[:10]:
+            candidate_id = cls._record_attr_value(candidate, "id")
+            if candidate_id is not None:
+                matched_ids.append(candidate_id)
+        matches = [
+            candidate
+            for candidate in candidates
+            if cls._lookup_candidate_matches_filters(ctx, resource, candidate, filters)
+        ]
+        if len(matches) == 1:
+            return matches[0], len(candidates), matched_ids
+        return None, len(candidates), matched_ids
+
     def _dry_run_outcome(
         self,
         ctx: RunContext,
@@ -768,17 +870,20 @@ class Engine:
         except ValueError as exc:
             if "more than one result" not in str(exc):
                 raise
-            match_count, matched_ids = self._ambiguous_lookup_details(
+            existing, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
                 ctx,
                 resource,
                 filters,
             )
-            raise AmbiguousDryRunLookupError(
-                resource,
-                filters,
-                match_count=match_count,
-                matched_ids=matched_ids,
-            ) from exc
+            if existing is not None:
+                pass
+            else:
+                raise AmbiguousDryRunLookupError(
+                    resource,
+                    filters,
+                    match_count=match_count,
+                    matched_ids=matched_ids,
+                ) from exc
         if existing is None:
             return "would_create", filters, None, payload
 
@@ -1499,7 +1604,7 @@ class Engine:
                     payload,
                     lookup_fields,
                 )
-                match_count, matched_ids = self._ambiguous_lookup_details(
+                _, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
                     ctx,
                     resource,
                     ambiguity_filters,
