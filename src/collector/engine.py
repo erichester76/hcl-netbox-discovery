@@ -2219,7 +2219,11 @@ class Engine:
             if group_id is not None:
                 list_filters["group"] = group_id
 
-            existing_vlans = ctx.nb.list("ipam.vlans", **list_filters)
+            # Bypass cached list results here. The surrounding keyed lock
+            # serializes same-identity writers, but a cached empty list would
+            # still let the next waiter create a duplicate VLAN after the first
+            # writer commits.
+            existing_vlans = ctx.nb.list("ipam.vlans", use_cache=False, **list_filters)
 
             siteless_vlan = None
             site_vlan = None
