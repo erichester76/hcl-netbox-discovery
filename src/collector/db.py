@@ -342,6 +342,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" to skip link-local addresses during collection when the source/mapping supports it',
         "General collector flags",
     ),
+    ("COLLECTOR_SYNC_APPLIANCES", "true", "", "General collector flags"),
     # LOG_LEVEL is startup-only and therefore not DB-backed.
     # --- VMware vCenter ---
     ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
@@ -533,7 +534,6 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     # --- Per-source sync flags ---
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_APPLIANCES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
@@ -1312,10 +1312,10 @@ def get_config(key: str, default: str = "") -> str:
 def get_all_settings() -> list[dict[str, Any]]:
     """Return all config settings ordered for display, then by key."""
     group_order = {
-        "Web UI": 10,
-        "NetBox": 20,
-        "NetBox Source": 30,
-        "General collector flags": 40,
+        "General collector flags": 10,
+        "Web UI": 20,
+        "NetBox": 30,
+        "NetBox Source": 40,
         "Per-source sync flags": 50,
     }
     with _conn() as con:

@@ -543,14 +543,14 @@ def test_runtime_settings_are_seeded():
     assert ad_settings["AD_DEFAULT_ROLE"]["default_value"] == "Server"
     assert ad_settings["AD_DEFAULT_SITE"]["default_value"] == "Default"
     assert general_settings["COLLECTOR_SKIP_LINK_LOCAL_IPS"]["default_value"] == "false"
-    assert collector_settings["COLLECTOR_SYNC_APPLIANCES"]["default_value"] == "true"
+    assert general_settings["COLLECTOR_SYNC_APPLIANCES"]["default_value"] == "true"
     assert collector_settings["COLLECTOR_SYNC_MODULES"]["default_value"] == "true"
 
 
 def test_settings_groups_are_ordered_for_ui():
     group_names = list(get_settings_by_group())
 
-    assert group_names.index("General collector flags") < group_names.index("VMware vCenter")
+    assert group_names[:3] == ["General collector flags", "Web UI", "NetBox"]
     assert group_names.index("Per-source sync flags") < group_names.index("VMware vCenter")
 
 
