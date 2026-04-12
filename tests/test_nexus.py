@@ -654,7 +654,7 @@ class TestNexusGetObjects:
                 return switch_resp
             if url.endswith("/dashboard/switch/interface?switchId=22530"):
                 return interface_resp
-            if url.endswith("/dashboard/switch/module?switchId=22530"):
+            if url.endswith("/api/v1/manage/fabrics/ProdFabric/switches/SAL9876543/modules"):
                 return module_resp
             raise AssertionError(f"unexpected URL {url!r}")
 
@@ -670,6 +670,74 @@ class TestNexusGetObjects:
         assert modules[0]["model"] == "NXA-PAC-500W-PI"
         assert modules[0]["serial"] == "LIT22505EAA"
         assert modules[1]["profile"] == "Fan"
+
+    def test_get_switches_with_modules_fallback_to_dashboard_endpoint(self):
+        src = self._connected_source()
+        src._fetch_modules = True
+
+        switch_resp = MagicMock()
+        switch_resp.raise_for_status = MagicMock()
+        switch_resp.json.return_value = [
+            {
+                "hostName": "nx-leaf-03",
+                "model": "N9K-C93180YC-EX",
+                "serialNumber": "SAL9876543",
+                "switchDbID": 22530,
+                "release": "9.3(7)",
+                "fabricName": "ProdFabric",
+                "switchRole": "leaf",
+                "ipAddress": "10.0.0.4",
+                "status": "alive",
+                "systemMode": "Normal",
+            }
+        ]
+
+        module_resp = MagicMock()
+        module_resp.raise_for_status = MagicMock()
+        module_resp.json.return_value = {
+            "modules": [
+                {
+                    "name": "PowerSupply-1",
+                    "modelName": "NXA-PAC-500W-PI",
+                    "serialNumber": "LIT22505EAA",
+                    "type": "chassis",
+                    "operStatus": "ok",
+                    "slot": "1",
+                }
+            ]
+        }
+
+        interface_resp = MagicMock()
+        interface_resp.raise_for_status = MagicMock()
+        interface_resp.json.return_value = []
+
+        def side_effect(url, **kwargs):
+            if url.endswith("/inventory/allswitches"):
+                return switch_resp
+            if url.endswith("/dashboard/switch/interface?switchId=22530"):
+                return interface_resp
+            if url.endswith("/api/v1/manage/fabrics/ProdFabric/switches/SAL9876543/modules"):
+                raise RuntimeError("manage endpoint unavailable")
+            if url.endswith("/dashboard/switch/module?switchId=22530"):
+                return module_resp
+            raise AssertionError(f"unexpected URL {url!r}")
+
+        src._session.get.side_effect = side_effect
+
+        result = src.get_objects("switches")
+
+        modules = result[0]["modules"]
+        requested_urls = [call.args[0] for call in src._session.get.call_args_list]
+        assert any(
+            url.endswith("/api/v1/manage/fabrics/ProdFabric/switches/SAL9876543/modules")
+            for url in requested_urls
+        )
+        assert any(
+            url.endswith("/dashboard/switch/module?switchId=22530")
+            for url in requested_urls
+        )
+        assert len(modules) == 1
+        assert modules[0]["profile"] == "Power supply"
 
     def test_get_switches_without_modules_key_absent(self):
         src = self._connected_source()
