@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
-from collector.engine import Engine
 from collector.config import FieldConfig
-
+from collector.engine import Engine
 
 # ---------------------------------------------------------------------------
 # _inject_sync_tag
@@ -60,6 +57,15 @@ class TestInjectSyncTag:
         payload = {"tags": [{"name": "VMWARE-SYNC"}]}
         Engine._inject_sync_tag(payload, "vmware-sync")
         assert len(payload["tags"]) == 1
+
+    def test_skips_sync_tag_injection_for_custom_object_resources(self):
+        payload: dict = {}
+        Engine._inject_sync_tag(
+            payload,
+            "ndfc-sync",
+            "plugins.custom_objects.ndfc_vpc_domains",
+        )
+        assert "tags" not in payload
 
 
 class TestAdditiveTagBehavior:
