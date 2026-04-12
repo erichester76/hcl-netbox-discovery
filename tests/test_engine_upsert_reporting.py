@@ -628,6 +628,36 @@ class TestEngineUpsertReporting:
             lookup_fields=["id"],
         )
 
+    def test_live_custom_object_type_matches_slug_against_underscore_name(self):
+        engine = Engine()
+        stats = RunStats("custom_object_types")
+        nb_main = MagicMock()
+        nb_main.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb_main.list.return_value = [
+            {"id": 1, "name": "ndfc_fabrics"},
+            {"id": 2, "name": "ndfc_vpc_domains"},
+            {"id": 3, "name": "ndfc_vpc_peer_links"},
+        ]
+        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 1}, outcome="updated")
+
+        result = engine._upsert(
+            _ctx(nb=MagicMock(), nb_main=nb_main),
+            "plugins.custom_objects.custom_object_types",
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics"},
+            lookup_fields=["slug"],
+            stats=stats,
+            field_configs=[FieldConfig(name="name", value="source('name')")],
+        )
+
+        assert result == {"id": 1}
+        nb_main.upsert_with_outcome.assert_called_once_with(
+            "plugins.custom_objects.custom_object_types",
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics", "id": 1},
+            lookup_fields=["id"],
+        )
+
     def test_fk_lookup_for_custom_objects_uses_branchless_client(self):
         engine = Engine()
         nb = MagicMock()
