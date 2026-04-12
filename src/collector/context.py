@@ -20,7 +20,6 @@ class RunContext:
     """Shared state for a collector run or a single item within a run."""
 
     nb: Any                            # NetBoxExtendedClient / NetBoxAPI
-    nb_main: Any | None                # Branchless NetBox client for global resources
     source_adapter: Any                # DataSource instance
     collector_opts: CollectorOptions
     regex_dir: str
@@ -28,6 +27,7 @@ class RunContext:
     source_obj: Any                    # current source object being processed
     parent_nb_obj: Any                 # parent NetBox record (for nested items)
     dry_run: bool
+    nb_main: Any | None = None         # Branchless NetBox client for global resources
     stop_requested: Callable[[], bool] | None = None
 
     def for_item(
