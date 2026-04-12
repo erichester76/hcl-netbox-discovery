@@ -449,7 +449,13 @@ class Engine:
         if callable(serialize) and type(value).__module__ != "unittest.mock":
             try:
                 serialized = serialize()
-            except Exception:
+            except Exception as exc:
+                logger.debug(
+                    "Record serialization failed during lookup normalization  type=%s  attr=%s  error=%s",
+                    type(value).__name__,
+                    name,
+                    exc,
+                )
                 serialized = None
             if isinstance(serialized, dict):
                 return _from_mapping(serialized, name)
@@ -1510,7 +1516,7 @@ class Engine:
                     obj = nb_client.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
-                if self._is_ambiguous_lookup_error(exc):
+                if isinstance(exc, ValueError) and self._is_ambiguous_lookup_error(exc):
                     existing, _, _ = self._resolve_ambiguous_lookup_candidate(
                         ctx,
                         field_cfg.resource,
