@@ -152,11 +152,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.0.0.1/24"}
-                if use_cache is False:
-                    return SimpleNamespace(id=500, assigned_object_id=7)
                 return SimpleNamespace(id=500, assigned_object_id=7)
             if resource == "virtualization.virtual_machines":
                 assert use_cache is False
@@ -177,6 +178,14 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.0.0.1/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.0.0.1/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_primary_ip_is_restored_when_reassignment_upsert_fails(self):
         engine = Engine()
@@ -203,11 +212,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.0.0.1/24"}
-                if use_cache is False:
-                    return SimpleNamespace(id=500, assigned_object_id=7)
                 return SimpleNamespace(id=500, assigned_object_id=7)
             if resource == "virtualization.virtual_machines":
                 assert use_cache is False
@@ -228,6 +238,14 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.0.0.1/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.0.0.1/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_primary_ip_guard_uses_fresh_parent_state_when_parent_obj_is_stale(self):
         engine = Engine()
@@ -254,11 +272,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=None)
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.0.0.1/24"}
-                if use_cache is False:
-                    return SimpleNamespace(id=500, assigned_object_id=7)
                 return SimpleNamespace(id=500, assigned_object_id=7)
             if resource == "virtualization.virtual_machines":
                 assert use_cache is False
@@ -279,6 +298,14 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.0.0.1/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.0.0.1/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_primary_ip_guard_falls_back_to_existing_parent_when_refresh_fails(self):
         engine = Engine()
@@ -305,11 +332,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=99, primary_ip4=SimpleNamespace(id=500))
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.0.0.1/24"}
-                if use_cache is False:
-                    return SimpleNamespace(id=500, assigned_object_id=7)
                 return SimpleNamespace(id=500, assigned_object_id=7)
             if resource == "virtualization.virtual_machines":
                 assert use_cache is False
@@ -330,6 +358,14 @@ class TestInterfaceWriteIntegrity:
             call("virtualization.virtual_machines", 99, {"primary_ip4": None}),
             call("virtualization.virtual_machines", 99, {"primary_ip4": 500}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.0.0.1/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.0.0.1/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_host_primary_ip_guard_bypasses_cache_for_live_reassignment(self):
         engine = Engine()
@@ -356,11 +392,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.70.255.12/24"}
-                if use_cache is False:
-                    return SimpleNamespace(id=109, assigned_object_id=58)
                 return SimpleNamespace(id=109, assigned_object_id=58)
             if resource == "dcim.devices":
                 assert use_cache is False
@@ -381,6 +418,14 @@ class TestInterfaceWriteIntegrity:
             call("dcim.devices", 529, {"primary_ip4": None}),
             call("dcim.devices", 529, {"primary_ip4": 109}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.70.255.12/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.70.255.12/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_host_primary_ip_guard_falls_back_when_get_does_not_support_use_cache(self):
         engine = Engine()
@@ -455,15 +500,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.70.255.12/24"}
-                if use_cache is False:
-                    return SimpleNamespace(
-                        id=109,
-                        assigned_object_id=58,
-                        assigned_object_type="dcim.interface",
-                    )
                 return SimpleNamespace(
                     id=109,
                     assigned_object_id=58,
@@ -491,6 +533,14 @@ class TestInterfaceWriteIntegrity:
         assert ctx.nb.update.call_args_list == [
             call("dcim.devices", 37, {"primary_ip4": None}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.70.255.12/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.70.255.12/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_primary_ip_is_restored_on_old_parent_when_cross_parent_reassignment_fails(self):
         engine = Engine()
@@ -517,15 +567,12 @@ class TestInterfaceWriteIntegrity:
         )
         parent_nb_obj = SimpleNamespace(id=529, primary_ip4=None)
 
+        get_calls = []
+
         def get_side_effect(resource, use_cache=None, **kwargs):
+            get_calls.append((resource, use_cache, kwargs))
             if resource == "ipam.ip_addresses":
                 assert kwargs == {"address": "10.70.255.12/24"}
-                if use_cache is False:
-                    return SimpleNamespace(
-                        id=109,
-                        assigned_object_id=58,
-                        assigned_object_type="dcim.interface",
-                    )
                 return SimpleNamespace(
                     id=109,
                     assigned_object_id=58,
@@ -554,6 +601,14 @@ class TestInterfaceWriteIntegrity:
             call("dcim.devices", 37, {"primary_ip4": None}),
             call("dcim.devices", 37, {"primary_ip4": 109}),
         ]
+        assert get_calls[:2] == [
+            ("ipam.ip_addresses", None, {"address": "10.70.255.12/24"}),
+            ("ipam.ip_addresses", False, {"address": "10.70.255.12/24"}),
+        ]
+        assert any(
+            resource != "ipam.ip_addresses" and use_cache is False
+            for resource, use_cache, _ in get_calls[2:]
+        )
 
     def test_primary_ip_guard_skips_uncached_refresh_for_same_parent_noop(self):
         engine = Engine()
@@ -598,9 +653,10 @@ class TestInterfaceWriteIntegrity:
         ):
             engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
 
-        assert get_calls == [
-            ("ipam.ip_addresses", None, {"address": "10.70.255.14/24"})
-        ]
+        assert len(get_calls) == 1
+        assert get_calls[0][0] == "ipam.ip_addresses"
+        assert get_calls[0][1] is not False
+        assert get_calls[0][2] == {"address": "10.70.255.14/24"}
         assert ctx.nb.update.call_args_list == []
 
     def test_guest_only_interface_skip_does_not_log_follow_on_warning(self, caplog):
