@@ -44,7 +44,7 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert custom_object_type_fields["verbose_name_plural"] == "source('verbose_name_plural')"
     assert custom_object_type_fields["group_name"] == "source('group_name')"
     assert custom_object_type_fields["description"] == "source('description')"
-    assert custom_object_type_fields["tags"] == "source('tags')"
+    assert "tags" not in custom_object_type_fields
 
     custom_object_type_field = _object(cfg, "ndfc_topology_custom_object_type_field")
     assert custom_object_type_field is not None
@@ -86,7 +86,7 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert fabric_fields["site_names"] == "source('site_names')"
     assert fabric_fields["tenant_names"] == "source('tenant_names')"
     assert fabric_fields["devices"] == "[{'name': name} for name in (source('device_names') or [])]"
-    assert fabric_fields["tags"] == "['ndfc-sync']"
+    assert "tags" not in fabric_fields
 
     domain = _object(cfg, "ndfc_vpc_domain")
     assert domain is not None
@@ -119,7 +119,7 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     )
     assert domain_fields["tenant_names"] == "source('tenant_names')"
     assert domain_fields["vrf_names"] == "source('vrf_names')"
-    assert domain_fields["tags"] == "['ndfc-sync']"
+    assert "tags" not in domain_fields
 
     peer_link = _object(cfg, "ndfc_vpc_peer_link")
     assert peer_link is not None
@@ -140,4 +140,4 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert peer_link_fields["status"] == "source('status')"
     assert peer_link_fields["tenant_names"] == "source('tenant_names')"
     assert peer_link_fields["vrf_names"] == "source('vrf_names')"
-    assert peer_link_fields["tags"] == "['ndfc-sync']"
+    assert "tags" not in peer_link_fields

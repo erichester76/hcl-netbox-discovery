@@ -215,11 +215,6 @@ object "ndfc_topology_custom_object_type" {
   field "description" {
     value = "source('description')"
   }
-
-  field "tags" {
-    type  = "tags"
-    value = "source('tags')"
-  }
 }
 
 object "ndfc_topology_custom_object_type_field" {
@@ -304,11 +299,6 @@ object "ndfc_fabric" {
   field "devices" {
     value = "[{'name': name} for name in (source('device_names') or [])]"
   }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
-  }
 }
 
 object "ndfc_vpc_domain" {
@@ -364,11 +354,6 @@ object "ndfc_vpc_domain" {
   field "vrf_names" {
     value = "source('vrf_names')"
   }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
-  }
 }
 
 object "ndfc_vpc_peer_link" {
@@ -411,11 +396,6 @@ object "ndfc_vpc_peer_link" {
 
   field "vrf_names" {
     value = "source('vrf_names')"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
   }
 }
 

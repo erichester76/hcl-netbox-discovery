@@ -1478,7 +1478,6 @@ def _build_topology_custom_object_type_records() -> list[dict[str, Any]]:
             "verbose_name_plural": "NDFC Fabrics",
             "group_name": "NDFC",
             "description": "NDFC fabric topology objects synchronized by hcl-netbox-discovery.",
-            "tags": ["ndfc-sync"],
         },
         {
             "name": "ndfc_vpc_domains",
@@ -1487,7 +1486,6 @@ def _build_topology_custom_object_type_records() -> list[dict[str, Any]]:
             "verbose_name_plural": "NDFC vPC Domains",
             "group_name": "NDFC",
             "description": "NDFC vPC domain topology objects synchronized by hcl-netbox-discovery.",
-            "tags": ["ndfc-sync"],
         },
         {
             "name": "ndfc_vpc_peer_links",
@@ -1496,7 +1494,6 @@ def _build_topology_custom_object_type_records() -> list[dict[str, Any]]:
             "verbose_name_plural": "NDFC vPC Peer Links",
             "group_name": "NDFC",
             "description": "NDFC vPC peer-link topology objects synchronized by hcl-netbox-discovery.",
-            "tags": ["ndfc-sync"],
         },
     ]
 

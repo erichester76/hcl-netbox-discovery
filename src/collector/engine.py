@@ -430,6 +430,10 @@ class Engine:
             return record_dict.get(name)
         return getattr(value, name, None)
 
+    @staticmethod
+    def _is_ambiguous_lookup_error(exc: Exception) -> bool:
+        return "more than one result" in str(exc).lower()
+
     @classmethod
     def _normalize_compare_field(
         cls,
@@ -620,8 +624,8 @@ class Engine:
         if filters and (field_configs or "tags" in payload):
             try:
                 existing = nb_client.get(resource, **filters)
-            except ValueError as exc:
-                if "more than one result" not in str(exc):
+            except Exception as exc:
+                if not self._is_ambiguous_lookup_error(exc):
                     raise
                 existing, _, _ = self._resolve_ambiguous_lookup_candidate(
                     ctx,
@@ -791,6 +795,12 @@ class Engine:
             actual = cls._record_attr_value(candidate, field)
             if actual is None and compare_key != field:
                 actual = cls._record_attr_value(candidate, compare_key)
+            if (
+                resource == "plugins.custom_objects.custom_object_types"
+                and compare_key == "slug"
+                and actual is None
+            ):
+                actual = cls._record_attr_value(candidate, "name")
 
             expected_id = expected if isinstance(expected, int) else extract_id(expected)
             actual_id = actual if isinstance(actual, int) else extract_id(actual)
@@ -811,6 +821,14 @@ class Engine:
                 compare_key,
                 actual,
             )
+            if (
+                resource == "plugins.custom_objects.custom_object_types"
+                and compare_key == "slug"
+                and isinstance(normalized_expected, str)
+                and isinstance(normalized_actual, str)
+            ):
+                normalized_expected = normalized_expected.replace("_", "-")
+                normalized_actual = normalized_actual.replace("_", "-")
             if normalized_actual != normalized_expected:
                 return False
         return True
@@ -1614,7 +1632,7 @@ class Engine:
             self._record_live_upsert_stats(stats, outcome)
             return obj
         except Exception as exc:
-            if isinstance(exc, ValueError) and "more than one result" in str(exc):
+            if isinstance(exc, ValueError) and self._is_ambiguous_lookup_error(exc):
                 ambiguity_filters = self._lookup_filters(
                     ctx,
                     resource,
