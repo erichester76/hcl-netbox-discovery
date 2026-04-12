@@ -733,6 +733,50 @@ class TestEngineUpsertReporting:
         assert stats.skipped == 1
         assert stats.errored == 0
 
+    def test_dry_run_custom_object_lookup_uses_branchless_client(self):
+        engine = Engine()
+        stats = RunStats("custom_object_type_fields")
+        nb = MagicMock()
+        nb_main = MagicMock()
+        nb.get.side_effect = AssertionError("branched client should not handle custom objects in dry run")
+        nb_main.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb_main.list.return_value = [
+            {"id": 1, "custom_object_type": {"id": 2}, "name": "identifier", "label": "Identifier"},
+            {
+                "id": 2,
+                "custom_object_type": 2,
+                "name": "fabric_identifier",
+                "label": "Fabric",
+            },
+            {"id": 3, "custom_object_type": {"id": 2}, "name": "devices", "label": "Devices"},
+        ]
+
+        result = engine._upsert(
+            _ctx(nb=nb, nb_main=nb_main, dry_run=True),
+            "plugins.custom_objects.custom_object_type_fields",
+            {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric"},
+            lookup_fields=["custom_object_type", "name"],
+            stats=stats,
+        )
+
+        assert result["id"] == 2
+        assert stats.processed == 1
+        assert stats.skipped == 1
+        assert stats.errored == 0
+        nb.get.assert_not_called()
+        nb_main.get.assert_called_once_with(
+            "plugins.custom_objects.custom_object_type_fields",
+            custom_object_type=2,
+            name="fabric_identifier",
+        )
+        nb_main.list.assert_called_once_with(
+            "plugins.custom_objects.custom_object_type_fields",
+            custom_object_type=2,
+            name="fabric_identifier",
+        )
+
     def test_dry_run_noop_outcome_counts_skipped(self):
         engine = Engine()
         stats = RunStats("devices")

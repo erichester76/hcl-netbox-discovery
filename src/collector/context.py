@@ -80,6 +80,7 @@ class RunContext:
 
 def netbox_client_for_resource(ctx: RunContext, resource: str) -> Any:
     """Return the NetBox client that should handle *resource* writes/lookups."""
-    if resource.startswith("plugins.custom_objects.") and ctx.nb_main is not None:
-        return ctx.nb_main
-    return ctx.nb
+    nb_main = getattr(ctx, "nb_main", None)
+    if resource.startswith("plugins.custom_objects.") and nb_main is not None:
+        return nb_main
+    return getattr(ctx, "nb", None)
