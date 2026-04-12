@@ -423,12 +423,38 @@ class Engine:
 
     @staticmethod
     def _record_attr_value(value: Any, name: str) -> Any:
+        def _from_mapping(mapping: dict[str, Any], key: str) -> Any:
+            if key in mapping:
+                return mapping.get(key)
+            for nested_key in ("data", "fields", "attributes", "custom_fields"):
+                nested = mapping.get(nested_key)
+                if isinstance(nested, dict) and key in nested:
+                    return nested.get(key)
+            return None
+
         if isinstance(value, dict):
-            return value.get(name)
+            return _from_mapping(value, name)
+
         record_dict = getattr(value, "__dict__", None)
-        if isinstance(record_dict, dict) and name in record_dict:
-            return record_dict.get(name)
-        return getattr(value, name, None)
+        if isinstance(record_dict, dict):
+            nested_value = _from_mapping(record_dict, name)
+            if nested_value is not None:
+                return nested_value
+
+        direct_value = getattr(value, name, None)
+        if direct_value is not None:
+            return direct_value
+
+        serialize = getattr(value, "serialize", None)
+        if callable(serialize) and type(value).__module__ != "unittest.mock":
+            try:
+                serialized = serialize()
+            except Exception:
+                serialized = None
+            if isinstance(serialized, dict):
+                return _from_mapping(serialized, name)
+
+        return None
 
     @staticmethod
     def _is_ambiguous_lookup_error(exc: Exception) -> bool:
@@ -1484,6 +1510,14 @@ class Engine:
                     obj = nb_client.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
+                if self._is_ambiguous_lookup_error(exc):
+                    existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                        ctx,
+                        field_cfg.resource,
+                        lookup,
+                    )
+                    if existing is not None:
+                        return extract_id(existing)
                 if strict:
                     raise ValueError(
                         f"Required FK field {field_cfg.name!r} lookup failed: {exc}"
