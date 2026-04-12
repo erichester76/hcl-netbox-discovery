@@ -607,8 +607,8 @@ object "device" {
       type     = "fk"
       resource = "dcim.interfaces"
       lookup   = {
-        device = "when(source('lag_name') != '', parent_id, None)"
-        name   = "when(source('lag_name') != '', source('lag_name'), None)"
+        device = "when(source('lag_name') != '' and source('vpc_name') == '', parent_id, None)"
+        name   = "when(source('lag_name') != '' and source('vpc_name') == '', source('lag_name'), None)"
       }
     }
 
