@@ -18,6 +18,8 @@ from collector.sources.nexus import (
     _build_shared_fhrp_groups,
     _build_shared_ip_records,
     _build_topology_custom_field_records,
+    _build_topology_custom_object_type_field_records,
+    _build_topology_custom_object_type_records,
     _build_vpc_domain_records,
     _build_vpc_peer_link_records,
     _derive_interface_name_details,
@@ -384,11 +386,15 @@ class TestNexusGetObjects:
         src._vpc_domains = [{"identifier": "ITC-CUProd:27"}]
         src._vpc_peer_links = [{"identifier": "ITC-CUProd:27:peer-link"}]
         src._topology_custom_fields = [{"name": "ndfc_fabric"}]
+        src._topology_custom_object_types = [{"slug": "ndfc-fabrics"}]
+        src._topology_custom_object_type_fields = [{"name": "identifier"}]
 
         assert src.get_objects("fabrics") == [{"identifier": "ITC-CUProd"}]
         assert src.get_objects("vpc_domains") == [{"identifier": "ITC-CUProd:27"}]
         assert src.get_objects("vpc_peer_links") == [{"identifier": "ITC-CUProd:27:peer-link"}]
         assert src.get_objects("topology_custom_fields") == [{"name": "ndfc_fabric"}]
+        assert src.get_objects("topology_custom_object_types") == [{"slug": "ndfc-fabrics"}]
+        assert src.get_objects("topology_custom_object_type_fields") == [{"name": "identifier"}]
 
     def test_get_topology_custom_fields_builds_static_records_without_switch_fetch(self):
         src = self._connected_source()
@@ -396,6 +402,20 @@ class TestNexusGetObjects:
         result = src.get_objects("topology_custom_fields")
 
         assert result == _build_topology_custom_field_records()
+
+    def test_get_topology_custom_object_types_builds_static_records_without_switch_fetch(self):
+        src = self._connected_source()
+
+        result = src.get_objects("topology_custom_object_types")
+
+        assert result == _build_topology_custom_object_type_records()
+
+    def test_get_topology_custom_object_type_fields_builds_static_records_without_switch_fetch(self):
+        src = self._connected_source()
+
+        result = src.get_objects("topology_custom_object_type_fields")
+
+        assert result == _build_topology_custom_object_type_field_records()
 
     def test_get_switches_returns_enriched_dicts(self):
         src = self._connected_source()
