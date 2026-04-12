@@ -336,17 +336,17 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" to log payloads without writing anything to NetBox',
         "General collector flags",
     ),
-    # LOG_LEVEL is startup-only and therefore not DB-backed.
-    # --- VMware vCenter ---
-    ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
-    ("VCENTER_USER", "administrator@vsphere.local", "", "VMware vCenter"),
-    ("VCENTER_PASS", "changeme", "", "VMware vCenter"),
     (
         "COLLECTOR_SKIP_LINK_LOCAL_IPS",
         "false",
         'Set to "true" to skip link-local addresses during collection when the source/mapping supports it',
         "General collector flags",
     ),
+    # LOG_LEVEL is startup-only and therefore not DB-backed.
+    # --- VMware vCenter ---
+    ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
+    ("VCENTER_USER", "administrator@vsphere.local", "", "VMware vCenter"),
+    ("VCENTER_PASS", "changeme", "", "VMware vCenter"),
     # --- Cisco Catalyst Center ---
     ("CATC_HOST", "https://catc.example.com", "", "Cisco Catalyst Center"),
     ("CATC_USER", "admin", "", "Cisco Catalyst Center"),
@@ -534,9 +534,8 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_APPLIANCES", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_MODULES", "false", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
+    ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
     (
         "TENABLE_HOST",
@@ -1311,13 +1310,22 @@ def get_config(key: str, default: str = "") -> str:
 
 
 def get_all_settings() -> list[dict[str, Any]]:
-    """Return all config settings ordered by group_name then key."""
+    """Return all config settings ordered for display, then by key."""
+    group_order = {
+        "Web UI": 10,
+        "NetBox": 20,
+        "NetBox Source": 30,
+        "General collector flags": 40,
+        "Per-source sync flags": 50,
+    }
     with _conn() as con:
         rows = con.execute(
             "SELECT id, key, value, default_value, description, group_name, updated_at"
-            " FROM config_settings ORDER BY group_name ASC, key ASC"
+            " FROM config_settings"
         ).fetchall()
-    return [_row_to_setting(r) for r in rows]
+    settings = [_row_to_setting(r) for r in rows]
+    settings.sort(key=lambda s: (group_order.get(s["group_name"], 100), s["group_name"], s["key"]))
+    return settings
 
 
 def get_settings_by_group() -> dict[str, list[dict[str, Any]]]:
