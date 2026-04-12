@@ -349,6 +349,59 @@ def test_capture_job_runtime_metadata_includes_mapping_and_source_fingerprints(t
     }
 
 
+def test_capture_job_runtime_metadata_rejects_unsafe_active_source_path(tmp_path, monkeypatch):
+    hcl = tmp_path / "sample.hcl"
+    hcl.write_text(_minimal_mapping().replace('api_type = "rest"', 'api_type = "../../escape"'))
+
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        job_lifecycle,
+        "get_code_version",
+        lambda: {"version": "1.0.48", "components": {}},
+    )
+    monkeypatch.setattr(job_lifecycle, "_sha256_file", lambda path: f"hash:{Path(path).name}" if path else None)
+
+    runtime_snapshot, _code_version = capture_job_runtime_metadata(
+        hcl_file=str(hcl),
+        dry_run=False,
+        debug_mode=False,
+        run_token="run-unsafe",
+    )
+
+    assert runtime_snapshot["component_versions"]["active_source"] == {
+        "version": "1.0.48",
+        "api_type": "../../escape",
+        "path": None,
+        "sha256": None,
+    }
+
+
+def test_tree_sha256_returns_none_when_a_matched_file_cannot_be_hashed(tmp_path, monkeypatch, caplog):
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setattr(job_lifecycle, "_PROJECT_ROOT", tmp_path)
+
+    tree_root = tmp_path / "collector"
+    tree_root.mkdir()
+    (tree_root / "ok.py").write_text("print('ok')\n")
+
+    original_sha256_file = job_lifecycle._sha256_file
+
+    def fake_sha256_file(path):
+        if path and Path(path).name == "ok.py":
+            return None
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(job_lifecycle, "_sha256_file", fake_sha256_file)
+
+    with caplog.at_level(logging.WARNING):
+        digest = job_lifecycle._tree_sha256(tree_root, "*.py")
+
+    assert digest is None
+    assert "Unable to hash file while computing tree sha256" in caplog.text
+
+
 def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):
     hcl = tmp_path / "stop.hcl"
     hcl.write_text("")

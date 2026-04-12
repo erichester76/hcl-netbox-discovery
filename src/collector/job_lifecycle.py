@@ -136,13 +136,14 @@ def capture_job_runtime_metadata(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return masked runtime snapshot and code version metadata for one job."""
     code_version = get_code_version()
+    base_version = str(code_version.get("version") or _read_project_version() or "")
     return (
         _build_runtime_snapshot(
             hcl_file=hcl_file,
             dry_run=dry_run,
             debug_mode=debug_mode,
             run_token=run_token,
-            base_version=str(code_version.get("version") or _read_project_version()),
+            base_version=base_version,
         ),
         code_version,
     )
@@ -264,11 +265,11 @@ def _build_component_versions(base_version: str) -> dict[str, Any]:
 
 
 def _build_active_source_component(api_type: str, base_version: str) -> dict[str, Any]:
-    path = _PROJECT_ROOT / "src" / "collector" / "sources" / f"{api_type}.py"
+    path = _validated_active_source_path(api_type)
     return {
         "version": base_version,
         "api_type": api_type,
-        "path": str(path.relative_to(_PROJECT_ROOT)) if path.exists() else None,
+        "path": str(path.relative_to(_PROJECT_ROOT)) if path is not None else None,
         "sha256": _sha256_file(path),
     }
 
@@ -291,6 +292,20 @@ def _matching_example_mapping_path(mapping_path: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _validated_active_source_path(api_type: str) -> Path | None:
+    """Return a safe adapter path rooted under ``src/collector/sources``."""
+    if not api_type or Path(api_type).name != api_type:
+        return None
+
+    sources_root = (_PROJECT_ROOT / "src" / "collector" / "sources").resolve()
+    candidate = (sources_root / f"{api_type}.py").resolve()
+    try:
+        candidate.relative_to(sources_root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
 
 
 def _sha256_file(path: Path | None) -> str | None:
@@ -319,7 +334,8 @@ def _tree_sha256(root: Path, pattern: str) -> str | None:
         digest.update(rel_path)
         file_hash = _sha256_file(path)
         if file_hash is None:
-            continue
+            logging.warning("Unable to hash file while computing tree sha256: %s", path)
+            return None
         digest.update(file_hash.encode("utf-8"))
     return digest.hexdigest() if matched else None
 
