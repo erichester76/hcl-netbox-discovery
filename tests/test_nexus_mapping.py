@@ -33,6 +33,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert cfg.source.api_type == "nexus"
     assert cfg.source.extra.get("fetch_interfaces") == "false"
     assert cfg.source.extra.get("fetch_modules") == "false"
+    assert cfg.collector.sync_tag == "ndfc-sync"
     assert cfg.collector.extra_flags["sync_modules"] is True
 
     device = _device_object(cfg)
