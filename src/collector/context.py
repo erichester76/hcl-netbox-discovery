@@ -27,6 +27,7 @@ class RunContext:
     source_obj: Any                    # current source object being processed
     parent_nb_obj: Any                 # parent NetBox record (for nested items)
     dry_run: bool
+    nb_main: Any | None = None         # Branchless NetBox client for global resources
     stop_requested: Callable[[], bool] | None = None
 
     def for_item(
@@ -41,6 +42,7 @@ class RunContext:
         """
         return RunContext(
             nb=self.nb,
+            nb_main=self.nb_main,
             source_adapter=self.source_adapter,
             collector_opts=self.collector_opts,
             regex_dir=self.regex_dir,
@@ -64,6 +66,7 @@ class RunContext:
         """
         return RunContext(
             nb=self.nb,
+            nb_main=self.nb_main,
             source_adapter=self.source_adapter,
             collector_opts=self.collector_opts,
             regex_dir=self.regex_dir,
@@ -73,3 +76,11 @@ class RunContext:
             dry_run=self.dry_run,
             stop_requested=self.stop_requested,
         )
+
+
+def netbox_client_for_resource(ctx: RunContext, resource: str) -> Any:
+    """Return the NetBox client that should handle *resource* writes/lookups."""
+    nb_main = getattr(ctx, "nb_main", None)
+    if resource.startswith("plugins.custom_objects.") and nb_main is not None:
+        return nb_main
+    return getattr(ctx, "nb", None)
