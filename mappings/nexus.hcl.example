@@ -82,15 +82,6 @@ object "shared_ip" {
   field "status" {
     value = "'active'"
   }
-
-  field "description" {
-    value = "join(', ', source('references') or [])"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
-  }
 }
 
 object "shared_fhrp_group" {
@@ -108,15 +99,6 @@ object "shared_fhrp_group" {
 
   field "group_id" {
     value = "source('group_id')"
-  }
-
-  field "description" {
-    value = "join(', ', source('references') or [])"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
   }
 }
 
@@ -145,15 +127,6 @@ object "shared_fhrp_vip" {
     type     = "fk"
     resource = "ipam.fhrp_groups"
     lookup   = { name = "source('group_name')" }
-  }
-
-  field "description" {
-    value = "join(', ', source('references') or [])"
-  }
-
-  field "tags" {
-    type  = "tags"
-    value = "['ndfc-sync']"
   }
 }
 
@@ -820,6 +793,6 @@ object "shared_fhrp_assignment" {
   }
 
   field "priority" {
-    value = "source('priority')"
+    value = "when(source('priority') not in (None, '', 100), source('priority'), None)"
   }
 }
