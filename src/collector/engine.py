@@ -1357,7 +1357,7 @@ class Engine:
             return
 
         # 3. Inject sync tag
-        self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+        self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, obj_cfg.netbox_resource)
 
         # 4. Upsert to NetBox
         if self._should_stop(ctx):
@@ -1504,8 +1504,10 @@ class Engine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _inject_sync_tag(payload: dict, sync_tag: str) -> None:
+    def _inject_sync_tag(payload: dict, sync_tag: str, resource: str | None = None) -> None:
         if not sync_tag:
+            return
+        if resource and resource.startswith("plugins.custom_objects."):
             return
         tags = payload.get("tags", [])
         if not isinstance(tags, list):
@@ -1760,6 +1762,9 @@ class Engine:
                 return nb_get(resource_name, use_cache=False, **filters)
             return nb_get(resource_name, **filters)
 
+        def _get_cached(resource_name: str, **filters: Any) -> Any:
+            return nb_get(resource_name, **filters)
+
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
         parent_obj_id = extract_id(parent_nb_obj)
@@ -1774,7 +1779,7 @@ class Engine:
         if primary_field is None:
             return None
 
-        existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+        existing_ip = _get_cached("ipam.ip_addresses", address=address)
         existing_ip_id = extract_id(existing_ip)
         if existing_ip_id is None:
             return None
@@ -1784,6 +1789,20 @@ class Engine:
             current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
+
+        # Refresh uncached state only for a real reassignment candidate, and
+        # only when the client can actually bypass cache.
+        if nb_get_supports_use_cache:
+            existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+            existing_ip_id = extract_id(existing_ip)
+            if existing_ip_id is None:
+                return None
+
+            current_assigned_id = _obj_get(existing_ip, "assigned_object_id")
+            if current_assigned_id is None:
+                current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
+            if current_assigned_id is None or current_assigned_id == desired_assigned_id:
+                return None
 
         current_parent = parent_nb_obj
         current_parent_resource = parent_resource
@@ -1903,7 +1922,7 @@ class Engine:
 
                 if parent_id is not None:
                     payload[parent_field] = parent_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, iface_resource)
 
                 nb_iface = self._upsert(
                     nested_ctx,
@@ -1969,7 +1988,7 @@ class Engine:
                             )
                             ip_payload["assigned_object_id"] = iface_id
 
-                        self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
+                        self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag, "ipam.ip_addresses")
                         cleared_primary = None
                         if iface_id is not None and not ip_ctx.dry_run:
                             try:
@@ -2181,7 +2200,7 @@ class Engine:
 
                 try:
                     lookup_fields = [k for k in vlan_cfg.lookup_by if k in vlan_payload]
-                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag)
+                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag, vlan_cfg.netbox_resource)
                     # For ipam.vlans with vid lookup, use multi-site aware resolution
                     # to handle the case where the same vid exists across multiple sites.
                     if (
@@ -2418,7 +2437,7 @@ class Engine:
                     payload["device"] = parent_id
                 if role_id is not None:
                     payload["role"] = role_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, "dcim.inventory_items")
 
                 self._upsert(
                     nested_ctx,
@@ -2470,7 +2489,7 @@ class Engine:
 
                 if parent_id is not None:
                     payload["virtual_machine"] = parent_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, "virtualization.virtual_disks")
 
                 self._upsert(
                     nested_ctx,
