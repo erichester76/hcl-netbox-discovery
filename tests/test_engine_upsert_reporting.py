@@ -553,6 +553,40 @@ class TestEngineUpsertReporting:
         assert "match_count=2" in caplog.text
         assert "matched_ids=[11, 22]" in caplog.text
 
+    def test_live_ambiguous_lookup_with_exact_candidate_retries_by_id(self, caplog):
+        engine = Engine()
+        stats = RunStats("custom_object_type_fields")
+        nb = MagicMock()
+        nb.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb.list.return_value = [
+            {"id": 1, "custom_object_type": {"id": 2}, "name": "identifier"},
+            {"id": 2, "custom_object_type": {"id": 2}, "name": "fabric_identifier"},
+            {"id": 3, "custom_object_type": {"id": 2}, "name": "devices"},
+        ]
+        nb.upsert.return_value = {"id": 2}
+
+        with caplog.at_level(logging.WARNING):
+            result = engine._upsert(
+                _ctx(nb=nb),
+                "plugins.custom_objects.custom_object_type_fields",
+                {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric"},
+                lookup_fields=["custom_object_type", "name"],
+                stats=stats,
+                field_configs=[FieldConfig(name="label", value="source('label')")],
+            )
+
+        assert result == {"id": 2}
+        assert stats.processed == 1
+        assert stats.errored == 0
+        assert "Live lookup ambiguous" not in caplog.text
+        nb.upsert.assert_called_once_with(
+            "plugins.custom_objects.custom_object_type_fields",
+            {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric", "id": 2},
+            lookup_fields=["id"],
+        )
+
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()
         stats = RunStats("devices")
@@ -576,6 +610,37 @@ class TestEngineUpsertReporting:
         assert stats.errored == 1
         assert "Live lookup ambiguous" not in caplog.text
         assert "Upsert failed" in caplog.text
+
+    def test_dry_run_ambiguous_lookup_with_exact_candidate_continues_diffing(self):
+        engine = Engine()
+        stats = RunStats("custom_object_type_fields")
+        nb = MagicMock()
+        nb.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb.list.return_value = [
+            {"id": 1, "custom_object_type": {"id": 2}, "name": "identifier", "label": "Identifier"},
+            {
+                "id": 2,
+                "custom_object_type": 2,
+                "name": "fabric_identifier",
+                "label": "Fabric",
+            },
+            {"id": 3, "custom_object_type": {"id": 2}, "name": "devices", "label": "Devices"},
+        ]
+
+        result = engine._upsert(
+            _ctx(nb=nb, dry_run=True),
+            "plugins.custom_objects.custom_object_type_fields",
+            {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric"},
+            lookup_fields=["custom_object_type", "name"],
+            stats=stats,
+        )
+
+        assert result["id"] == 2
+        assert stats.processed == 1
+        assert stats.skipped == 1
+        assert stats.errored == 0
 
     def test_dry_run_noop_outcome_counts_skipped(self):
         engine = Engine()
