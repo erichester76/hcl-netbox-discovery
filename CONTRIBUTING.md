@@ -98,6 +98,21 @@ poetry run python -m web.web_server
 5. Update docs if behavior or usage changed.
 6. Run `poetry run ruff check .` and `poetry run ruff format .` before opening a PR.
 
+## Versioning Method
+
+- `pyproject.toml` holds the base release version for the project.
+- Job/runtime metadata should capture both the base app version and
+  per-component versions/fingerprints for the engine, collector, source
+  adapters, mapping examples, and the actual mapping file used by a run.
+- Component versions should default to the same value as the base app version.
+- When a PR changes a specific component family, increment that component's
+  internal version metadata in the same PR, even if the rest of the component
+  families remain on the base version.
+- When preparing a release, align all component versions back to the final
+  release version so the shipped build reports one coherent version set.
+- Unless the change is part of an intentional minor or major release step,
+  bump the patch version in `pyproject.toml` for every PR.
+
 ## Branching And Release Flow
 
 This repository uses three long-lived branches:

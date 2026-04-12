@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -270,6 +271,11 @@ def test_get_code_version_prefers_baked_env_metadata(monkeypatch):
     monkeypatch.setenv("APP_GIT_TAG", "v1.1.1")
     monkeypatch.setattr(job_lifecycle, "_read_project_version", lambda: "0.0.0")
     monkeypatch.setattr(job_lifecycle, "_git_output", lambda *_args: "fallback")
+    monkeypatch.setattr(
+        job_lifecycle,
+        "_build_component_versions",
+        lambda base_version: {"collector": {"version": base_version, "sha256": "collector-hash"}},
+    )
 
     job_lifecycle.get_code_version.cache_clear()
     try:
@@ -278,6 +284,7 @@ def test_get_code_version_prefers_baked_env_metadata(monkeypatch):
             "git_commit": "abcdef1234567890",
             "git_branch": "dev",
             "git_tag": "v1.1.1",
+            "components": {"collector": {"version": "1.1.1", "sha256": "collector-hash"}},
         }
     finally:
         job_lifecycle.get_code_version.cache_clear()
@@ -300,6 +307,99 @@ def test_capture_job_runtime_metadata_redacts_config_error_details(tmp_path):
 
     assert runtime_snapshot["config_error"] == "Configuration loading failed (RuntimeError)"
     assert "super-secret" not in runtime_snapshot["config_error"]
+
+
+def test_capture_job_runtime_metadata_includes_mapping_and_source_fingerprints(tmp_path, monkeypatch):
+    hcl = tmp_path / "sample.hcl"
+    hcl.write_text(_minimal_mapping())
+    example = tmp_path / "sample.hcl.example"
+    example.write_text("# example")
+
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        job_lifecycle,
+        "get_code_version",
+        lambda: {"version": "1.0.48", "components": {"engine": {"version": "1.0.48", "sha256": "engine-hash"}}},
+    )
+    monkeypatch.setattr(job_lifecycle, "_sha256_file", lambda path: f"hash:{Path(path).name}" if path else None)
+    monkeypatch.setattr(job_lifecycle, "_tree_sha256", lambda *_args, **_kwargs: "tree-hash")
+
+    runtime_snapshot, code_version = capture_job_runtime_metadata(
+        hcl_file=str(hcl),
+        dry_run=False,
+        debug_mode=False,
+        run_token="run-1",
+    )
+
+    assert code_version == {
+        "version": "1.0.48",
+        "components": {"engine": {"version": "1.0.48", "sha256": "engine-hash"}},
+    }
+    assert runtime_snapshot["mapping"]["version"] == "1.0.48"
+    assert runtime_snapshot["mapping"]["sha256"] == "hash:sample.hcl"
+    assert runtime_snapshot["mapping"]["example_version"] == "1.0.48"
+    assert runtime_snapshot["mapping"]["example_path"] == str(example)
+    assert runtime_snapshot["mapping"]["example_sha256"] == "hash:sample.hcl.example"
+    assert runtime_snapshot["component_versions"]["active_source"] == {
+        "version": "1.0.48",
+        "api_type": "rest",
+        "path": "src/collector/sources/rest.py",
+        "sha256": "hash:rest.py",
+    }
+
+
+def test_capture_job_runtime_metadata_rejects_unsafe_active_source_path(tmp_path, monkeypatch):
+    hcl = tmp_path / "sample.hcl"
+    hcl.write_text(_minimal_mapping().replace('api_type = "rest"', 'api_type = "../../escape"'))
+
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        job_lifecycle,
+        "get_code_version",
+        lambda: {"version": "1.0.48", "components": {}},
+    )
+    monkeypatch.setattr(job_lifecycle, "_sha256_file", lambda path: f"hash:{Path(path).name}" if path else None)
+
+    runtime_snapshot, _code_version = capture_job_runtime_metadata(
+        hcl_file=str(hcl),
+        dry_run=False,
+        debug_mode=False,
+        run_token="run-unsafe",
+    )
+
+    assert runtime_snapshot["component_versions"]["active_source"] == {
+        "version": "1.0.48",
+        "api_type": "../../escape",
+        "path": None,
+        "sha256": None,
+    }
+
+
+def test_tree_sha256_returns_none_when_a_matched_file_cannot_be_hashed(tmp_path, monkeypatch, caplog):
+    import collector.job_lifecycle as job_lifecycle  # noqa: PLC0415
+
+    monkeypatch.setattr(job_lifecycle, "_PROJECT_ROOT", tmp_path)
+
+    tree_root = tmp_path / "collector"
+    tree_root.mkdir()
+    (tree_root / "ok.py").write_text("print('ok')\n")
+
+    original_sha256_file = job_lifecycle._sha256_file
+
+    def fake_sha256_file(path):
+        if path and Path(path).name == "ok.py":
+            return None
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(job_lifecycle, "_sha256_file", fake_sha256_file)
+
+    with caplog.at_level(logging.WARNING):
+        digest = job_lifecycle._tree_sha256(tree_root, "*.py")
+
+    assert digest is None
+    assert "Unable to hash file while computing tree sha256" in caplog.text
 
 
 def test_execute_job_persists_stopped_status_when_engine_stops(tmp_path, tmp_db):
