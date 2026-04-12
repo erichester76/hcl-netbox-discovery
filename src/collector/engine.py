@@ -1762,6 +1762,9 @@ class Engine:
                 return nb_get(resource_name, use_cache=False, **filters)
             return nb_get(resource_name, **filters)
 
+        def _get_cached(resource_name: str, **filters: Any) -> Any:
+            return nb_get(resource_name, **filters)
+
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
         parent_obj_id = extract_id(parent_nb_obj)
@@ -1776,7 +1779,7 @@ class Engine:
         if primary_field is None:
             return None
 
-        existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+        existing_ip = _get_cached("ipam.ip_addresses", address=address)
         existing_ip_id = extract_id(existing_ip)
         if existing_ip_id is None:
             return None
@@ -1786,6 +1789,20 @@ class Engine:
             current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
+
+        # Refresh uncached state only for a real reassignment candidate, and
+        # only when the client can actually bypass cache.
+        if nb_get_supports_use_cache:
+            existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+            existing_ip_id = extract_id(existing_ip)
+            if existing_ip_id is None:
+                return None
+
+            current_assigned_id = _obj_get(existing_ip, "assigned_object_id")
+            if current_assigned_id is None:
+                current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
+            if current_assigned_id is None or current_assigned_id == desired_assigned_id:
+                return None
 
         current_parent = parent_nb_obj
         current_parent_resource = parent_resource
