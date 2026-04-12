@@ -291,6 +291,24 @@ field "site" {
 }
 ```
 
+FK fields also support `allow_null = true` when a missing lookup should clear an
+existing relationship instead of skipping the field entirely:
+
+```hcl
+field "lag" {
+  type       = "fk"
+  resource   = "dcim.interfaces"
+  allow_null = true
+  lookup = {
+    device = "when(source('lag_name') != '', parent_id, None)"
+    name   = "when(source('lag_name') != '', source('lag_name'), None)"
+  }
+}
+```
+
+When `allow_null = true` and the FK lookup resolves to no values, the engine
+emits the field as `null` so NetBox clears the relationship on update.
+
 The engine performs a `nb.get(resource, **lookup)` and places the resulting ID in the payload. If `ensure = true` it calls `nb.upsert` to create the object if it doesn't exist.
 
 | Attribute | Required | Description |
@@ -299,6 +317,7 @@ The engine performs a `nb.get(resource, **lookup)` and places the resulting ID i
 | `resource` | yes | NetBox resource path |
 | `lookup` | yes | Map of filter fields → expressions |
 | `ensure` | no | Create the FK target if missing (default: `false`) |
+| `allow_null` | no | Default `false`. When `true`, emit `null` if the FK lookup resolves to no values so an existing relationship is cleared |
 
 ### Tags field (`type = "tags"`)
 

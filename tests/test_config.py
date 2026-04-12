@@ -355,6 +355,38 @@ class TestLoadConfigWithObjects:
         assert field_cfg.name == "rack"
         assert field_cfg.update_mode == "if_missing"
 
+    def test_parses_field_allow_null(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+
+            object "device" {
+              source_collection = "devices"
+              netbox_resource   = "dcim.devices"
+
+              field "lag" {
+                type       = "fk"
+                resource   = "dcim.interfaces"
+                allow_null = true
+                lookup = {
+                  device = "parent_id"
+                  name   = "source('lag_name')"
+                }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        field_cfg = cfg.objects[0].fields[0]
+        assert field_cfg.name == "lag"
+        assert field_cfg.allow_null is True
+
     def test_vmware_example_vm_platform_prereq_does_not_set_manufacturer(self):
         mapping = Path(__file__).resolve().parents[1] / "mappings" / "vmware.hcl.example"
         cfg = load_config(str(mapping))

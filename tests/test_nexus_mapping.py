@@ -74,6 +74,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert lag_field is not None
     assert lag_field.type == "fk"
     assert lag_field.resource == "dcim.interfaces"
+    assert lag_field.allow_null is True
     assert lag_field.lookup == {
         "device": "when(source('lag_name') != '' and not lower(str(source('name') or '')).startswith('vpc'), parent_id, None)",
         "name": "when(source('lag_name') != '' and not lower(str(source('name') or '')).startswith('vpc'), source('lag_name'), None)",

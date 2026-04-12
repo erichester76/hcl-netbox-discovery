@@ -779,6 +779,50 @@ class TestInterfaceWriteIntegrity:
         assert payload["lag"] == 500
         assert payload["device"] == 99
 
+    def test_nested_interface_fk_lookup_can_clear_stale_vpc_lag(self):
+        engine = Engine()
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="devices",
+            netbox_resource="dcim.devices",
+            interfaces=[
+                InterfaceConfig(
+                    source_items="_interfaces",
+                    fields=[
+                        FieldConfig(name="name", value="source('name')"),
+                        FieldConfig(
+                            name="lag",
+                            type="fk",
+                            resource="dcim.interfaces",
+                            allow_null=True,
+                            lookup={
+                                "device": "when(not lower(str(source('name') or '')).startswith('vpc'), parent_id, None)",
+                                "name": "when(not lower(str(source('name') or '')).startswith('vpc'), source('lag_name'), None)",
+                            },
+                        ),
+                    ],
+                )
+            ],
+        )
+        ctx = _make_ctx(
+            {
+                "_interfaces": [
+                    {"name": "vpc27", "lag_name": "port-channel27"},
+                ]
+            }
+        )
+        parent_nb_obj = SimpleNamespace(id=99)
+
+        with patch.object(engine, "_upsert", return_value=SimpleNamespace(id=700)) as mock_upsert:
+            engine._process_interfaces(obj_cfg, parent_nb_obj, ctx)
+
+        ctx.nb.get.assert_not_called()
+        payload = mock_upsert.call_args.args[2]
+        assert payload["name"] == "vpc27"
+        assert "lag" in payload
+        assert payload["lag"] is None
+        assert payload["device"] == 99
+
     def test_dry_run_created_vm_skips_child_gets_against_preview_parent(self):
         engine = Engine()
         ctx = _make_ctx(

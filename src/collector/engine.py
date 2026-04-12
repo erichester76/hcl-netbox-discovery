@@ -43,6 +43,7 @@ from .write_locks import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_IN_FLIGHT_FACTOR = 4
+_EXPLICIT_NULL = object()
 
 # Default IEC 60320 power-port connector type used when a ``power_input`` block
 # omits a type expression or the expression resolves to a falsy value.
@@ -1440,7 +1441,9 @@ class Engine:
                     ctx,
                     strict=field_cfg.name in required_field_names,
                 )
-                if value is not None:
+                if value is _EXPLICIT_NULL:
+                    payload[field_cfg.name] = None
+                elif value is not None:
                     payload[field_cfg.name] = value
             except Exception as exc:
                 if field_cfg.name in required_field_names:
@@ -1496,6 +1499,8 @@ class Engine:
                     f"Required FK field {field_cfg.name!r} missing lookup values for {missing_lookup_keys}"
                 )
             if not lookup:
+                if field_cfg.allow_null:
+                    return _EXPLICIT_NULL
                 if strict:
                     raise ValueError(
                         f"Required FK field {field_cfg.name!r} could not resolve lookup"
