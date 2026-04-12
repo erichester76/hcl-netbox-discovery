@@ -343,6 +343,10 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "General collector flags",
     ),
     ("COLLECTOR_SYNC_APPLIANCES", "true", "", "General collector flags"),
+    ("COLLECTOR_SYNC_INTERFACES", "true", "", "General collector flags"),
+    ("COLLECTOR_SYNC_INVENTORY", "true", "", "General collector flags"),
+    ("COLLECTOR_SYNC_MODULES", "true", "", "General collector flags"),
+    ("COLLECTOR_SYNC_DISKS", "true", "", "General collector flags"),
     # LOG_LEVEL is startup-only and therefore not DB-backed.
     # --- VMware vCenter ---
     ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
@@ -531,11 +535,6 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("SNMP_V3_PRIV_PASS", "", "", "SNMP"),
     ("SNMP_V3_PRIV_PROTO", "aes", "", "SNMP"),
     ("LINUX_SITE", "Default", "Linux SNMP specific (mappings/linux-snmp.hcl.example)", "SNMP"),
-    # --- Per-source sync flags ---
-    ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
     (
         "TENABLE_HOST",
@@ -1316,7 +1315,6 @@ def get_all_settings() -> list[dict[str, Any]]:
         "Web UI": 20,
         "NetBox": 30,
         "NetBox Source": 40,
-        "Per-source sync flags": 50,
     }
     with _conn() as con:
         rows = con.execute(

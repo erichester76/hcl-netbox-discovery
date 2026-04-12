@@ -526,7 +526,6 @@ def test_runtime_settings_are_seeded():
     ldap_settings = {row["key"]: row for row in settings_by_group["LDAP"]}
     ad_settings = {row["key"]: row for row in settings_by_group["Active Directory"]}
     general_settings = {row["key"]: row for row in settings_by_group["General collector flags"]}
-    collector_settings = {row["key"]: row for row in settings_by_group["Per-source sync flags"]}
 
     assert netbox_settings["NETBOX_USE_CUSTOM_OBJECTS"]["default_value"] == "false"
     assert netbox_settings["NETBOX_SYNC_TAG"]["default_value"] == "netbox-sync"
@@ -544,14 +543,17 @@ def test_runtime_settings_are_seeded():
     assert ad_settings["AD_DEFAULT_SITE"]["default_value"] == "Default"
     assert general_settings["COLLECTOR_SKIP_LINK_LOCAL_IPS"]["default_value"] == "false"
     assert general_settings["COLLECTOR_SYNC_APPLIANCES"]["default_value"] == "true"
-    assert collector_settings["COLLECTOR_SYNC_MODULES"]["default_value"] == "true"
+    assert general_settings["COLLECTOR_SYNC_INTERFACES"]["default_value"] == "true"
+    assert general_settings["COLLECTOR_SYNC_INVENTORY"]["default_value"] == "true"
+    assert general_settings["COLLECTOR_SYNC_MODULES"]["default_value"] == "true"
+    assert general_settings["COLLECTOR_SYNC_DISKS"]["default_value"] == "true"
 
 
 def test_settings_groups_are_ordered_for_ui():
     group_names = list(get_settings_by_group())
 
     assert group_names[:3] == ["General collector flags", "Web UI", "NetBox"]
-    assert group_names.index("Per-source sync flags") < group_names.index("VMware vCenter")
+    assert "Per-source sync flags" not in group_names
 
 
 def test_startup_config_stays_env_only(monkeypatch):
