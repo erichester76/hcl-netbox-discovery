@@ -303,6 +303,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" when mappings should target NetBox Custom Objects instead of custom-field fallbacks',
         "NetBox",
     ),
+    (
+        "NETBOX_SYNC_TAG",
+        "netbox-sync",
+        "Default sync tag used by example mappings that target NetBox",
+        "NetBox",
+    ),
     # --- NetBox Source ---
     (
         "SOURCE_NETBOX_URL",
@@ -330,6 +336,13 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" to log payloads without writing anything to NetBox',
         "General collector flags",
     ),
+    (
+        "COLLECTOR_SKIP_LINK_LOCAL_IPS",
+        "false",
+        'Set to "true" to skip link-local addresses during collection when the source/mapping supports it',
+        "General collector flags",
+    ),
+    ("COLLECTOR_SYNC_APPLIANCES", "true", "", "General collector flags"),
     # LOG_LEVEL is startup-only and therefore not DB-backed.
     # --- VMware vCenter ---
     ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
@@ -392,6 +405,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("XCLARITY_USER", "admin", "", "Lenovo XClarity"),
     ("XCLARITY_PASS", "changeme", "", "Lenovo XClarity"),
     ("XCLARITY_VERIFY_SSL", "true", "", "Lenovo XClarity"),
+    (
+        "XCLARITY_DEFAULT_SITE",
+        "Unknown",
+        "Fallback NetBox site name used when XClarity device data lacks a usable site mapping",
+        "Lenovo XClarity",
+    ),
     # --- Microsoft Azure ---
     (
         "AZURE_AUTH_METHOD",
@@ -414,8 +433,10 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("LDAP_PASS", "changeme", "", "LDAP"),
     ("LDAP_SEARCH_BASE", "dc=example,dc=com", "", "LDAP"),
     ("LDAP_FILTER", "(objectClass=person)", "", "LDAP"),
+    ("LDAP_ATTRIBUTES", "", "Comma-separated list of attributes to fetch", "LDAP"),
     ("LDAP_PREFIX_LENGTH", "", "", "LDAP"),
     ("LDAP_SKIP_APS", "true", "", "LDAP"),
+    ("LDAP_UPN_DOMAIN", "CLEMSON.EDU", "Domain suffix appended to generated UPN values", "LDAP"),
     # --- Active Directory ---
     ("AD_SERVER", "ldaps://dc01.corp.example.com", "", "Active Directory"),
     (
@@ -432,6 +453,26 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "Active Directory",
     ),
     ("AD_DOMAIN", "corp.example.com", "", "Active Directory"),
+    ("AD_USERS_FILTER", "", "LDAP search filter for user accounts", "Active Directory"),
+    ("AD_COMPUTERS_FILTER", "", "LDAP search filter for computer accounts", "Active Directory"),
+    (
+        "AD_DEFAULT_MANUFACTURER",
+        "Unknown",
+        "Fallback manufacturer used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
+    (
+        "AD_DEFAULT_ROLE",
+        "Server",
+        "Fallback device role used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
+    (
+        "AD_DEFAULT_SITE",
+        "Default",
+        "Fallback site used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
     # --- Cisco Nexus Dashboard Fabric Controller ---
     ("NDFC_HOST", "ndfc.example.com", "", "Cisco Nexus Dashboard Fabric Controller"),
     ("NDFC_USER", "admin", "", "Cisco Nexus Dashboard Fabric Controller"),
@@ -493,9 +534,8 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     # --- Per-source sync flags ---
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_MODULES", "false", "", "Per-source sync flags"),
-    ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
+    ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     # --- Tenable One / Nessus ---
     (
         "TENABLE_HOST",
@@ -1270,13 +1310,22 @@ def get_config(key: str, default: str = "") -> str:
 
 
 def get_all_settings() -> list[dict[str, Any]]:
-    """Return all config settings ordered by group_name then key."""
+    """Return all config settings ordered for display, then by key."""
+    group_order = {
+        "General collector flags": 10,
+        "Web UI": 20,
+        "NetBox": 30,
+        "NetBox Source": 40,
+        "Per-source sync flags": 50,
+    }
     with _conn() as con:
         rows = con.execute(
             "SELECT id, key, value, default_value, description, group_name, updated_at"
-            " FROM config_settings ORDER BY group_name ASC, key ASC"
+            " FROM config_settings"
         ).fetchall()
-    return [_row_to_setting(r) for r in rows]
+    settings = [_row_to_setting(r) for r in rows]
+    settings.sort(key=lambda s: (group_order.get(s["group_name"], 100), s["group_name"], s["key"]))
+    return settings
 
 
 def get_settings_by_group() -> dict[str, list[dict[str, Any]]]:
