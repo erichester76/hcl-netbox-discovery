@@ -2243,7 +2243,7 @@ class NexusDashboardSource(DataSource):
                     f"/switches/{quote(str(switch_id), safe='')}/modules"
                 )
             except Exception as exc:
-                logger.warning(
+                logger.debug(
                     "NDFC: manage module fetch failed for fabric %s switch %s: %s",
                     fabric_name,
                     switch_id,

@@ -727,6 +727,15 @@ class TestNexusGetObjects:
         result = src.get_objects("switches")
 
         modules = result[0]["modules"]
+        requested_urls = [call.args[0] for call in src._session.get.call_args_list]
+        assert any(
+            url.endswith("/api/v1/manage/fabrics/ProdFabric/switches/SAL9876543/modules")
+            for url in requested_urls
+        )
+        assert any(
+            url.endswith("/dashboard/switch/module?switchId=22530")
+            for url in requested_urls
+        )
         assert len(modules) == 1
         assert modules[0]["profile"] == "Power supply"
 
