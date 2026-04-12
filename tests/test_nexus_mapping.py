@@ -33,6 +33,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert cfg.source.api_type == "nexus"
     assert cfg.source.extra.get("fetch_interfaces") == "false"
     assert cfg.source.extra.get("fetch_modules") == "false"
+    assert cfg.collector.sync_tag == "ndfc-sync"
     assert cfg.collector.extra_flags["sync_modules"] is True
 
     device = _device_object(cfg)
@@ -128,8 +129,8 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert shared_fields["address"] == "source('address')"
     assert shared_fields["role"] == "source('role')"
     assert shared_fields["status"] == "'active'"
-    assert shared_fields["description"] == "join(', ', source('references') or [])"
-    assert shared_fields["tags"] == "['ndfc-sync']"
+    assert "description" not in shared_fields
+    assert "tags" not in shared_fields
 
     shared_fhrp_group = _shared_fhrp_group_object(cfg)
     assert shared_fhrp_group is not None
@@ -141,8 +142,8 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert fhrp_group_fields["name"] == "source('group_name')"
     assert fhrp_group_fields["protocol"] == "source('protocol')"
     assert fhrp_group_fields["group_id"] == "source('group_id')"
-    assert fhrp_group_fields["description"] == "join(', ', source('references') or [])"
-    assert fhrp_group_fields["tags"] == "['ndfc-sync']"
+    assert "description" not in fhrp_group_fields
+    assert "tags" not in fhrp_group_fields
 
     shared_fhrp_vip = _shared_fhrp_vip_object(cfg)
     assert shared_fhrp_vip is not None
@@ -155,8 +156,8 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert fhrp_vip_fields["role"] == "source('role')"
     assert fhrp_vip_fields["status"] == "'active'"
     assert fhrp_vip_fields["assigned_object_type"] == "'ipam.fhrpgroup'"
-    assert fhrp_vip_fields["description"] == "join(', ', source('references') or [])"
-    assert fhrp_vip_fields["tags"] == "['ndfc-sync']"
+    assert "description" not in fhrp_vip_fields
+    assert "tags" not in fhrp_vip_fields
 
     assigned_object_id_field = next(
         (field for field in shared_fhrp_vip.fields if field.name == "assigned_object_id"),
@@ -179,7 +180,7 @@ def test_nexus_example_mapping_includes_interface_ip_sync(monkeypatch):
     assert assignment_fields["interface_id"] == (
         "nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': source('device_name'), 'site': nb_id('dcim.sites', {'name': when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), None)})}), 'name': source('interface_name')})"
     )
-    assert assignment_fields["priority"] == "source('priority')"
+    assert assignment_fields["priority"] == "when(source('priority') not in (None, '', 100), source('priority'), None)"
 
     group_field = next((field for field in shared_fhrp_assignment.fields if field.name == "group"), None)
     assert group_field is not None
