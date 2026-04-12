@@ -26,7 +26,7 @@ from .config import (
     build_source_groups,
     load_config,
 )
-from .context import RunContext
+from .context import RunContext, netbox_client_for_resource
 from .field_resolvers import Resolver, walk_path
 from .prerequisites import (
     PrerequisiteArgumentError,
@@ -515,13 +515,14 @@ class Engine:
             return
 
         desired_tags = payload.get("tags")
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if not filters or any(self._is_preview_reference(v) for v in filters.values()):
             payload["tags"] = self._normalize_tag_dicts(desired_tags)
             return
 
         try:
-            existing = ctx.nb.get(resource, **filters)
+            existing = nb_client.get(resource, **filters)
         except ValueError as exc:
             logger.debug(
                 "Tag merge lookup ambiguous  resource=%s  filters=%s  error=%s",
@@ -612,12 +613,13 @@ class Engine:
             payload["description"] = _normalize_vmware_virtual_disk_description(
                 payload.get("description")
             )
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         existing = None
         resolved_from_ambiguity = False
         if filters and (field_configs or "tags" in payload):
             try:
-                existing = ctx.nb.get(resource, **filters)
+                existing = nb_client.get(resource, **filters)
             except ValueError as exc:
                 if "more than one result" not in str(exc):
                     raise
@@ -653,9 +655,9 @@ class Engine:
             effective_lookup_fields = ["id"]
         outcome = "created"
         obj = None
-        upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+        upsert_with_outcome = getattr(nb_client, "upsert_with_outcome", None)
         if callable(upsert_with_outcome):
-            result = ctx.nb.upsert_with_outcome(
+            result = nb_client.upsert_with_outcome(
                 resource,
                 payload,
                 lookup_fields=effective_lookup_fields,
@@ -665,9 +667,9 @@ class Engine:
                 outcome = candidate_outcome
                 obj = getattr(result, "object", None)
             else:
-                obj = ctx.nb.upsert(resource, payload, lookup_fields=effective_lookup_fields)
+                obj = nb_client.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         else:
-            obj = ctx.nb.upsert(resource, payload, lookup_fields=effective_lookup_fields)
+            obj = nb_client.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         return obj, outcome, payload
 
     @staticmethod
@@ -754,7 +756,7 @@ class Engine:
         resource: str,
         filters: dict[str, Any],
     ) -> tuple[int | None, list[Any]]:
-        list_helper = getattr(ctx.nb, "list", None)
+        list_helper = getattr(netbox_client_for_resource(ctx, resource), "list", None)
         if not callable(list_helper):
             return None, []
         try:
@@ -820,7 +822,7 @@ class Engine:
         resource: str,
         filters: dict[str, Any],
     ) -> tuple[Any | None, int | None, list[Any]]:
-        list_helper = getattr(ctx.nb, "list", None)
+        list_helper = getattr(netbox_client_for_resource(ctx, resource), "list", None)
         if not callable(list_helper):
             return None, None, []
         try:
@@ -862,11 +864,12 @@ class Engine:
             payload["description"] = _normalize_vmware_virtual_disk_description(
                 payload.get("description")
             )
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
         try:
-            existing = ctx.nb.get(resource, **filters) if filters else None
+            existing = nb_client.get(resource, **filters) if filters else None
         except ValueError as exc:
             if "more than one result" not in str(exc):
                 raise
@@ -1016,6 +1019,11 @@ class Engine:
         )
 
         nb = _build_nb_client(cfg.netbox)
+        nb_main = None
+        if cfg.netbox.branch:
+            main_cfg = deepcopy(cfg.netbox)
+            main_cfg.branch = None
+            nb_main = _build_nb_client(main_cfg)
 
         if cfg.collector.sync_tag and not dry_run:
             # Ensure the sync tag exists once (shared across all iterations)
@@ -1055,6 +1063,7 @@ class Engine:
                             source_cfg,
                             cfg,
                             nb,
+                            nb_main,
                             dry_run,
                             idx,
                             total,
@@ -1086,6 +1095,7 @@ class Engine:
                             source_cfg,
                             cfg,
                             nb,
+                            nb_main,
                             dry_run,
                             idx,
                             total,
@@ -1094,6 +1104,8 @@ class Engine:
                         all_stats.extend(pass_stats)
         finally:
             nb.close()
+            if nb_main is not None:
+                nb_main.close()
 
         logger.info("Collector run complete  objects=%d", len(all_stats))
         return all_stats
@@ -1103,6 +1115,7 @@ class Engine:
         source_cfg: SourceConfig,
         cfg: CollectorConfig,
         nb: Any,
+        nb_main: Any | None,
         dry_run: bool,
         pass_idx: int = 0,
         total_passes: int = 1,
@@ -1125,6 +1138,7 @@ class Engine:
 
         base_ctx = RunContext(
             nb=nb,
+            nb_main=nb_main,
             source_adapter=source,
             collector_opts=cfg.collector,
             regex_dir=cfg.collector.regex_dir,
@@ -1438,15 +1452,16 @@ class Engine:
             if ctx.dry_run:
                 logger.debug("[DRY-RUN] FK lookup %s %s", field_cfg.resource, lookup)
                 return None
+            nb_client = netbox_client_for_resource(ctx, field_cfg.resource)
             try:
                 if field_cfg.ensure:
-                    obj = ctx.nb.upsert(
+                    obj = nb_client.upsert(
                         field_cfg.resource,
                         lookup,
                         lookup_fields=list(lookup.keys()),
                     )
                 else:
-                    obj = ctx.nb.get(field_cfg.resource, **lookup)
+                    obj = nb_client.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
                 if strict:

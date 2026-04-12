@@ -20,6 +20,7 @@ class RunContext:
     """Shared state for a collector run or a single item within a run."""
 
     nb: Any                            # NetBoxExtendedClient / NetBoxAPI
+    nb_main: Any | None                # Branchless NetBox client for global resources
     source_adapter: Any                # DataSource instance
     collector_opts: CollectorOptions
     regex_dir: str
@@ -41,6 +42,7 @@ class RunContext:
         """
         return RunContext(
             nb=self.nb,
+            nb_main=self.nb_main,
             source_adapter=self.source_adapter,
             collector_opts=self.collector_opts,
             regex_dir=self.regex_dir,
@@ -64,6 +66,7 @@ class RunContext:
         """
         return RunContext(
             nb=self.nb,
+            nb_main=self.nb_main,
             source_adapter=self.source_adapter,
             collector_opts=self.collector_opts,
             regex_dir=self.regex_dir,
@@ -73,3 +76,10 @@ class RunContext:
             dry_run=self.dry_run,
             stop_requested=self.stop_requested,
         )
+
+
+def netbox_client_for_resource(ctx: RunContext, resource: str) -> Any:
+    """Return the NetBox client that should handle *resource* writes/lookups."""
+    if resource.startswith("plugins.custom_objects.") and ctx.nb_main is not None:
+        return ctx.nb_main
+    return ctx.nb

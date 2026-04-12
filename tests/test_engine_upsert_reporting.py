@@ -14,9 +14,10 @@ from collector.config import CollectorOptions, FieldConfig
 from collector.engine import Engine, RunStats
 
 
-def _ctx(*, nb, dry_run: bool = False, source_obj=None, extra_flags=None):
+def _ctx(*, nb, nb_main=None, dry_run: bool = False, source_obj=None, extra_flags=None):
     return SimpleNamespace(
         nb=nb,
+        nb_main=nb_main,
         dry_run=dry_run,
         source_obj=source_obj,
         collector_opts=CollectorOptions(extra_flags=extra_flags or {}),
@@ -587,6 +588,66 @@ class TestEngineUpsertReporting:
             lookup_fields=["id"],
         )
         nb.upsert.assert_not_called()
+
+    def test_live_custom_object_type_uses_branchless_client_when_branch_is_set(self):
+        engine = Engine()
+        stats = RunStats("custom_object_types")
+        nb = MagicMock()
+        nb_main = MagicMock()
+        nb.get.side_effect = AssertionError("branched client should not handle custom objects")
+        nb_main.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb_main.list.return_value = [
+            {"id": 1, "slug": "ndfc-fabrics"},
+            {"id": 2, "slug": "ndfc-vpc-domains"},
+            {"id": 3, "slug": "ndfc-vpc-peer-links"},
+        ]
+        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 1}, outcome="updated")
+
+        result = engine._upsert(
+            _ctx(nb=nb, nb_main=nb_main),
+            "plugins.custom_objects.custom_object_types",
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics"},
+            lookup_fields=["slug"],
+            stats=stats,
+            field_configs=[FieldConfig(name="name", value="source('name')")],
+        )
+
+        assert result == {"id": 1}
+        nb.get.assert_not_called()
+        nb_main.upsert_with_outcome.assert_called_once_with(
+            "plugins.custom_objects.custom_object_types",
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics", "id": 1},
+            lookup_fields=["id"],
+        )
+
+    def test_fk_lookup_for_custom_objects_uses_branchless_client(self):
+        engine = Engine()
+        nb = MagicMock()
+        nb_main = MagicMock()
+        nb.get.side_effect = AssertionError("branched client should not handle custom object FK lookups")
+        nb_main.get.return_value = {"id": 7}
+
+        field = FieldConfig(
+            name="custom_object_type",
+            type="fk",
+            resource="plugins.custom_objects.custom_object_types",
+            lookup={"slug": "'ndfc-fabrics'"},
+        )
+        resolver = SimpleNamespace(
+            evaluate=lambda expr: "ndfc-fabrics",
+            evaluate_strict=lambda expr, name: "ndfc-fabrics",
+        )
+
+        result = engine._eval_field(field, resolver, _ctx(nb=nb, nb_main=nb_main))
+
+        assert result == 7
+        nb.get.assert_not_called()
+        nb_main.get.assert_called_once_with(
+            "plugins.custom_objects.custom_object_types",
+            slug="ndfc-fabrics",
+        )
 
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()
