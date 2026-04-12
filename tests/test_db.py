@@ -521,13 +521,28 @@ def test_runtime_settings_are_seeded():
     ndfc_settings = {
         row["key"]: row for row in get_settings_by_group()["Cisco Nexus Dashboard Fabric Controller"]
     }
+    xclarity_settings = {row["key"]: row for row in get_settings_by_group()["Lenovo XClarity"]}
+    ldap_settings = {row["key"]: row for row in get_settings_by_group()["LDAP"]}
+    ad_settings = {row["key"]: row for row in get_settings_by_group()["Active Directory"]}
+    general_settings = {row["key"]: row for row in get_settings_by_group()["General collector flags"]}
     collector_settings = {row["key"]: row for row in get_settings_by_group()["Per-source sync flags"]}
 
     assert netbox_settings["NETBOX_USE_CUSTOM_OBJECTS"]["default_value"] == "false"
+    assert netbox_settings["NETBOX_SYNC_TAG"]["default_value"] == "netbox-sync"
     assert catc_settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
     assert catc_settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
     assert ndfc_settings["NDFC_FETCH_INTERFACES"]["default_value"] == "false"
     assert ndfc_settings["NDFC_FETCH_MODULES"]["default_value"] == "false"
+    assert xclarity_settings["XCLARITY_DEFAULT_SITE"]["default_value"] == "Unknown"
+    assert ldap_settings["LDAP_ATTRIBUTES"]["default_value"] == ""
+    assert ldap_settings["LDAP_UPN_DOMAIN"]["default_value"] == "CLEMSON.EDU"
+    assert ad_settings["AD_USERS_FILTER"]["default_value"] == ""
+    assert ad_settings["AD_COMPUTERS_FILTER"]["default_value"] == ""
+    assert ad_settings["AD_DEFAULT_MANUFACTURER"]["default_value"] == "Unknown"
+    assert ad_settings["AD_DEFAULT_ROLE"]["default_value"] == "Server"
+    assert ad_settings["AD_DEFAULT_SITE"]["default_value"] == "Default"
+    assert general_settings["COLLECTOR_SKIP_LINK_LOCAL_IPS"]["default_value"] == "false"
+    assert collector_settings["COLLECTOR_SYNC_APPLIANCES"]["default_value"] == "true"
     assert collector_settings["COLLECTOR_SYNC_MODULES"]["default_value"] == "true"
 
 

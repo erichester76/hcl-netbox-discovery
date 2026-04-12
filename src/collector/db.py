@@ -303,6 +303,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         'Set to "true" when mappings should target NetBox Custom Objects instead of custom-field fallbacks',
         "NetBox",
     ),
+    (
+        "NETBOX_SYNC_TAG",
+        "netbox-sync",
+        "Default sync tag used by example mappings that target NetBox",
+        "NetBox",
+    ),
     # --- NetBox Source ---
     (
         "SOURCE_NETBOX_URL",
@@ -335,6 +341,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("VCENTER_URL", "vcenter.example.com", "", "VMware vCenter"),
     ("VCENTER_USER", "administrator@vsphere.local", "", "VMware vCenter"),
     ("VCENTER_PASS", "changeme", "", "VMware vCenter"),
+    (
+        "COLLECTOR_SKIP_LINK_LOCAL_IPS",
+        "false",
+        'Set to "true" to skip link-local addresses during collection when the source/mapping supports it',
+        "General collector flags",
+    ),
     # --- Cisco Catalyst Center ---
     ("CATC_HOST", "https://catc.example.com", "", "Cisco Catalyst Center"),
     ("CATC_USER", "admin", "", "Cisco Catalyst Center"),
@@ -392,6 +404,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("XCLARITY_USER", "admin", "", "Lenovo XClarity"),
     ("XCLARITY_PASS", "changeme", "", "Lenovo XClarity"),
     ("XCLARITY_VERIFY_SSL", "true", "", "Lenovo XClarity"),
+    (
+        "XCLARITY_DEFAULT_SITE",
+        "Unknown",
+        "Fallback NetBox site name used when XClarity device data lacks a usable site mapping",
+        "Lenovo XClarity",
+    ),
     # --- Microsoft Azure ---
     (
         "AZURE_AUTH_METHOD",
@@ -414,8 +432,10 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     ("LDAP_PASS", "changeme", "", "LDAP"),
     ("LDAP_SEARCH_BASE", "dc=example,dc=com", "", "LDAP"),
     ("LDAP_FILTER", "(objectClass=person)", "", "LDAP"),
+    ("LDAP_ATTRIBUTES", "", "Comma-separated list of attributes to fetch", "LDAP"),
     ("LDAP_PREFIX_LENGTH", "", "", "LDAP"),
     ("LDAP_SKIP_APS", "true", "", "LDAP"),
+    ("LDAP_UPN_DOMAIN", "CLEMSON.EDU", "Domain suffix appended to generated UPN values", "LDAP"),
     # --- Active Directory ---
     ("AD_SERVER", "ldaps://dc01.corp.example.com", "", "Active Directory"),
     (
@@ -432,6 +452,26 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "Active Directory",
     ),
     ("AD_DOMAIN", "corp.example.com", "", "Active Directory"),
+    ("AD_USERS_FILTER", "", "LDAP search filter for user accounts", "Active Directory"),
+    ("AD_COMPUTERS_FILTER", "", "LDAP search filter for computer accounts", "Active Directory"),
+    (
+        "AD_DEFAULT_MANUFACTURER",
+        "Unknown",
+        "Fallback manufacturer used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
+    (
+        "AD_DEFAULT_ROLE",
+        "Server",
+        "Fallback device role used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
+    (
+        "AD_DEFAULT_SITE",
+        "Default",
+        "Fallback site used by the Active Directory computers example mapping",
+        "Active Directory",
+    ),
     # --- Cisco Nexus Dashboard Fabric Controller ---
     ("NDFC_HOST", "ndfc.example.com", "", "Cisco Nexus Dashboard Fabric Controller"),
     ("NDFC_USER", "admin", "", "Cisco Nexus Dashboard Fabric Controller"),
@@ -493,6 +533,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     # --- Per-source sync flags ---
     ("COLLECTOR_SYNC_INTERFACES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_INVENTORY", "true", "", "Per-source sync flags"),
+    ("COLLECTOR_SYNC_APPLIANCES", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_MODULES", "false", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_DISKS", "true", "", "Per-source sync flags"),
     ("COLLECTOR_SYNC_MODULES", "true", "", "Per-source sync flags"),
