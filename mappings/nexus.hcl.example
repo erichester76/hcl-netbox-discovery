@@ -206,12 +206,105 @@ object "ndfc_topology_custom_field" {
 # ---------------------------------------------------------------------------
 # Optional Nexus topology custom objects
 #
-# These blocks assume the corresponding custom object types and fields already
-# exist in NetBox. Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``. When
-# disabled, the mapping falls back to synchronized device/interface custom
-# fields, and the ``ndfc_topology_custom_field`` block above bootstraps those
-# fields in NetBox.
+# Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``. When enabled, the
+# mapping first bootstraps the required custom object types and fields in
+# NetBox and then writes the Nexus topology instances. When disabled, the
+# mapping falls back to synchronized device/interface custom fields, and the
+# ``ndfc_topology_custom_field`` block above bootstraps those fields in NetBox.
 # ---------------------------------------------------------------------------
+
+object "ndfc_topology_custom_object_type" {
+  source_collection = "topology_custom_object_types"
+  netbox_resource   = "plugins.custom_objects.custom_object_types"
+  lookup_by         = ["slug"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "verbose_name" {
+    value = "source('verbose_name')"
+  }
+
+  field "verbose_name_plural" {
+    value = "source('verbose_name_plural')"
+  }
+
+  field "group_name" {
+    value = "source('group_name')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+
+  field "tags" {
+    type  = "tags"
+    value = "source('tags')"
+  }
+}
+
+object "ndfc_topology_custom_object_type_field" {
+  source_collection = "topology_custom_object_type_fields"
+  netbox_resource   = "plugins.custom_objects.custom_object_type_fields"
+  lookup_by         = ["custom_object_type", "name"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "custom_object_type" {
+    type     = "fk"
+    resource = "plugins.custom_objects.custom_object_types"
+    lookup   = { slug = "source('custom_object_type_slug')" }
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "label" {
+    value = "source('label')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+
+  field "type" {
+    value = "source('type')"
+  }
+
+  field "primary" {
+    value = "source('primary')"
+  }
+
+  field "required" {
+    value = "source('required')"
+  }
+
+  field "unique" {
+    value = "source('unique')"
+  }
+
+  field "app_label" {
+    value = "when(source('app_label'), source('app_label'), None)"
+  }
+
+  field "model" {
+    value = "when(source('model'), source('model'), None)"
+  }
+
+  field "ui_visible" {
+    value = "source('ui_visible')"
+  }
+
+  field "ui_editable" {
+    value = "source('ui_editable')"
+  }
+}
 
 object "ndfc_fabric" {
   source_collection = "fabrics"

@@ -31,6 +31,49 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert fallback_fields["ui_visible"] == "source('ui_visible')"
     assert fallback_fields["ui_editable"] == "source('ui_editable')"
 
+    custom_object_type = _object(cfg, "ndfc_topology_custom_object_type")
+    assert custom_object_type is not None
+    assert custom_object_type.source_collection == "topology_custom_object_types"
+    assert custom_object_type.netbox_resource == "plugins.custom_objects.custom_object_types"
+    assert custom_object_type.lookup_by == ["slug"]
+    assert custom_object_type.enabled_if == "collector.use_custom_objects"
+    custom_object_type_fields = {field.name: field.value for field in custom_object_type.fields}
+    assert custom_object_type_fields["name"] == "source('name')"
+    assert custom_object_type_fields["slug"] == "source('slug')"
+    assert custom_object_type_fields["verbose_name"] == "source('verbose_name')"
+    assert custom_object_type_fields["verbose_name_plural"] == "source('verbose_name_plural')"
+    assert custom_object_type_fields["group_name"] == "source('group_name')"
+    assert custom_object_type_fields["description"] == "source('description')"
+    assert custom_object_type_fields["tags"] == "source('tags')"
+
+    custom_object_type_field = _object(cfg, "ndfc_topology_custom_object_type_field")
+    assert custom_object_type_field is not None
+    assert custom_object_type_field.source_collection == "topology_custom_object_type_fields"
+    assert custom_object_type_field.netbox_resource == "plugins.custom_objects.custom_object_type_fields"
+    assert custom_object_type_field.lookup_by == ["custom_object_type", "name"]
+    assert custom_object_type_field.enabled_if == "collector.use_custom_objects"
+    type_field_fields = {field.name: field.value for field in custom_object_type_field.fields}
+    assert type_field_fields["name"] == "source('name')"
+    assert type_field_fields["label"] == "source('label')"
+    assert type_field_fields["description"] == "source('description')"
+    assert type_field_fields["type"] == "source('type')"
+    assert type_field_fields["primary"] == "source('primary')"
+    assert type_field_fields["required"] == "source('required')"
+    assert type_field_fields["unique"] == "source('unique')"
+    assert type_field_fields["app_label"] == "when(source('app_label'), source('app_label'), None)"
+    assert type_field_fields["model"] == "when(source('model'), source('model'), None)"
+    assert type_field_fields["ui_visible"] == "source('ui_visible')"
+    assert type_field_fields["ui_editable"] == "source('ui_editable')"
+
+    custom_object_type_fk = next(
+        (field for field in custom_object_type_field.fields if field.name == "custom_object_type"),
+        None,
+    )
+    assert custom_object_type_fk is not None
+    assert custom_object_type_fk.type == "fk"
+    assert custom_object_type_fk.resource == "plugins.custom_objects.custom_object_types"
+    assert custom_object_type_fk.lookup == {"slug": "source('custom_object_type_slug')"}
+
     fabric = _object(cfg, "ndfc_fabric")
     assert fabric is not None
     assert fabric.source_collection == "fabrics"
