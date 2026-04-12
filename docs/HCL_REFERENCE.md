@@ -317,6 +317,7 @@ The engine performs a `nb.get(resource, **lookup)` and places the resulting ID i
 | `resource` | yes | NetBox resource path |
 | `lookup` | yes | Map of filter fields → expressions |
 | `ensure` | no | Create the FK target if missing (default: `false`) |
+| `allow_null` | no | Default `false`. When `true`, emit `null` if the FK lookup resolves to no values so an existing relationship is cleared |
 
 ### Tags field (`type = "tags"`)
 
