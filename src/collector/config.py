@@ -225,6 +225,7 @@ class FieldConfig:
     resource: Optional[str] = None
     lookup: Optional[dict] = None
     ensure: bool = False
+    allow_null: bool = False
     update_mode: str = "replace"  # replace | if_missing
 
 
@@ -395,6 +396,7 @@ def _parse_fields(raw: list) -> list[FieldConfig]:
             resource=body.get("resource"),
             lookup=lookup,
             ensure=_bool(body.get("ensure", False)),
+            allow_null=_bool(body.get("allow_null", False)),
             update_mode=_field_update_mode(body.get("update_mode", "replace")),
         ))
     return configs
