@@ -621,7 +621,11 @@ class Engine:
             except ValueError as exc:
                 if "more than one result" not in str(exc):
                     raise
-                existing = self._resolve_ambiguous_lookup_candidate(ctx, resource, filters)
+                existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                    ctx,
+                    resource,
+                    filters,
+                )
                 if existing is None:
                     raise
                 resolved_from_ambiguity = True
@@ -815,24 +819,35 @@ class Engine:
         ctx: RunContext,
         resource: str,
         filters: dict[str, Any],
-    ) -> Any | None:
+    ) -> tuple[Any | None, int | None, list[Any]]:
         list_helper = getattr(ctx.nb, "list", None)
         if not callable(list_helper):
-            return None
+            return None, None, []
         try:
             candidates = list_helper(resource, **filters)
-        except Exception:
-            return None
+        except Exception as exc:
+            logger.debug(
+                "Live ambiguous lookup candidate listing failed  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            return None, None, []
         if not isinstance(candidates, (list, tuple)):
-            return None
+            return None, None, []
+        matched_ids: list[Any] = []
+        for candidate in candidates[:10]:
+            candidate_id = cls._record_attr_value(candidate, "id")
+            if candidate_id is not None:
+                matched_ids.append(candidate_id)
         matches = [
             candidate
             for candidate in candidates
             if cls._lookup_candidate_matches_filters(ctx, resource, candidate, filters)
         ]
         if len(matches) == 1:
-            return matches[0]
-        return None
+            return matches[0], len(candidates), matched_ids
+        return None, len(candidates), matched_ids
 
     def _dry_run_outcome(
         self,
@@ -855,15 +870,14 @@ class Engine:
         except ValueError as exc:
             if "more than one result" not in str(exc):
                 raise
-            existing = self._resolve_ambiguous_lookup_candidate(ctx, resource, filters)
+            existing, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
+                ctx,
+                resource,
+                filters,
+            )
             if existing is not None:
                 pass
             else:
-                match_count, matched_ids = self._ambiguous_lookup_details(
-                    ctx,
-                    resource,
-                    filters,
-                )
                 raise AmbiguousDryRunLookupError(
                     resource,
                     filters,
@@ -1590,7 +1604,7 @@ class Engine:
                     payload,
                     lookup_fields,
                 )
-                match_count, matched_ids = self._ambiguous_lookup_details(
+                _, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
                     ctx,
                     resource,
                     ambiguity_filters,

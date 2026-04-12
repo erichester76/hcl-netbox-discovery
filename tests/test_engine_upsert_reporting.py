@@ -565,7 +565,7 @@ class TestEngineUpsertReporting:
             {"id": 2, "custom_object_type": {"id": 2}, "name": "fabric_identifier"},
             {"id": 3, "custom_object_type": {"id": 2}, "name": "devices"},
         ]
-        nb.upsert.return_value = {"id": 2}
+        nb.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 2}, outcome="updated")
 
         with caplog.at_level(logging.WARNING):
             result = engine._upsert(
@@ -581,11 +581,12 @@ class TestEngineUpsertReporting:
         assert stats.processed == 1
         assert stats.errored == 0
         assert "Live lookup ambiguous" not in caplog.text
-        nb.upsert.assert_called_once_with(
+        nb.upsert_with_outcome.assert_called_once_with(
             "plugins.custom_objects.custom_object_type_fields",
             {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric", "id": 2},
             lookup_fields=["id"],
         )
+        nb.upsert.assert_not_called()
 
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()
