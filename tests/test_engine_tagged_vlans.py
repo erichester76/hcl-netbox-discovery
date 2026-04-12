@@ -417,7 +417,7 @@ class TestFindOrCreateVlanMultisite:
         )
 
         # list() called with vid to find existing VLANs
-        ctx.nb.list.assert_called_once_with("ipam.vlans", vid=100)
+        ctx.nb.list.assert_called_once_with("ipam.vlans", use_cache=False, vid=100)
         # upsert called with the siteless VLAN's id; site removed
         upsert_call = ctx.nb.upsert.call_args
         assert upsert_call[0][0] == "ipam.vlans"
@@ -692,7 +692,7 @@ class TestFindOrCreateVlanMultisite:
         )
 
         # list() should be called (multi-site path) rather than plain upsert
-        ctx.nb.list.assert_called_once_with("ipam.vlans", vid=10)
+        ctx.nb.list.assert_called_once_with("ipam.vlans", use_cache=False, vid=10)
         ctx.nb.update.assert_called_once_with(
             "dcim.interfaces", 42, {"mode": "tagged", "tagged_vlans": [101]}
         )
