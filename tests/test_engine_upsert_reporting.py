@@ -560,7 +560,7 @@ class TestEngineUpsertReporting:
         assert "match_count=2" in caplog.text
         assert "matched_ids=[11, 22]" in caplog.text
 
-    def test_live_ambiguous_lookup_with_exact_candidate_retries_by_id(self, caplog):
+    def test_live_ambiguous_lookup_with_exact_candidate_updates_plugin_resource(self, caplog):
         engine = Engine()
         stats = RunStats("custom_object_type_fields")
         nb = MagicMock()
@@ -572,7 +572,7 @@ class TestEngineUpsertReporting:
             {"id": 2, "custom_object_type": {"id": 2}, "name": "fabric_identifier"},
             {"id": 3, "custom_object_type": {"id": 2}, "name": "devices"},
         ]
-        nb.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 2}, outcome="updated")
+        nb.update.return_value = None
 
         with caplog.at_level(logging.WARNING):
             result = engine._upsert(
@@ -584,16 +584,17 @@ class TestEngineUpsertReporting:
                 field_configs=[FieldConfig(name="label", value="source('label')")],
             )
 
-        assert result == {"id": 2}
+        assert result["id"] == 2
         assert stats.processed == 1
         assert stats.errored == 0
         assert "Live lookup ambiguous" not in caplog.text
-        nb.upsert_with_outcome.assert_called_once_with(
+        nb.update.assert_called_once_with(
             "plugins.custom_objects.custom_object_type_fields",
-            {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric", "id": 2},
-            lookup_fields=["id"],
+            2,
+            {"custom_object_type": 2, "name": "fabric_identifier", "label": "Fabric"},
         )
         nb.upsert.assert_not_called()
+        nb.upsert_with_outcome.assert_not_called()
 
     def test_live_custom_object_type_uses_branchless_client_when_branch_is_set(self):
         engine = Engine()
@@ -609,7 +610,7 @@ class TestEngineUpsertReporting:
             {"id": 2, "slug": "ndfc-vpc-domains"},
             {"id": 3, "slug": "ndfc-vpc-peer-links"},
         ]
-        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 1}, outcome="updated")
+        nb_main.update.return_value = None
 
         result = engine._upsert(
             _ctx(nb=nb, nb_main=nb_main),
@@ -620,13 +621,14 @@ class TestEngineUpsertReporting:
             field_configs=[FieldConfig(name="name", value="source('name')")],
         )
 
-        assert result == {"id": 1}
+        assert result["id"] == 1
         nb.get.assert_not_called()
-        nb_main.upsert_with_outcome.assert_called_once_with(
+        nb_main.update.assert_called_once_with(
             "plugins.custom_objects.custom_object_types",
-            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics", "id": 1},
-            lookup_fields=["id"],
+            1,
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics"},
         )
+        nb_main.upsert_with_outcome.assert_not_called()
 
     def test_live_custom_object_type_matches_slug_against_underscore_name(self):
         engine = Engine()
@@ -640,7 +642,7 @@ class TestEngineUpsertReporting:
             {"id": 2, "name": "ndfc_vpc_domains"},
             {"id": 3, "name": "ndfc_vpc_peer_links"},
         ]
-        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 1}, outcome="updated")
+        nb_main.update.return_value = None
 
         result = engine._upsert(
             _ctx(nb=MagicMock(), nb_main=nb_main),
@@ -651,11 +653,11 @@ class TestEngineUpsertReporting:
             field_configs=[FieldConfig(name="name", value="source('name')")],
         )
 
-        assert result == {"id": 1}
-        nb_main.upsert_with_outcome.assert_called_once_with(
+        assert result["id"] == 1
+        nb_main.update.assert_called_once_with(
             "plugins.custom_objects.custom_object_types",
-            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics", "id": 1},
-            lookup_fields=["id"],
+            1,
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics"},
         )
 
     def test_live_custom_object_type_matches_slug_against_serialized_data(self):
@@ -679,7 +681,7 @@ class TestEngineUpsertReporting:
             FakeRecord(2, "ndfc-vpc-domains"),
             FakeRecord(3, "ndfc-vpc-peer-links"),
         ]
-        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 1}, outcome="updated")
+        nb_main.update.return_value = None
 
         result = engine._upsert(
             _ctx(nb=MagicMock(), nb_main=nb_main),
@@ -690,11 +692,11 @@ class TestEngineUpsertReporting:
             field_configs=[FieldConfig(name="name", value="source('name')")],
         )
 
-        assert result == {"id": 1}
-        nb_main.upsert_with_outcome.assert_called_once_with(
+        assert getattr(result, "id", None) == 1
+        nb_main.update.assert_called_once_with(
             "plugins.custom_objects.custom_object_types",
-            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics", "id": 1},
-            lookup_fields=["id"],
+            1,
+            {"slug": "ndfc-fabrics", "name": "NDFC Fabrics"},
         )
 
     def test_fk_lookup_for_custom_objects_uses_branchless_client(self):
@@ -702,7 +704,7 @@ class TestEngineUpsertReporting:
         nb = MagicMock()
         nb_main = MagicMock()
         nb.get.side_effect = AssertionError("branched client should not handle custom object FK lookups")
-        nb_main.get.return_value = {"id": 7}
+        nb_main.list.return_value = [{"id": 7, "slug": "ndfc-fabrics"}]
 
         field = FieldConfig(
             name="custom_object_type",
@@ -719,7 +721,8 @@ class TestEngineUpsertReporting:
 
         assert result == 7
         nb.get.assert_not_called()
-        nb_main.get.assert_called_once_with(
+        nb_main.get.assert_not_called()
+        nb_main.list.assert_called_once_with(
             "plugins.custom_objects.custom_object_types",
             slug="ndfc-fabrics",
         )
@@ -779,7 +782,7 @@ class TestEngineUpsertReporting:
             {"id": 3, "data": {"identifier": "Poole-CUProd:1"}},
             {"id": 4, "data": {"identifier": "Poole-CUProd:2"}},
         ]
-        nb_main.upsert_with_outcome.return_value = SimpleNamespace(object={"id": 2}, outcome="updated")
+        nb_main.update.return_value = None
 
         result = engine._upsert(
             _ctx(nb=MagicMock(), nb_main=nb_main),
@@ -790,12 +793,42 @@ class TestEngineUpsertReporting:
             field_configs=[FieldConfig(name="fabric_name", value="source('fabric_name')")],
         )
 
-        assert result == {"id": 2}
-        nb_main.upsert_with_outcome.assert_called_once_with(
+        assert result["id"] == 2
+        nb_main.update.assert_called_once_with(
             "plugins.custom_objects.ndfc_vpc_domains",
-            {"identifier": "Poole-CUProd:0", "fabric_name": "Poole-CUProd", "id": 2},
-            lookup_fields=["id"],
+            2,
+            {"identifier": "Poole-CUProd:0", "fabric_name": "Poole-CUProd"},
         )
+
+    def test_live_custom_object_create_uses_create_when_no_exact_candidate_exists(self):
+        engine = Engine()
+        stats = RunStats("ndfc_vpc_domains")
+        nb_main = MagicMock()
+        nb_main.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb_main.list.return_value = [
+            {"id": 1, "data": {"identifier": "ITC-CUProd:0"}},
+            {"id": 3, "data": {"identifier": "Poole-CUProd:1"}},
+        ]
+        nb_main.create.return_value = {"id": 5, "identifier": "Poole-CUProd:0"}
+
+        result = engine._upsert(
+            _ctx(nb=MagicMock(), nb_main=nb_main),
+            "plugins.custom_objects.ndfc_vpc_domains",
+            {"identifier": "Poole-CUProd:0", "fabric_name": "Poole-CUProd"},
+            lookup_fields=["identifier"],
+            stats=stats,
+            field_configs=[FieldConfig(name="fabric_name", value="source('fabric_name')")],
+        )
+
+        assert result == {"id": 5, "identifier": "Poole-CUProd:0"}
+        nb_main.create.assert_called_once_with(
+            "plugins.custom_objects.ndfc_vpc_domains",
+            {"identifier": "Poole-CUProd:0", "fabric_name": "Poole-CUProd"},
+        )
+        nb_main.upsert.assert_not_called()
+        nb_main.upsert_with_outcome.assert_not_called()
 
     def test_run_closes_primary_client_when_branchless_client_creation_fails(self):
         engine = Engine()
@@ -908,11 +941,7 @@ class TestEngineUpsertReporting:
         assert stats.skipped == 1
         assert stats.errored == 0
         nb.get.assert_not_called()
-        nb_main.get.assert_called_once_with(
-            "plugins.custom_objects.custom_object_type_fields",
-            custom_object_type=2,
-            name="fabric_identifier",
-        )
+        nb_main.get.assert_not_called()
         nb_main.list.assert_called_once_with(
             "plugins.custom_objects.custom_object_type_fields",
             custom_object_type=2,
