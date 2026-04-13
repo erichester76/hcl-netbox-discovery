@@ -561,6 +561,64 @@ def _flatten_interface_payload(payload: Any) -> list[dict]:
     return [payload]
 
 
+def _flatten_module_payload(payload: Any) -> list[dict[str, Any]]:
+    """Return flat module records from mixed NDFC wrapper payloads."""
+    if isinstance(payload, list):
+        flattened: list[dict[str, Any]] = []
+        for item in payload:
+            flattened.extend(_flatten_module_payload(item))
+        return flattened
+
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("modules", "items", "data", "DATA", "results", "result"):
+        nested = payload.get(key)
+        if isinstance(nested, list):
+            flattened: list[dict[str, Any]] = []
+            for item in nested:
+                flattened.extend(_flatten_module_payload(item))
+            return flattened
+        if isinstance(nested, dict):
+            return _flatten_module_payload(nested)
+
+    if any(key in payload for key in ("modelName", "serialNumber", "moduleType", "slot", "name", "type")):
+        return [payload]
+
+    return []
+
+
+def _debug_module_fetch_payload(*, switch_db_id: Any, fabric_name: str, switch_id: str, payload: Any, flattened: list[dict[str, Any]]) -> None:
+    """Emit DEBUG details for raw and flattened module payloads."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    if isinstance(payload, dict):
+        raw_preview: Any = sorted(payload.keys())
+    elif isinstance(payload, list):
+        raw_preview = f"list[{len(payload)}]"
+    else:
+        raw_preview = type(payload).__name__
+
+    sample = flattened[0] if flattened and isinstance(flattened[0], dict) else {}
+    sample_preview = {
+        key: value
+        for key in ("name", "modelName", "serialNumber", "slot", "type", "moduleType")
+        if key in sample and (value := sample.get(key)) not in (None, "", [])
+    }
+
+    logger.debug(
+        "NDFC module payload switch_db_id=%s fabric=%s switch_id=%s raw_type=%s raw_preview=%s flattened_count=%d sample=%s",
+        switch_db_id,
+        fabric_name,
+        switch_id,
+        type(payload).__name__,
+        raw_preview,
+        len(flattened),
+        sample_preview,
+    )
+
+
 def _normalize_interface_name(name: str) -> str:
     """Return a canonical interface name for mixed NDFC short/long forms."""
     text = str(name or "").strip()
@@ -2263,9 +2321,14 @@ class NexusDashboardSource(DataSource):
                 )
                 return []
 
-        modules = _safe_get(data, "modules", None) if isinstance(data, dict) else None
-        if not isinstance(modules, list):
-            modules = data if isinstance(data, list) else []
+        modules = _flatten_module_payload(data)
+        _debug_module_fetch_payload(
+            switch_db_id=switch_db_id,
+            fabric_name=fabric_name,
+            switch_id=switch_id,
+            payload=data,
+            flattened=modules,
+        )
 
         normalized: list[dict[str, Any]] = []
         for module in modules:
@@ -2275,7 +2338,15 @@ class NexusDashboardSource(DataSource):
             if enriched:
                 normalized.append(enriched)
 
+        logger.debug(
+            "NDFC normalized modules switch_db_id=%s fabric=%s switch_id=%s normalized_count=%d",
+            switch_db_id,
+            fabric_name,
+            switch_id,
+            len(normalized),
+        )
         return normalized
+
     def _fetch_switch_interfaces(
         self,
         serial: str,
