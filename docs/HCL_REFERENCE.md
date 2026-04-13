@@ -19,16 +19,22 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 
 ---
 
-## Top-Level Blocks
+## Top-Level Structure
 
-Every mapping file contains exactly these four top-level block types:
+Every mapping file contains top-level attributes and blocks:
 
 ```hcl
+display_name = "VMware vCenter"  # optional web UI label
+
 source   "TYPE" { … }   # source system connection
 netbox            { … }   # NetBox connection + cache
 collector         { … }   # runtime options
 object   "NAME"  { … }   # one NetBox resource type (repeatable)
 ```
+
+`display_name` is optional. When present, the web UI uses it in the mapping
+dropdowns for manual runs and schedule editing. The actual job and schedule
+still store the mapping file path, so execution behavior does not change.
 
 ---
 

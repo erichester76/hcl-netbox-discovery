@@ -157,6 +157,10 @@ The web monitor provides a browser-based interface to:
 - **Edit configuration settings** stored in the shared SQLite database
 - **Manage the NetBox cache** — inspect entry counts per resource, flush entries, and pre-warm the cache
 
+If a mapping file sets a top-level `display_name = "..."`, the web UI uses that
+label in its mapping dropdowns and falls back to the filename when the field is
+omitted.
+
 The web UI does not execute collectors in-process. It creates queued jobs in the shared SQLite database, and the scheduler loop in `main.py --run-scheduler` picks them up for execution. On startup, the scheduler also reconciles orphaned `running` jobs left behind by a worker crash or container restart before claiming new work.
 
 For automation, poll recent jobs and then fetch the persisted artifact for any

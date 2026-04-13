@@ -28,6 +28,8 @@
 #   location.rack          → NetBox rack
 #   location.lowestRackUnit → rack position (front face, U number)
 
+display_name = "Lenovo XClarity"
+
 source "xclarity" {
   api_type   = "rest"
   url        = "env('XCLARITY_HOST')"

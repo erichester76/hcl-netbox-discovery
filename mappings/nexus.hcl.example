@@ -27,6 +27,8 @@
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_MODULES    true | false  (default: true)
 
+display_name = "Cisco Nexus Dashboard Fabric Controller"
+
 source "nexus" {
   api_type          = "nexus"
   url               = "env('NDFC_HOST')"

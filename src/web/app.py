@@ -9,12 +9,14 @@ import sqlite3
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
 
 from collector.cache_keys import build_effective_cache_key_prefix  # noqa: E402
+from collector.config import load_mapping_display_name  # noqa: E402
 from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
@@ -51,6 +53,12 @@ from web.serializers import job_artifact_payload, job_logs_payload, jobs_payload
 
 logger = logging.getLogger(__name__)
 _ROOT = str(Path(__file__).resolve().parents[2])
+
+
+@dataclass(frozen=True)
+class MappingChoice:
+    path: str
+    label: str
 
 # ---------------------------------------------------------------------------
 def create_app() -> Flask:
@@ -744,10 +752,22 @@ def _prewarm_cache(resource: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _discover_mappings() -> list[str]:
+def _discover_mappings() -> list[MappingChoice]:
     """Return HCL mapping files available in ``<root>/mappings/``."""
     pattern = os.path.join(_ROOT, "mappings", "*.hcl")
-    return sorted(os.path.relpath(p, _ROOT) for p in glob.glob(pattern))
+    mappings: list[MappingChoice] = []
+    for path in sorted(glob.glob(pattern)):
+        rel_path = os.path.relpath(path, _ROOT)
+        label = os.path.basename(rel_path)
+        try:
+            display_name = load_mapping_display_name(path)
+        except Exception:
+            logger.debug("Failed to read display_name from %s; using filename", rel_path, exc_info=True)
+        else:
+            if display_name:
+                label = display_name
+        mappings.append(MappingChoice(path=rel_path, label=label))
+    return mappings
 
 
 def _compute_next_run(cron_expr: str) -> str | None:

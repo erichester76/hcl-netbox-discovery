@@ -11,6 +11,8 @@
 # Optional:
 #   DRY_RUN              true | false (default: false)
 
+display_name = "Salt Grains"
+
 source "salt" {
   api_type      = "salt"
   artifact_path = "env('SALT_ARTIFACT_PATH')"

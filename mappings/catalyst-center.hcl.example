@@ -33,6 +33,8 @@
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
 #   COLLECTOR_SYNC_MODULES    true | false  (default: true)
 
+display_name = "Cisco Catalyst Center"
+
 source "catc" {
   api_type          = "catc"
   url               = "env('CATC_HOST')"
