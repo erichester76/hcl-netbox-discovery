@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import textwrap
 import threading
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -81,6 +83,14 @@ def _post_with_csrf(client, path: str, data: dict[str, str] | None = None):
     return client.post(path, data=payload)
 
 
+def _write_mapping(root: Path, name: str, content: str) -> Path:
+    mapping_dir = root / "mappings"
+    mapping_dir.mkdir(parents=True, exist_ok=True)
+    mapping_path = mapping_dir / name
+    mapping_path.write_text(textwrap.dedent(content))
+    return mapping_path
+
+
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -90,6 +100,43 @@ def test_index_empty(app):
     resp = app.get("/")
     assert resp.status_code == 200
     assert b"HCL NetBox Discovery" in resp.data
+
+
+def test_index_uses_mapping_display_names_in_dropdown(app, tmp_path, monkeypatch):
+    from web import app as web_app  # noqa: PLC0415
+
+    _write_mapping(tmp_path, "vmware.hcl", """
+        display_name = "VMware vCenter"
+
+        source "vmware" {
+          api_type = "vmware"
+          url      = "vc.example.com"
+        }
+
+        netbox {
+          url   = "https://nb.example.com"
+          token = "tok"
+        }
+    """)
+    _write_mapping(tmp_path, "fallback-name.hcl", """
+        source "azure" {
+          api_type = "azure"
+          url      = ""
+        }
+
+        netbox {
+          url   = "https://nb.example.com"
+          token = "tok"
+        }
+    """)
+    monkeypatch.setattr(web_app, "_ROOT", str(tmp_path))
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b'option value="mappings/vmware.hcl"' in resp.data
+    assert b"VMware vCenter" in resp.data
+    assert b"fallback-name.hcl" in resp.data
 
 
 def test_login_page_renders_when_auth_enabled(secured_app):

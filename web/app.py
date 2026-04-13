@@ -8,6 +8,7 @@ import os
 import sys
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
@@ -17,6 +18,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from collector.config import load_config  # noqa: E402
 from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
@@ -51,6 +53,12 @@ from web.auth import (  # noqa: E402
 from web.serializers import job_artifact_payload, job_logs_payload, jobs_payload  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MappingChoice:
+    path: str
+    label: str
 
 # ---------------------------------------------------------------------------
 def create_app() -> Flask:
@@ -519,10 +527,22 @@ def _prewarm_cache(resource: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _discover_mappings() -> list[str]:
+def _discover_mappings() -> list[MappingChoice]:
     """Return HCL mapping files available in ``<root>/mappings/``."""
     pattern = os.path.join(_ROOT, "mappings", "*.hcl")
-    return sorted(os.path.relpath(p, _ROOT) for p in glob.glob(pattern))
+    mappings: list[MappingChoice] = []
+    for path in sorted(glob.glob(pattern)):
+        rel_path = os.path.relpath(path, _ROOT)
+        label = os.path.basename(rel_path)
+        try:
+            cfg = load_config(path)
+        except Exception:
+            logger.debug("Failed to read display_name from %s; using filename", rel_path, exc_info=True)
+        else:
+            if cfg.display_name:
+                label = cfg.display_name
+        mappings.append(MappingChoice(path=rel_path, label=label))
+    return mappings
 
 
 def _compute_next_run(cron_expr: str) -> str | None:
