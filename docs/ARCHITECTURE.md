@@ -34,6 +34,7 @@ hcl-netbox-discovery/
 │       ├── base.py                # Abstract DataSource interface
 │       ├── rest.py                # Generic REST adapter — no Python needed per source
 │       ├── ansible.py             # Ansible facts artifact adapter
+│       ├── salt.py                # Salt grains adapter (live master or artifact)
 │       ├── vmware.py              # pyVmomi adapter (SDK requires Python; fixed built-in)
 │       ├── azure.py               # Microsoft Azure SDK adapter
 │       ├── ldap.py                # LDAP directory adapter (ldap3)

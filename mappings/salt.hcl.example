@@ -1,19 +1,41 @@
-# Salt grains artifact -> NetBox collector mapping
+# Salt master grains discovery -> NetBox collector mapping
 #
-# Reads a JSON artifact exported from Salt and normalises one `hosts`
-# collection with nested interfaces and IP addresses.
+# Preferred mode polls a Salt master through Salt NetAPI and normalises one
+# `hosts` collection with nested interfaces and IP addresses.
 #
 # Required environment variables:
-#   SALT_ARTIFACT_PATH   Path to exported Salt grains JSON
+#   SALT_MASTER_URL      Salt NetAPI base URL, e.g. https://salt.example.com:8000
+#   SALT_USER            Salt API username
+#   SALT_PASS            Salt API password
 #   NETBOX_URL           NetBox base URL
 #   NETBOX_TOKEN         NetBox API token
 #
 # Optional:
+#   SALT_TARGET          Target expression (default: *)
+#   SALT_EXPR_FORM       Target expression form, e.g. compound
+#   SALT_EAUTH           External auth backend (default: pam)
+#   SALT_ARTIFACT_PATH   Fallback artifact path when mode = artifact
 #   DRY_RUN              true | false (default: false)
+#
+# This example asserts the `salt-managed` tag on positively discovered
+# objects. Reuse the same field in a `virtualization.virtual_machines` mapping
+# if you map Salt hosts to VMs instead of devices.
+
+display_name = "Salt Grains"
 
 source "salt" {
-  api_type      = "salt"
-  artifact_path = "env('SALT_ARTIFACT_PATH')"
+  api_type   = "salt"
+  url        = "env('SALT_MASTER_URL')"
+  username   = "env('SALT_USER')"
+  password   = "env('SALT_PASS')"
+  mode       = "master"
+  target     = "env('SALT_TARGET', '*')"
+  expr_form  = "env('SALT_EXPR_FORM', '')"
+  eauth      = "env('SALT_EAUTH', 'pam')"
+
+  # Fallback artifact mode:
+  # mode          = "artifact"
+  # artifact_path = "env('SALT_ARTIFACT_PATH')"
 }
 
 netbox {
@@ -81,6 +103,10 @@ object "device" {
 
   field "status" {
     value = "source('status')"
+  }
+
+  field "tags" {
+    value = "['salt-managed']"
   }
 
   field "comments" {

@@ -1,23 +1,21 @@
-"""Salt grains artifact data source adapter.
+"""Salt grains data source adapter.
 
-This MVP adapter reads exported Salt grains/artifact JSON and normalises it
-into a common ``hosts`` collection shape suitable for HCL mapping.
+This adapter supports two Salt collection modes:
+
+- ``artifact``: read an exported grains JSON artifact from disk
+- ``master``: query a Salt master through Salt NetAPI and normalise the result
 
 Supported collection
 --------------------
 ``"hosts"`` — returns one record per Salt minion. Each host dict contains a
 nested ``interfaces`` list, and each interface contains ``ip_addresses``.
 
-Supported artifact shapes
--------------------------
+Supported payload shapes
+------------------------
 - ``{"minion-id": {...grains...}, ...}``
 - ``{"return": {"minion-id": {...grains...}, ...}}``
 - ``{"return": [{"minion-id": {...grains...}}, ...]}``
 - ``[{"id": "minion-id", "grains": {...}}, ...]``
-
-The adapter intentionally does not shell out to ``salt`` or ``salt-call``.
-Operators should export the desired facts through their existing Salt workflow
-and point ``artifact_path`` at the resulting JSON file.
 """
 
 from __future__ import annotations
@@ -27,7 +25,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import requests
+
 from .base import DataSource
+from .utils import close_http_session, disable_ssl_warnings
 
 _IFACE_TYPE_PATTERNS: list[tuple[str, str]] = [
     ("bond", "lag"),
@@ -210,47 +211,184 @@ def _normalise_host(minion_id: str, record: dict[str, Any]) -> dict[str, Any]:
 
 
 class SaltSource(DataSource):
-    """Artifact-backed Salt source adapter."""
+    """Salt source adapter supporting artifact and live master modes."""
 
     def __init__(self) -> None:
         self._config: Any | None = None
         self._artifact_path: Path | None = None
+        self._mode = "artifact"
+        self._session: requests.Session | None = None
+        self._base_url = ""
+        self._timeout = 30.0
+        self._run_payload: dict[str, Any] = {}
 
     def connect(self, config: Any) -> None:
-        """Store the Salt config and validate the artifact path."""
+        """Store the Salt config and prepare artifact or master access."""
         self._config = config
         extra = config.extra or {}
-        artifact_path = str(extra.get("artifact_path") or config.url or "").strip()
-        if not artifact_path:
+        mode = str(extra.get("mode") or "").strip().lower()
+        if not mode:
+            url = str(config.url or "").strip().lower()
+            mode = "master" if url.startswith(("http://", "https://")) else "artifact"
+        if mode not in {"artifact", "master"}:
             raise ValueError(
-                "SaltSource requires source.url or source.artifact_path to point "
-                "at an exported Salt JSON artifact"
+                f"SaltSource: unsupported mode {mode!r}. Supported: ['artifact', 'master']"
             )
-        self._artifact_path = Path(artifact_path)
-        if not self._artifact_path.exists():
-            raise FileNotFoundError(f"Salt artifact not found: {self._artifact_path}")
+
+        self._mode = mode
+        self._artifact_path = None
+        self._run_payload = {}
+        self._timeout = float(extra.get("timeout") or 30.0)
+
+        if self._mode == "artifact":
+            artifact_path = str(extra.get("artifact_path") or config.url or "").strip()
+            if not artifact_path:
+                raise ValueError(
+                    "SaltSource artifact mode requires source.url or "
+                    "source.artifact_path to point at an exported Salt JSON artifact"
+                )
+            self._artifact_path = Path(artifact_path)
+            if not self._artifact_path.exists():
+                raise FileNotFoundError(f"Salt artifact not found: {self._artifact_path}")
+            return
+
+        self._connect_master(config)
 
     def get_objects(self, collection: str) -> list:
         """Return the normalised host list for *collection*."""
-        if self._artifact_path is None:
-            raise RuntimeError("SaltSource: connect() has not been called")
         if collection.lower() != "hosts":
             raise ValueError(
                 f"SaltSource: unknown collection {collection!r}. Supported: ['hosts']"
             )
 
-        try:
-            payload = json.loads(self._artifact_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Salt artifact at {self._artifact_path} contains invalid JSON"
-            ) from exc
+        if self._mode == "artifact":
+            payload = self._load_artifact_payload()
+        else:
+            payload = self._fetch_master_payload()
+
         return [
             _normalise_host(minion_id, record)
             for minion_id, record in _iter_records(payload)
         ]
 
     def close(self) -> None:
-        """Release file-backed state."""
+        """Release file-backed or HTTP-backed state."""
         self._config = None
         self._artifact_path = None
+        self._mode = "artifact"
+        self._base_url = ""
+        self._run_payload = {}
+        self._session = close_http_session(self._session, "SaltSource")
+
+    def _load_artifact_payload(self) -> Any:
+        """Read and parse the configured Salt artifact."""
+        if self._artifact_path is None:
+            raise RuntimeError("SaltSource: connect() has not been called")
+
+        try:
+            return json.loads(self._artifact_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Salt artifact at {self._artifact_path} contains invalid JSON"
+            ) from exc
+
+    def _connect_master(self, config: Any) -> None:
+        """Initialise a Salt NetAPI session for live fact collection."""
+        extra = config.extra or {}
+        base_url = str(config.url or extra.get("url") or "").strip().rstrip("/")
+        if not base_url:
+            raise ValueError("SaltSource master mode requires source.url")
+
+        self._base_url = base_url
+        self._run_payload = {
+            "client": str(extra.get("client") or "local"),
+            "tgt": str(extra.get("target") or "*"),
+            "fun": str(extra.get("fun") or "grains.items"),
+        }
+        expr_form = str(extra.get("expr_form") or "").strip()
+        if expr_form:
+            self._run_payload["expr_form"] = expr_form
+
+        verify_ssl = config.verify_ssl
+        if not verify_ssl:
+            disable_ssl_warnings()
+
+        session = requests.Session()
+        session.verify = verify_ssl
+        session.headers.update(
+            {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+        )
+        self._session = session
+
+        auth_type = str(extra.get("auth_type") or "credentials").strip().lower()
+        if auth_type == "token":
+            token = str(extra.get("auth_token") or config.password or "").strip()
+            if not token:
+                raise ValueError(
+                    "SaltSource token auth requires source.auth_token or source.password"
+                )
+            self._session.headers["X-Auth-Token"] = token
+            return
+        if auth_type != "credentials":
+            raise ValueError(
+                f"SaltSource: unsupported auth_type {auth_type!r}. Supported: ['credentials', 'token']"
+            )
+
+        username = str(config.username or "").strip()
+        password = str(config.password or "").strip()
+        if not username or not password:
+            raise ValueError(
+                "SaltSource credentials auth requires both source.username and source.password"
+            )
+
+        login_path = str(extra.get("login_path") or "/login").strip() or "/login"
+        response = session.post(
+            f"{self._base_url}{login_path}",
+            json={
+                "username": username,
+                "password": password,
+                "eauth": str(extra.get("eauth") or "pam"),
+            },
+            timeout=self._timeout,
+        )
+        payload = self._decode_response(response, f"{self._base_url}{login_path}")
+        token = self._extract_token(payload)
+        session.headers["X-Auth-Token"] = token
+
+    def _fetch_master_payload(self) -> Any:
+        """Fetch grains from the Salt master through NetAPI."""
+        if self._session is None:
+            raise RuntimeError("SaltSource: connect() has not been called")
+
+        run_path = str((self._config.extra or {}).get("run_path") or "/run").strip() or "/run"
+        response = self._session.post(
+            f"{self._base_url}{run_path}",
+            json=[self._run_payload],
+            timeout=self._timeout,
+        )
+        return self._decode_response(response, f"{self._base_url}{run_path}")
+
+    @staticmethod
+    def _decode_response(response: Any, url: str) -> Any:
+        """Raise for HTTP errors and decode a JSON response body."""
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ValueError(f"SaltSource received invalid JSON from {url}") from exc
+
+    @staticmethod
+    def _extract_token(payload: Any) -> str:
+        """Return the Salt auth token from a login response payload."""
+        if isinstance(payload, dict):
+            returned = payload.get("return")
+            if isinstance(returned, list):
+                for item in returned:
+                    if isinstance(item, dict) and item.get("token"):
+                        return str(item["token"])
+            if payload.get("token"):
+                return str(payload["token"])
+        raise ValueError("SaltSource login response did not include a token")
