@@ -812,6 +812,9 @@ source "ansible" {
 MVP Ansible support is artifact-backed. Point `artifact_path` at an exported
 hostvars JSON file or a fact-cache directory. The adapter normalises the input
 into a `hosts` collection with nested `interfaces` and `ip_addresses`.
+The example mapping also adds an additive `ansible-managed` tag; use the same
+pattern for VM mappings when Ansible-backed hosts should land in
+`virtualization.virtual_machines`.
 
 ### Salt grains artifact (`api_type = "salt"`)
 
@@ -825,6 +828,9 @@ source "salt" {
 MVP Salt support is artifact-backed. Point `artifact_path` at an exported Salt
 JSON file containing grains or other host facts. The adapter normalises the
 artifact into a `hosts` collection with nested `interfaces` and `ip_addresses`.
+The example mapping also adds an additive `salt-managed` tag; use the same
+pattern for VM mappings when Salt-backed hosts should land in
+`virtualization.virtual_machines`.
 
 ### SNMP (`api_type = "snmp"`)
 
