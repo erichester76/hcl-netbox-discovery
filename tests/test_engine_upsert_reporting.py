@@ -949,10 +949,7 @@ class TestEngineUpsertReporting:
             engine.run("fake.hcl")
 
         assert cfg.collector.extra_flags["use_custom_objects"] is False
-        nb.list.assert_called_once_with(
-            "plugins.custom_objects.custom_object_types",
-            limit=1,
-        )
+        nb.list.assert_called_once_with("plugins.custom_objects.custom_object_types")
         assert "falling back to custom fields" in caplog.text
 
     def test_run_disables_custom_objects_when_falsy_response_has_404_status(self, caplog):
@@ -1007,10 +1004,7 @@ class TestEngineUpsertReporting:
 
         assert cfg.collector.extra_flags["use_custom_objects"] is True
         nb.list.assert_not_called()
-        nb_main.list.assert_called_once_with(
-            "plugins.custom_objects.custom_object_types",
-            limit=1,
-        )
+        nb_main.list.assert_called_once_with("plugins.custom_objects.custom_object_types")
 
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()

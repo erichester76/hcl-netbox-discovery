@@ -452,6 +452,17 @@ class TestNexusGetObjects:
 
         assert result == _build_topology_custom_object_type_field_records()
 
+    def test_topology_custom_object_type_fields_keep_cross_object_references_as_text(self):
+        records = _build_topology_custom_object_type_field_records()
+        keyed = {
+            (record["custom_object_type_slug"], record["name"]): record
+            for record in records
+        }
+
+        assert keyed[("ndfc-vpc-domains", "fabric_identifier")]["type"] == "text"
+        assert keyed[("ndfc-vpc-peer-links", "fabric_identifier")]["type"] == "text"
+        assert keyed[("ndfc-vpc-peer-links", "vpc_domain_identifier")]["type"] == "text"
+
     def test_get_switches_returns_enriched_dicts(self):
         src = self._connected_source()
 
@@ -1792,7 +1803,10 @@ class TestNexusFabricAndVpcRecords:
                 "identifier": "ITC-CUProd",
                 "fabric_name": "ITC-CUProd",
                 "site_names": ["ITC"],
-                "device_names": ["leaf-a", "leaf-b"],
+                "device_refs": [
+                    {"name": "leaf-a", "site_name": "ITC"},
+                    {"name": "leaf-b", "site_name": "ITC"},
+                ],
                 "tenant_names": ["Tenant-A", "Tenant-B"],
             }
         ]
@@ -1803,6 +1817,7 @@ class TestNexusFabricAndVpcRecords:
                 {
                     "fabric_name": "ITC-CUProd",
                     "name": "leaf-a",
+                    "site_name": "ITC",
                     "tenant_name": "Tenant-A",
                     "vpc_domain_id": "27",
                     "vpc_role": "primary",
@@ -1819,6 +1834,7 @@ class TestNexusFabricAndVpcRecords:
                 {
                     "fabric_name": "ITC-CUProd",
                     "name": "leaf-b",
+                    "site_name": "ITC",
                     "tenant_name": "Tenant-B",
                     "vpc_domain_id": "27",
                     "vpc_role": "secondary",
@@ -1842,21 +1858,42 @@ class TestNexusFabricAndVpcRecords:
                 "fabric_identifier": "ITC-CUProd",
                 "vpc_domain_id": "27",
                 "vpc_name": "vpc27",
-                "primary_device_name": "leaf-a",
-                "secondary_device_name": "leaf-b",
-                "peer_device_names": ["leaf-a", "leaf-b"],
+                "primary_device_ref": {"name": "leaf-a", "site_name": "ITC"},
+                "secondary_device_ref": {"name": "leaf-b", "site_name": "ITC"},
+                "peer_device_refs": [
+                    {"name": "leaf-a", "site_name": "ITC"},
+                    {"name": "leaf-b", "site_name": "ITC"},
+                ],
                 "member_lag_refs": [
-                    {"device_name": "leaf-a", "name": "port-channel27"},
-                    {"device_name": "leaf-b", "name": "port-channel27"},
+                    {"device_name": "leaf-a", "site_name": "ITC", "name": "port-channel27"},
+                    {"device_name": "leaf-b", "site_name": "ITC", "name": "port-channel27"},
                 ],
                 "vpc_interface_refs": [
-                    {"device_name": "leaf-a", "name": "vpc27"},
-                    {"device_name": "leaf-b", "name": "vpc27"},
+                    {"device_name": "leaf-a", "site_name": "ITC", "name": "vpc27"},
+                    {"device_name": "leaf-b", "site_name": "ITC", "name": "vpc27"},
                 ],
                 "tenant_names": ["Tenant-A", "Tenant-B"],
                 "vrf_names": ["Tenant-A", "Tenant-B"],
             }
         ]
+
+    def test_build_vpc_domain_records_suppresses_numeric_peer_name_placeholders(self):
+        records = _build_vpc_domain_records(
+            [
+                {
+                    "fabric_name": "ITC-CUProd",
+                    "name": "leaf-a",
+                    "site_name": "ITC",
+                    "tenant_name": "Tenant-A",
+                    "vpc_domain_id": "0",
+                    "vpc_role": "primary",
+                    "vpc_peer_name": "0",
+                    "interfaces": [],
+                }
+            ]
+        )
+
+        assert records[0]["peer_device_refs"] == [{"name": "leaf-a", "site_name": "ITC"}]
 
     def test_build_vpc_peer_link_records_aggregates_interfaces_and_status(self):
         records = _build_vpc_peer_link_records(
@@ -1864,6 +1901,7 @@ class TestNexusFabricAndVpcRecords:
                 {
                     "fabric_name": "ITC-CUProd",
                     "name": "leaf-a",
+                    "site_name": "ITC",
                     "tenant_name": "Tenant-A",
                     "vpc_domain_id": "27",
                     "peer_link_interfaces": ["Ethernet1/47", "Ethernet1/48"],
@@ -1876,6 +1914,7 @@ class TestNexusFabricAndVpcRecords:
                 {
                     "fabric_name": "ITC-CUProd",
                     "name": "leaf-b",
+                    "site_name": "ITC",
                     "tenant_name": "Tenant-B",
                     "vpc_domain_id": "27",
                     "peer_link_interfaces": ["Ethernet1/47", "Ethernet1/48"],
@@ -1894,12 +1933,15 @@ class TestNexusFabricAndVpcRecords:
                 "vpc_domain_identifier": "ITC-CUProd:27",
                 "fabric_name": "ITC-CUProd",
                 "fabric_identifier": "ITC-CUProd",
-                "device_names": ["leaf-a", "leaf-b"],
+                "device_refs": [
+                    {"name": "leaf-a", "site_name": "ITC"},
+                    {"name": "leaf-b", "site_name": "ITC"},
+                ],
                 "interface_refs": [
-                    {"device_name": "leaf-a", "name": "Ethernet1/47"},
-                    {"device_name": "leaf-a", "name": "Ethernet1/48"},
-                    {"device_name": "leaf-b", "name": "Ethernet1/47"},
-                    {"device_name": "leaf-b", "name": "Ethernet1/48"},
+                    {"device_name": "leaf-a", "site_name": "ITC", "name": "Ethernet1/47"},
+                    {"device_name": "leaf-a", "site_name": "ITC", "name": "Ethernet1/48"},
+                    {"device_name": "leaf-b", "site_name": "ITC", "name": "Ethernet1/47"},
+                    {"device_name": "leaf-b", "site_name": "ITC", "name": "Ethernet1/48"},
                 ],
                 "status_values": ["up"],
                 "status": "up",
