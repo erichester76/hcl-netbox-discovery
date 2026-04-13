@@ -1,7 +1,8 @@
 # Ansible facts artifact -> NetBox collector mapping
 #
 # Reads exported Ansible hostvars or fact cache JSON and normalises one `hosts`
-# collection with nested interfaces and IP addresses.
+# collection with nested interfaces and IP addresses. A supported artifact can
+# be produced with `scripts/ansible_ee_fact_discovery.sh`.
 #
 # Required environment variables:
 #   ANSIBLE_ARTIFACT_PATH   Path to exported Ansible facts JSON or fact cache dir

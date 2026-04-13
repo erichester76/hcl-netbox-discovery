@@ -813,6 +813,13 @@ MVP Ansible support is artifact-backed. Point `artifact_path` at an exported
 hostvars JSON file or a fact-cache directory. The adapter normalises the input
 into a `hosts` collection with nested `interfaces` and `ip_addresses`.
 
+For environments that use remote execution environments, the repository ships
+`scripts/ansible_ee_fact_discovery.sh` plus
+`scripts/ansible_fact_discovery.yml`. The script runs `ansible-playbook`
+inside a container image, enables the `jsonfile` fact cache plugin, and writes
+an importer-ready fact-cache directory under `artifacts/ansible-facts/` by
+default.
+
 ### Salt grains artifact (`api_type = "salt"`)
 
 ```hcl

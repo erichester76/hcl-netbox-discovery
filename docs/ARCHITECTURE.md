@@ -75,6 +75,10 @@ hcl-netbox-discovery/
 │   ├── active-directory-users.hcl.example
 │   └── tenable.hcl.example
 ├── regex/                         # Pattern files consumed by regex_file() expressions
+├── scripts/
+│   ├── bump_version.py
+│   ├── ansible_ee_fact_discovery.sh
+│   └── ansible_fact_discovery.yml
 ├── docs/
 │   ├── ARCHITECTURE.md            # This document
 │   └── HCL_REFERENCE.md          # HCL mapping file syntax reference

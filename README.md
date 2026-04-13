@@ -382,6 +382,33 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 
 > **xclarity.hcl.example** — The unified XClarity example supports both inventory items and optional module sync. `COLLECTOR_SYNC_INVENTORY=true` keeps the default inventory-item behavior, while `COLLECTOR_SYNC_MODULES=true` enables the richer `dcim.module_bays` -> `dcim.modules` -> `dcim.module_types` object graph for CPUs, memory, drives, add-in cards, power supplies, and fans.
 
+### Ansible EE Fact Collection
+
+The Ansible source remains artifact-backed by design. To collect those facts
+through a remote execution environment, use the bundled
+`scripts/ansible_ee_fact_discovery.sh` helper. It runs `ansible-playbook`
+inside a container image, enables Ansible's `jsonfile` fact cache, and writes
+an importer-ready fact cache directory.
+
+Example:
+
+```bash
+ANSIBLE_INVENTORY=inventory/hosts.yml \
+ANSIBLE_EE_IMAGE=quay.io/ansible/creator-ee:latest \
+ANSIBLE_OUTPUT_DIR=artifacts/ansible-facts \
+./scripts/ansible_ee_fact_discovery.sh
+```
+
+Then point the collector mapping at the generated cache directory:
+
+```bash
+poetry run python main.py \
+  --mapping mappings/ansible.hcl \
+  --dry-run
+```
+
+with `ANSIBLE_ARTIFACT_PATH=artifacts/ansible-facts/fact-cache`.
+
 ---
 
 ## Regex Pattern Files
@@ -572,3 +599,8 @@ python scripts/bump_version.py major
 Release tags must match `pyproject.toml` exactly. If the Poetry version is
 `1.1.1`, the release tag must be `v1.1.1`. The Docker publish workflow rejects
 `v*` tags that drift from the Poetry version.
+├── scripts/
+│   ├── bump_version.py           # Version helper
+│   ├── ansible_ee_fact_discovery.sh
+│   └── ansible_fact_discovery.yml
+│
