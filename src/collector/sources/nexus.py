@@ -1284,7 +1284,7 @@ def _build_fabric_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]
                 "identifier": fabric_name,
                 "fabric_name": fabric_name,
                 "site_names": set(),
-                "device_names": set(),
+                "device_refs": set(),
                 "tenant_names": set(),
             },
         )
@@ -1294,7 +1294,7 @@ def _build_fabric_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]
         if site_name:
             record["site_names"].add(site_name)
         if device_name:
-            record["device_names"].add(device_name)
+            record["device_refs"].add((device_name, site_name))
         if tenant_name:
             record["tenant_names"].add(tenant_name)
 
@@ -1302,7 +1302,10 @@ def _build_fabric_records(switches: list[dict[str, Any]]) -> list[dict[str, Any]
         {
             **record,
             "site_names": sorted(record["site_names"]),
-            "device_names": sorted(record["device_names"]),
+            "device_refs": [
+                {"name": name, "site_name": site_name}
+                for name, site_name in sorted(record["device_refs"])
+            ],
             "tenant_names": sorted(record["tenant_names"]),
         }
         for _, record in sorted(fabrics.items())
@@ -1327,9 +1330,9 @@ def _build_vpc_domain_records(switches: list[dict[str, Any]]) -> list[dict[str, 
                 "fabric_identifier": fabric_name,
                 "vpc_domain_id": vpc_domain_id,
                 "vpc_name": f"vpc{vpc_domain_id}",
-                "primary_device_name": "",
-                "secondary_device_name": "",
-                "peer_device_names": set(),
+                "primary_device_ref": None,
+                "secondary_device_ref": None,
+                "peer_device_refs": set(),
                 "member_lag_refs": set(),
                 "vpc_interface_refs": set(),
                 "tenant_names": set(),
@@ -1338,17 +1341,18 @@ def _build_vpc_domain_records(switches: list[dict[str, Any]]) -> list[dict[str, 
         )
 
         device_name = str(switch.get("name", "") or "").strip()
+        site_name = str(switch.get("site_name", "") or "").strip()
         role = str(switch.get("vpc_role", "") or "").strip().lower()
         tenant_name = str(switch.get("tenant_name", "") or "").strip()
         peer_name = str(switch.get("vpc_peer_name", "") or "").strip()
         if role == "primary" and device_name:
-            record["primary_device_name"] = device_name
+            record["primary_device_ref"] = {"name": device_name, "site_name": site_name}
         elif role == "secondary" and device_name:
-            record["secondary_device_name"] = device_name
+            record["secondary_device_ref"] = {"name": device_name, "site_name": site_name}
         if device_name:
-            record["peer_device_names"].add(device_name)
-        if peer_name:
-            record["peer_device_names"].add(peer_name)
+            record["peer_device_refs"].add((device_name, site_name))
+        if peer_name and peer_name.lower() not in {"0", "none", "null"} and not peer_name.isdigit():
+            record["peer_device_refs"].add((peer_name, ""))
         if tenant_name:
             record["tenant_names"].add(tenant_name)
 
@@ -1362,25 +1366,31 @@ def _build_vpc_domain_records(switches: list[dict[str, Any]]) -> list[dict[str, 
             vpc_name = str(iface.get("vpc_name", "") or "").strip()
             vrf_name = str(iface.get("vrf_name", "") or "").strip()
             if lag_name:
-                record["member_lag_refs"].add((device_name, lag_name))
+                record["member_lag_refs"].add((device_name, site_name, lag_name))
             if vpc_name:
-                record["vpc_interface_refs"].add((device_name, iface_name))
+                record["vpc_interface_refs"].add((device_name, site_name, iface_name))
             if vrf_name:
                 record["vrf_names"].add(vrf_name)
 
     results: list[dict[str, Any]] = []
     for _, record in sorted(domains.items()):
+        peer_refs = sorted(record["peer_device_refs"])
+        peer_names_with_site = {device_name for device_name, site_name in peer_refs if site_name}
         results.append(
             {
                 **record,
-                "peer_device_names": sorted(record["peer_device_names"]),
+                "peer_device_refs": [
+                    {"name": device_name, "site_name": site_name}
+                    for device_name, site_name in peer_refs
+                    if site_name or device_name not in peer_names_with_site
+                ],
                 "member_lag_refs": [
-                    {"device_name": device_name, "name": name}
-                    for device_name, name in sorted(record["member_lag_refs"])
+                    {"device_name": device_name, "site_name": site_name, "name": name}
+                    for device_name, site_name, name in sorted(record["member_lag_refs"])
                 ],
                 "vpc_interface_refs": [
-                    {"device_name": device_name, "name": name}
-                    for device_name, name in sorted(record["vpc_interface_refs"])
+                    {"device_name": device_name, "site_name": site_name, "name": name}
+                    for device_name, site_name, name in sorted(record["vpc_interface_refs"])
                 ],
                 "tenant_names": sorted(record["tenant_names"]),
                 "vrf_names": sorted(record["vrf_names"]),
@@ -1408,7 +1418,7 @@ def _build_vpc_peer_link_records(switches: list[dict[str, Any]]) -> list[dict[st
                 "identifier": identifier,
                 "vpc_domain_identifier": f"{fabric_name}:{vpc_domain_id}",
                 "fabric_name": fabric_name,
-                "device_names": set(),
+                "device_refs": set(),
                 "interface_refs": set(),
                 "status_values": set(),
                 "tenant_names": set(),
@@ -1417,10 +1427,11 @@ def _build_vpc_peer_link_records(switches: list[dict[str, Any]]) -> list[dict[st
         )
 
         device_name = str(switch.get("name", "") or "").strip()
+        site_name = str(switch.get("site_name", "") or "").strip()
         tenant_name = str(switch.get("tenant_name", "") or "").strip()
         status = str(switch.get("peer_link_status", "") or "").strip()
         if device_name:
-            record["device_names"].add(device_name)
+            record["device_refs"].add((device_name, site_name))
         if tenant_name:
             record["tenant_names"].add(tenant_name)
         if status:
@@ -1437,7 +1448,7 @@ def _build_vpc_peer_link_records(switches: list[dict[str, Any]]) -> list[dict[st
                 record["vrf_names"].add(vrf_name)
         for iface_name in peer_link_interfaces:
             if device_name and iface_name:
-                record["interface_refs"].add((device_name, iface_name))
+                record["interface_refs"].add((device_name, site_name, iface_name))
 
     results: list[dict[str, Any]] = []
     for _, record in sorted(links.items()):
@@ -1446,10 +1457,13 @@ def _build_vpc_peer_link_records(switches: list[dict[str, Any]]) -> list[dict[st
             {
                 **record,
                 "fabric_identifier": record["fabric_name"],
-                "device_names": sorted(record["device_names"]),
+                "device_refs": [
+                    {"name": device_name, "site_name": site_name}
+                    for device_name, site_name in sorted(record["device_refs"])
+                ],
                 "interface_refs": [
-                    {"device_name": device_name, "name": name}
-                    for device_name, name in sorted(record["interface_refs"])
+                    {"device_name": device_name, "site_name": site_name, "name": name}
+                    for device_name, site_name, name in sorted(record["interface_refs"])
                 ],
                 "status_values": status_values,
                 "status": ", ".join(status_values),
@@ -1646,10 +1660,8 @@ def _build_topology_custom_object_type_field_records() -> list[dict[str, Any]]:
             "custom_object_type_slug": "ndfc-vpc-domains",
             "name": "fabric_identifier",
             "label": "Fabric",
-            "description": "Parent NDFC fabric object.",
-            "type": "object",
-            "app_label": "custom-objects",
-            "model": "ndfc-fabrics",
+            "description": "Parent NDFC fabric identifier.",
+            "type": "text",
             "ui_visible": "if-set",
             "ui_editable": "no",
         },
@@ -1770,10 +1782,8 @@ def _build_topology_custom_object_type_field_records() -> list[dict[str, Any]]:
             "custom_object_type_slug": "ndfc-vpc-peer-links",
             "name": "fabric_identifier",
             "label": "Fabric",
-            "description": "Parent NDFC fabric object.",
-            "type": "object",
-            "app_label": "custom-objects",
-            "model": "ndfc-fabrics",
+            "description": "Parent NDFC fabric identifier.",
+            "type": "text",
             "ui_visible": "if-set",
             "ui_editable": "no",
         },
@@ -1790,10 +1800,8 @@ def _build_topology_custom_object_type_field_records() -> list[dict[str, Any]]:
             "custom_object_type_slug": "ndfc-vpc-peer-links",
             "name": "vpc_domain_identifier",
             "label": "vPC Domain",
-            "description": "Parent NDFC vPC domain object.",
-            "type": "object",
-            "app_label": "custom-objects",
-            "model": "ndfc-vpc-domains",
+            "description": "Parent NDFC vPC domain identifier.",
+            "type": "text",
             "ui_visible": "if-set",
             "ui_editable": "no",
         },

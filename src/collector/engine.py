@@ -367,7 +367,7 @@ class Engine:
 
         probe_client = nb_main or nb
         try:
-            probe_client.list("plugins.custom_objects.custom_object_types", limit=1)
+            probe_client.list("plugins.custom_objects.custom_object_types")
         except Exception as exc:
             if _extract_http_status_code(exc) == 404:
                 cfg.collector.extra_flags["use_custom_objects"] = False

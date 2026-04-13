@@ -85,7 +85,7 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert fabric_fields["fabric_name"] == "source('fabric_name')"
     assert fabric_fields["site_names"] == "source('site_names')"
     assert fabric_fields["tenant_names"] == "source('tenant_names')"
-    assert fabric_fields["devices"] == "[{'name': name} for name in (source('device_names') or [])]"
+    assert fabric_fields["devices"] == "[device_id for ref in (source('device_refs') or []) if (device_id := nb_id('dcim.devices', {'name': ref['name'], 'site': nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')})}))]"
     assert "tags" not in fabric_fields
 
     domain = _object(cfg, "ndfc_vpc_domain")
@@ -102,20 +102,20 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert domain_fields["vpc_name"] == "source('vpc_name')"
     assert (
         domain_fields["primary_device"]
-        == "when(source('primary_device_name') != '', {'name': source('primary_device_name')}, None)"
+        == "when(source('primary_device_ref'), nb_id('dcim.devices', {'name': source('primary_device_ref')['name'], 'site': nb_id('dcim.sites', {'name': regex_file(source('primary_device_ref')['site_name'], 'nexus_site_to_site')})}), None)"
     )
     assert (
         domain_fields["secondary_device"]
-        == "when(source('secondary_device_name') != '', {'name': source('secondary_device_name')}, None)"
+        == "when(source('secondary_device_ref'), nb_id('dcim.devices', {'name': source('secondary_device_ref')['name'], 'site': nb_id('dcim.sites', {'name': regex_file(source('secondary_device_ref')['site_name'], 'nexus_site_to_site')})}), None)"
     )
-    assert domain_fields["peer_devices"] == "[{'name': name} for name in (source('peer_device_names') or [])]"
+    assert domain_fields["peer_devices"] == "[device_id for ref in (source('peer_device_refs') or []) if (device_id := nb_id('dcim.devices', {'name': ref['name'], 'site': when(ref['site_name'] != '', nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')}), None)}))]"
     assert (
         domain_fields["member_lags"]
-        == "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('member_lag_refs') or [])]"
+        == "[iface_id for ref in (source('member_lag_refs') or []) if (iface_id := nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': ref['device_name'], 'site': nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')})}), 'name': ref['name']}))]"
     )
     assert (
         domain_fields["vpc_interfaces"]
-        == "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('vpc_interface_refs') or [])]"
+        == "[iface_id for ref in (source('vpc_interface_refs') or []) if (iface_id := nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': ref['device_name'], 'site': nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')})}), 'name': ref['name']}))]"
     )
     assert domain_fields["tenant_names"] == "source('tenant_names')"
     assert domain_fields["vrf_names"] == "source('vrf_names')"
@@ -132,12 +132,17 @@ def test_nexus_example_mapping_includes_optional_custom_object_blocks(monkeypatc
     assert peer_link_fields["fabric_identifier"] == "source('fabric_identifier')"
     assert peer_link_fields["fabric_name"] == "source('fabric_name')"
     assert peer_link_fields["vpc_domain_identifier"] == "source('vpc_domain_identifier')"
-    assert peer_link_fields["devices"] == "[{'name': name} for name in (source('device_names') or [])]"
+    assert peer_link_fields["devices"] == "[device_id for ref in (source('device_refs') or []) if (device_id := nb_id('dcim.devices', {'name': ref['name'], 'site': nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')})}))]"
     assert (
         peer_link_fields["interfaces"]
-        == "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('interface_refs') or [])]"
+        == "[iface_id for ref in (source('interface_refs') or []) if (iface_id := nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': ref['device_name'], 'site': nb_id('dcim.sites', {'name': regex_file(ref['site_name'], 'nexus_site_to_site')})}), 'name': ref['name']}))]"
     )
     assert peer_link_fields["status"] == "source('status')"
     assert peer_link_fields["tenant_names"] == "source('tenant_names')"
     assert peer_link_fields["vrf_names"] == "source('vrf_names')"
     assert "tags" not in peer_link_fields
+
+    object_names = [obj.name for obj in cfg.objects]
+    assert object_names.index("device") < object_names.index("ndfc_fabric")
+    assert object_names.index("device") < object_names.index("ndfc_vpc_domain")
+    assert object_names.index("device") < object_names.index("ndfc_vpc_peer_link")
