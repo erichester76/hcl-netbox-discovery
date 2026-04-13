@@ -37,6 +37,7 @@ hcl-netbox-discovery/
 │       ├── azure.py               # Microsoft Azure SDK adapter
 │       ├── ldap.py                # LDAP directory adapter (ldap3)
 │       ├── catc.py                # Cisco Catalyst Center adapter (dnacentersdk)
+│       ├── salt.py                # Salt grains artifact adapter
 │       ├── nexus.py               # Cisco Nexus Dashboard Fabric Controller adapter
 │       ├── f5.py                  # F5 BIG-IP iControl REST adapter
 │       ├── prometheus.py          # Prometheus node-exporter adapter
@@ -66,6 +67,7 @@ hcl-netbox-discovery/
 │   ├── nexus.hcl.example
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
+│   ├── salt.hcl.example
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example

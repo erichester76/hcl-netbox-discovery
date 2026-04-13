@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import types
-from unittest.mock import MagicMock
-
 import pytest
 
 from collector.config import (
@@ -13,7 +10,6 @@ from collector.config import (
     SourceConfig,
 )
 from collector.context import RunContext
-
 
 # ---------------------------------------------------------------------------
 # Source config factories
@@ -131,6 +127,18 @@ def prometheus_config():
         password="",
         verify_ssl=False,
         extra={"fetch_interfaces": "true"},
+    )
+
+
+@pytest.fixture()
+def salt_config():
+    return SourceConfig(
+        api_type="salt",
+        url="/tmp/salt-grains.json",
+        username="",
+        password="",
+        verify_ssl=True,
+        extra={"artifact_path": "/tmp/salt-grains.json"},
     )
 
 
