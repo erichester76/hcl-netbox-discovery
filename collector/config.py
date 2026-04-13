@@ -360,22 +360,9 @@ class CollectorConfig:
     netbox: NetBoxConfig
     collector: CollectorOptions
     objects: list[ObjectConfig] = field(default_factory=list)
-    display_name: str = ""
     # Raw HCL source body kept for per-iteration re-evaluation (iterator feature)
     raw_source_body: dict = field(default_factory=dict)
     source_label: str = ""
-
-
-def _normalize_display_name(value: Any) -> str:
-    resolved = _eval_config_str(value)
-    return str(resolved).strip() if resolved is not None else ""
-
-
-def load_mapping_display_name(mapping_path: str) -> str:
-    """Return the optional top-level ``display_name`` for an HCL mapping."""
-    with open(mapping_path) as fh:
-        raw = hcl2.load(fh)
-    return _normalize_display_name(raw.get("display_name", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -666,8 +653,6 @@ def load_config(mapping_path: str) -> CollectorConfig:
     with open(mapping_path, "r") as fh:
         raw = hcl2.load(fh)
 
-    display_name = _normalize_display_name(raw.get("display_name", ""))
-
     # --- source ---
     source_list = raw.get("source", [])
     if not source_list:
@@ -742,7 +727,6 @@ def load_config(mapping_path: str) -> CollectorConfig:
         netbox=netbox_cfg,
         collector=collector_cfg,
         objects=objects,
-        display_name=display_name,
         raw_source_body=source_body,
         source_label=source_label,
     )

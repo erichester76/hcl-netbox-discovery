@@ -27,7 +27,6 @@ from collector.config import (
     build_source_config,
     build_source_groups,
     load_config,
-    load_mapping_display_name,
 )
 from collector.db import init_db, set_setting
 
@@ -178,8 +177,6 @@ def _init_runtime_config_db(tmp_path: Path, monkeypatch, **values: str) -> None:
 class TestLoadConfigMinimal:
     def test_parses_minimal_valid_config(self, tmp_path):
         path = _write_hcl(tmp_path, """
-            display_name = "VMware vCenter"
-
             source "vmware" {
               api_type  = "vmware"
               url       = "vcenter.example.com"
@@ -211,39 +208,7 @@ class TestLoadConfigMinimal:
         assert cfg.collector.max_workers == 8
         assert cfg.collector.dry_run is False
         assert cfg.collector.sync_tag == "vmware-sync"
-        assert cfg.display_name == "VMware vCenter"
         assert cfg.objects == []
-
-    def test_display_name_defaults_to_empty_string(self, tmp_path):
-        path = _write_hcl(tmp_path, """
-            source "vmware" {
-              api_type = "vmware"
-              url      = "vc.example.com"
-            }
-
-            netbox {
-              url   = "https://netbox.example.com"
-              token = "abc123"
-            }
-        """)
-        cfg = load_config(path)
-        assert cfg.display_name == ""
-
-    def test_load_mapping_display_name_returns_trimmed_value(self, tmp_path):
-        path = _write_hcl(tmp_path, """
-            display_name = "  VMware vCenter  "
-
-            source "vmware" {
-              api_type = "vmware"
-              url      = "vc.example.com"
-            }
-
-            netbox {
-              url   = "https://netbox.example.com"
-              token = "abc123"
-            }
-        """)
-        assert load_mapping_display_name(path) == "VMware vCenter"
 
     def test_raises_when_source_block_missing(self, tmp_path):
         path = _write_hcl(tmp_path, """

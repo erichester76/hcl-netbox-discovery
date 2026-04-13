@@ -51,8 +51,6 @@
 #       max_workers = 2
 #     }
 
-display_name = "Lenovo XClarity Modules"
-
 source "xclarity" {
   api_type    = "rest"
   url         = "env('XCLARITY_HOST')"

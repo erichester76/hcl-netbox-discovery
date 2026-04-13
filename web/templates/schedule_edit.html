@@ -22,10 +22,10 @@
             <label for="hcl_file" class="form-label">HCL Mapping File</label>
             {% if mapping_files %}
             <select class="form-select" id="hcl_file" name="hcl_file" required>
-              {% for mapping in mapping_files %}
-              <option value="{{ mapping.path }}"
-                {% if sched.hcl_file.endswith(mapping.path) or mapping.path == sched.hcl_file %}selected{% endif %}>
-                {{ mapping.label }}
+              {% for f in mapping_files %}
+              <option value="{{ f }}"
+                {% if sched.hcl_file.endswith(f) or f == sched.hcl_file %}selected{% endif %}>
+                {{ f }}
               </option>
               {% endfor %}
             </select>

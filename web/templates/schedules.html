@@ -25,8 +25,8 @@
             {% if mapping_files %}
             <select class="form-select" id="hcl_file" name="hcl_file" required>
               <option value="" disabled selected>— select a mapping —</option>
-              {% for mapping in mapping_files %}
-              <option value="{{ mapping.path }}">{{ mapping.label }}</option>
+              {% for f in mapping_files %}
+              <option value="{{ f }}">{{ f }}</option>
               {% endfor %}
             </select>
             {% else %}

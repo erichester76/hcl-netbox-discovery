@@ -18,8 +18,6 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 
-display_name = "Cisco Nexus Dashboard Fabric Controller"
-
 source "nexus" {
   api_type          = "nexus"
   url               = "env('NDFC_HOST')"

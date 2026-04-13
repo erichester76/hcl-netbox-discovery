@@ -42,8 +42,6 @@
 #   company         — Company name
 #   distinguishedName — Full LDAP distinguished name (used in comments)
 
-display_name = "Active Directory Users"
-
 source "ldap" {
   api_type   = "ldap"
   url        = "env('AD_SERVER')"
