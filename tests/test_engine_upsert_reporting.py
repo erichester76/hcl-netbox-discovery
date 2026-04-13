@@ -830,6 +830,52 @@ class TestEngineUpsertReporting:
         nb_main.upsert.assert_not_called()
         nb_main.upsert_with_outcome.assert_not_called()
 
+    def test_live_custom_object_existing_without_update_helper_errors_instead_of_creating(self):
+        engine = Engine()
+        stats = RunStats("ndfc_vpc_domains")
+        nb_main = MagicMock()
+        nb_main.get.side_effect = ValueError(
+            "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
+        )
+        nb_main.list.return_value = [
+            {"id": 2, "data": {"identifier": "Poole-CUProd:0"}},
+        ]
+        del nb_main.update
+        nb_main.create.return_value = {"id": 5, "identifier": "Poole-CUProd:0"}
+
+        result = engine._upsert(
+            _ctx(nb=MagicMock(), nb_main=nb_main),
+            "plugins.custom_objects.ndfc_vpc_domains",
+            {"identifier": "Poole-CUProd:0", "fabric_name": "Poole-CUProd"},
+            lookup_fields=["identifier"],
+            stats=stats,
+            field_configs=[FieldConfig(name="fabric_name", value="source('fabric_name')")],
+        )
+
+        assert result is None
+        assert stats.errored == 1
+        nb_main.create.assert_not_called()
+
+    def test_standard_lookup_does_not_match_nested_related_name(self):
+        engine = Engine()
+        ctx = _ctx(nb=MagicMock())
+
+        candidate = {
+            "id": 10,
+            "name": "device-a",
+            "site": {"id": 20, "name": "Poole-CUProd"},
+        }
+
+        assert (
+            engine._lookup_candidate_matches_filters(
+                ctx,
+                "dcim.devices",
+                candidate,
+                {"name": "Poole-CUProd"},
+            )
+            is False
+        )
+
     def test_run_closes_primary_client_when_branchless_client_creation_fails(self):
         engine = Engine()
         nb = MagicMock()

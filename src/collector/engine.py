@@ -526,116 +526,6 @@ class Engine:
         return resource.startswith("plugins.custom_objects.")
 
     @classmethod
-    def _normalize_plugin_match_value(cls, key: str, value: Any) -> Any:
-        extracted_id = extract_id(value)
-        if extracted_id is not None:
-            return extracted_id
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if key == "slug":
-                return normalized.replace("_", "-")
-            return normalized
-        return value
-
-    @classmethod
-    def _plugin_candidate_values(cls, candidate: Any, key: str) -> list[Any]:
-        values: list[Any] = []
-
-        direct_value = cls._record_attr_value(candidate, key)
-        if direct_value is not None:
-            values.append(direct_value)
-
-        if key == "slug":
-            name_value = cls._record_attr_value(candidate, "name")
-            if name_value is not None:
-                values.append(str(name_value).replace("_", "-"))
-
-        if key == "custom_object_type":
-            nested = cls._record_attr_value(candidate, "custom_object_type")
-            if nested is not None:
-                values.append(nested)
-                nested_id = extract_id(nested)
-                if nested_id is not None:
-                    values.append(nested_id)
-                nested_slug = cls._record_attr_value(nested, "slug")
-                if nested_slug is not None:
-                    values.append(nested_slug)
-                nested_name = cls._record_attr_value(nested, "name")
-                if nested_name is not None:
-                    values.append(str(nested_name).replace("_", "-"))
-
-        return values
-
-    @classmethod
-    def _plugin_record_matches_filters(
-        cls,
-        candidate: Any,
-        filters: dict[str, Any],
-    ) -> bool:
-        for key, expected_value in filters.items():
-            expected_normalized = cls._normalize_plugin_match_value(key, expected_value)
-            candidate_values = cls._plugin_candidate_values(candidate, key)
-            if not candidate_values:
-                return False
-            normalized_candidates = {
-                cls._normalize_plugin_match_value(key, candidate_value)
-                for candidate_value in candidate_values
-                if candidate_value is not None
-            }
-            if expected_normalized not in normalized_candidates:
-                return False
-        return True
-
-    @classmethod
-    def _plugin_exact_match_candidates(
-        cls,
-        ctx: RunContext,
-        resource: str,
-        filters: dict[str, Any],
-    ) -> list[Any]:
-        list_helper = getattr(ctx.nb, "list", None)
-        if not callable(list_helper):
-            return []
-        try:
-            candidates = list_helper(resource, **filters)
-        except Exception as exc:
-            logger.debug(
-                "Plugin custom object candidate listing failed  resource=%s  filters=%s  error=%s",
-                resource,
-                filters,
-                exc,
-            )
-            return []
-        if not isinstance(candidates, (list, tuple)):
-            return []
-        return [
-            candidate
-            for candidate in candidates
-            if cls._plugin_record_matches_filters(candidate, filters)
-        ]
-
-    @classmethod
-    def _lookup_existing_record(
-        cls,
-        ctx: RunContext,
-        resource: str,
-        filters: dict[str, Any],
-    ) -> Any:
-        if not filters:
-            return None
-        if not cls._uses_plugin_custom_object_matching(resource):
-            return ctx.nb.get(resource, **filters)
-
-        exact_candidates = cls._plugin_exact_match_candidates(ctx, resource, filters)
-        if not exact_candidates:
-            return None
-        if len(exact_candidates) > 1:
-            raise ValueError(
-                "get() returned more than one result. Check that the kwarg(s) passed are valid for this endpoint or use filter() or all() instead."
-            )
-        return exact_candidates[0]
-
-    @classmethod
     def _normalize_compare_field(
         cls,
         ctx: RunContext,
@@ -885,6 +775,10 @@ class Engine:
                 if callable(update_helper) and existing_id is not None:
                     update_result = update_helper(resource, existing_id, payload)
                     return update_result or existing, "updated", payload
+                raise RuntimeError(
+                    f"Found existing {resource} record but cannot update it safely: "
+                    "update helper unavailable or existing object has no id"
+                )
 
             create_helper = getattr(nb_client, "create", None)
             if callable(create_helper):
@@ -1022,13 +916,30 @@ class Engine:
         candidate: Any,
         filters: dict[str, Any],
     ) -> bool:
+        use_recursive_plugin_matching = cls._uses_plugin_custom_object_matching(resource)
         for field, expected in filters.items():
             compare_key = field[:-3] if field.endswith("_id") else field
-            actual_values = cls._record_attr_values_recursive(candidate, field)
-            if compare_key != field:
-                actual_values.extend(cls._record_attr_values_recursive(candidate, compare_key))
-            if resource == "plugins.custom_objects.custom_object_types" and compare_key == "slug":
-                actual_values.extend(cls._record_attr_values_recursive(candidate, "name"))
+            if use_recursive_plugin_matching:
+                actual_values = cls._record_attr_values_recursive(candidate, field)
+                if compare_key != field:
+                    actual_values.extend(
+                        cls._record_attr_values_recursive(candidate, compare_key)
+                    )
+                if (
+                    resource == "plugins.custom_objects.custom_object_types"
+                    and compare_key == "slug"
+                ):
+                    actual_values.extend(cls._record_attr_values_recursive(candidate, "name"))
+            else:
+                actual_values = [cls._record_attr_value(candidate, field)]
+                if compare_key != field:
+                    actual_values.append(cls._record_attr_value(candidate, compare_key))
+                if (
+                    resource == "plugins.custom_objects.custom_object_types"
+                    and compare_key == "slug"
+                ):
+                    actual_values.append(cls._record_attr_value(candidate, "name"))
+            actual_values = [value for value in actual_values if value is not None]
 
             expected_id = expected if isinstance(expected, int) else extract_id(expected)
             normalized_expected = cls._normalize_compare_field(
