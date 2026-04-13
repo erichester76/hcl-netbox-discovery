@@ -637,6 +637,32 @@ def _debug_module_fetch_payload(*, switch_db_id: Any, fabric_name: str, switch_i
         sample_preview,
     )
 
+    if flattened or not isinstance(payload, dict):
+        return
+
+    for group_name in ("moduleInfo", "fexDetails"):
+        group = payload.get(group_name)
+        if not isinstance(group, dict) or not group:
+            continue
+        first_bucket, first_value = next(iter(group.items()))
+        if isinstance(first_value, dict):
+            first_preview: Any = sorted(first_value.keys())
+        elif isinstance(first_value, list):
+            first_preview = f"list[{len(first_value)}]"
+        else:
+            first_preview = first_value
+        logger.debug(
+            "NDFC module grouped payload switch_db_id=%s fabric=%s switch_id=%s group=%s "
+            "first_bucket=%r first_bucket_type=%s first_bucket_preview=%s",
+            switch_db_id,
+            fabric_name,
+            switch_id,
+            group_name,
+            first_bucket,
+            type(first_value).__name__,
+            first_preview,
+        )
+
 
 def _normalize_interface_name(name: str) -> str:
     """Return a canonical interface name for mixed NDFC short/long forms."""

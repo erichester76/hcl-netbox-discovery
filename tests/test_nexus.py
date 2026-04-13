@@ -22,6 +22,7 @@ from collector.sources.nexus import (
     _build_topology_custom_object_type_records,
     _build_vpc_domain_records,
     _build_vpc_peer_link_records,
+    _debug_module_fetch_payload,
     _derive_interface_name_details,
     _flatten_interface_payload,
     _flatten_module_payload,
@@ -233,6 +234,30 @@ class TestFlattenModulePayload:
         }
 
         assert _flatten_module_payload(payload) == payload["DATA"]
+
+    def test_debug_logs_grouped_bucket_preview_when_no_modules_flatten(self, caplog):
+        payload = {
+            "moduleInfo": {
+                "n/a": 1,
+            },
+            "fexDetails": {
+                "fex-101": {"count": 2},
+            },
+        }
+
+        with caplog.at_level(logging.DEBUG):
+            _debug_module_fetch_payload(
+                switch_db_id=782460,
+                fabric_name="ITC-CUProd",
+                switch_id="FDO28271L0Q",
+                payload=payload,
+                flattened=[],
+            )
+
+        assert "group=moduleInfo" in caplog.text
+        assert "first_bucket='n/a'" in caplog.text
+        assert "first_bucket_type=int" in caplog.text
+        assert "group=fexDetails" in caplog.text
 
 
 class TestInterfaceRelationshipNames:
