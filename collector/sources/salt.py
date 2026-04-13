@@ -142,13 +142,15 @@ def _normalise_host(minion_id: str, record: dict[str, Any]) -> dict[str, Any]:
     hostname = fqdn or host or minion_id
     name = _short_name(hostname, minion_id[:64] or "unknown")
 
-    ip_interfaces = grains.get("ip_interfaces", {})
-    hwaddr_interfaces = grains.get("hwaddr_interfaces", {})
+    ip_interfaces = grains.get("ip_interfaces")
+    if not isinstance(ip_interfaces, dict):
+        ip_interfaces = {}
+    hwaddr_interfaces = grains.get("hwaddr_interfaces")
+    if not isinstance(hwaddr_interfaces, dict):
+        hwaddr_interfaces = {}
     interface_names = set()
-    if isinstance(ip_interfaces, dict):
-        interface_names.update(str(name) for name in ip_interfaces)
-    if isinstance(hwaddr_interfaces, dict):
-        interface_names.update(str(name) for name in hwaddr_interfaces)
+    interface_names.update(str(name) for name in ip_interfaces)
+    interface_names.update(str(name) for name in hwaddr_interfaces)
 
     interfaces: list[dict[str, Any]] = []
     all_ips: list[str] = []
@@ -237,7 +239,12 @@ class SaltSource(DataSource):
                 f"SaltSource: unknown collection {collection!r}. Supported: ['hosts']"
             )
 
-        payload = json.loads(self._artifact_path.read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(self._artifact_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Salt artifact at {self._artifact_path} contains invalid JSON"
+            ) from exc
         return [
             _normalise_host(minion_id, record)
             for minion_id, record in _iter_records(payload)

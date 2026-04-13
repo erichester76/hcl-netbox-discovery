@@ -95,6 +95,20 @@ class TestNormaliseHost:
         assert host["interfaces"][0]["mac_address"] == "00:11:22:33:44:55"
         assert host["interfaces"][0]["ip_addresses"][0]["address"] == "10.0.0.5/32"
 
+    def test_tolerates_non_dict_interface_grains(self):
+        host = _normalise_host(
+            "minion-1",
+            {
+                "grains": {
+                    "host": "web-01",
+                    "ip_interfaces": None,
+                    "hwaddr_interfaces": ["bad-shape"],
+                }
+            },
+        )
+
+        assert host["interfaces"] == []
+
 
 class TestSaltSource:
     def test_connect_requires_artifact_path(self, salt_config):
@@ -148,3 +162,15 @@ class TestSaltSource:
 
         with pytest.raises(ValueError, match="Supported: \\['hosts'\\]"):
             source.get_objects("devices")
+
+    def test_reports_invalid_json_with_artifact_path(self, tmp_path, salt_config):
+        artifact = tmp_path / "salt-grains.json"
+        artifact.write_text("{not-json", encoding="utf-8")
+        salt_config.extra["artifact_path"] = str(artifact)
+        salt_config.url = ""
+
+        source = SaltSource()
+        source.connect(salt_config)
+
+        with pytest.raises(ValueError, match="contains invalid JSON"):
+            source.get_objects("hosts")
