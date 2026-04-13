@@ -57,6 +57,15 @@ class TestIterHostvars:
         payload = [{"inventory_hostname": "web-01", "ansible_hostname": "web-01"}]
         assert _iter_hostvars(payload) == [("web-01", payload[0])]
 
+    def test_uses_ansible_facts_hostname_for_single_record_payload(self):
+        payload = {
+            "ansible_facts": {
+                "ansible_hostname": "web-01",
+                "ansible_fqdn": "web-01.example.com",
+            }
+        }
+        assert _iter_hostvars(payload) == [("web-01", payload)]
+
 
 class TestNormaliseHost:
     def test_builds_host_and_interface_shape(self):
@@ -103,6 +112,19 @@ class TestNormaliseHost:
         ]
         assert host["interfaces"][0]["name"] == "eth0"
         assert host["interfaces"][0]["mac_address"] == "00:11:22:33:44:55"
+
+    def test_filters_empty_interface_names(self):
+        host = _normalise_host(
+            "web-01",
+            {
+                "ansible_facts": {
+                    "ansible_hostname": "web-01",
+                    "ansible_interfaces": ["eth0", "", None, "eth0"],
+                    "ansible_eth0": {"active": True},
+                }
+            },
+        )
+        assert [iface["name"] for iface in host["interfaces"]] == ["eth0"]
 
 
 class TestAnsibleSource:
@@ -176,3 +198,25 @@ class TestAnsibleSource:
 
         hosts = source.get_objects("hosts")
         assert [host["name"] for host in hosts] == ["web-01"]
+
+    def test_uses_filename_for_directory_fact_cache_without_embedded_hostname(self, tmp_path, ansible_config):
+        artifact_dir = tmp_path / "facts"
+        artifact_dir.mkdir()
+        (artifact_dir / "web-02.json").write_text(
+            json.dumps(
+                {
+                    "ansible_facts": {
+                        "ansible_interfaces": [],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        ansible_config.extra["artifact_path"] = str(artifact_dir)
+        ansible_config.url = ""
+
+        source = AnsibleSource()
+        source.connect(ansible_config)
+
+        hosts = source.get_objects("hosts")
+        assert [host["name"] for host in hosts] == ["web-02"]

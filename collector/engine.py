@@ -153,7 +153,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.vmware import VMwareSource
 
     registry = {
-        "ansible":   AnsibleSource,
+        "ansible":    AnsibleSource,
         "vmware":     VMwareSource,
         "rest":       RestSource,
         "catc":       CatalystCenterSource,

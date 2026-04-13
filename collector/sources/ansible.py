@@ -146,9 +146,20 @@ def _iter_hostvars(payload: Any) -> list[tuple[str, dict[str, Any]]]:
         if isinstance(payload.get("hosts"), list):
             return _iter_hostvars(payload["hosts"])
         if "inventory_hostname" in payload or "ansible_facts" in payload:
-            host = str(payload.get("inventory_hostname") or payload.get("ansible_hostname") or "")
+            facts = payload.get("ansible_facts")
+            if not isinstance(facts, dict):
+                facts = {}
+            host = str(
+                payload.get("inventory_hostname")
+                or payload.get("ansible_hostname")
+                or facts.get("ansible_hostname")
+                or facts.get("ansible_fqdn")
+                or ""
+            )
             if host:
                 return [(host, payload)]
+            if "ansible_facts" in payload:
+                return []
         return [
             (str(host), vars_dict)
             for host, vars_dict in payload.items()
@@ -179,7 +190,12 @@ def _normalise_host(hostname: str, record: dict[str, Any]) -> dict[str, Any]:
     interfaces: list[dict[str, Any]] = []
     all_ips: list[str] = []
     if isinstance(interface_names, list):
-        for iface_name in sorted(str(name) for name in interface_names):
+        valid_names = {
+            str(name).strip()
+            for name in interface_names
+            if str(name or "").strip()
+        }
+        for iface_name in sorted(valid_names):
             details = facts.get(_interface_var_name(iface_name), {})
             if not isinstance(details, dict):
                 details = {}
@@ -267,7 +283,13 @@ class AnsibleSource(DataSource):
         if self._artifact_path.is_dir():
             for entry in sorted(self._artifact_path.glob("*.json")):
                 payload = json.loads(entry.read_text(encoding="utf-8"))
-                records.extend(_iter_hostvars(payload))
+                file_records = _iter_hostvars(payload)
+                if file_records:
+                    records.extend(file_records)
+                    continue
+                if isinstance(payload, dict):
+                    fallback_host = entry.stem
+                    records.append((fallback_host, payload))
         else:
             payload = json.loads(self._artifact_path.read_text(encoding="utf-8"))
             records.extend(_iter_hostvars(payload))
