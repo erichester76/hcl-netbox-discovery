@@ -393,6 +393,8 @@ an importer-ready fact cache directory.
 Example:
 
 ```bash
+cp mappings/ansible.hcl.example mappings/ansible.hcl
+
 ANSIBLE_INVENTORY=inventory/hosts.yml \
 ANSIBLE_EE_IMAGE=quay.io/ansible/creator-ee:latest \
 ANSIBLE_OUTPUT_DIR=artifacts/ansible-facts \

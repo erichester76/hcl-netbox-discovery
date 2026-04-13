@@ -15,6 +15,12 @@ ANSIBLE_LIMIT="${ANSIBLE_LIMIT:-}"
 ANSIBLE_REMOTE_USER="${ANSIBLE_REMOTE_USER:-}"
 ANSIBLE_PRIVATE_KEY_FILE="${ANSIBLE_PRIVATE_KEY_FILE:-}"
 ANSIBLE_HOST_KEY_CHECKING="${ANSIBLE_HOST_KEY_CHECKING:-false}"
+ANSIBLE_EE_DEBUG="${ANSIBLE_EE_DEBUG:-false}"
+
+if [[ ! -f "${PLAYBOOK_PATH}" ]]; then
+  printf 'Playbook not found: %s\n' "${PLAYBOOK_PATH}" >&2
+  exit 1
+fi
 
 mkdir -p "${ANSIBLE_OUTPUT_DIR}/fact-cache"
 
@@ -30,7 +36,7 @@ runtime_args=(
   run --rm
   -v "${inventory_mount}:/inventory:ro"
   -v "${ANSIBLE_OUTPUT_DIR}:/output"
-  -v "${REPO_ROOT}:/workspace:ro"
+  -v "${PLAYBOOK_PATH}:/playbooks/ansible_fact_discovery.yml:ro"
   -e "ANSIBLE_INVENTORY=${inventory_target}"
   -e "ANSIBLE_OUTPUT_DIR=/output"
   -e "ANSIBLE_LIMIT=${ANSIBLE_LIMIT}"
@@ -67,7 +73,7 @@ CFG
 
 export ANSIBLE_CONFIG=/tmp/ansible.cfg
 
-playbook_args=("/workspace/scripts/ansible_fact_discovery.yml")
+playbook_args=("/playbooks/ansible_fact_discovery.yml")
 if [[ -n "${ANSIBLE_LIMIT}" ]]; then
   playbook_args+=("--limit" "${ANSIBLE_LIMIT}")
 fi
@@ -82,8 +88,12 @@ ansible-playbook "${playbook_args[@]}"
 EOF
 )"
 
-set -x
+case "${ANSIBLE_EE_DEBUG}" in
+  1|true|TRUE|yes|YES|on|ON)
+    set -x
+    ;;
+esac
+
 "${CONTAINER_RUNTIME}" "${runtime_args[@]}" "${ANSIBLE_EE_IMAGE}" /bin/bash -lc "${container_script}"
 
 printf '\nAnsible fact cache written to %s/fact-cache\n' "${ANSIBLE_OUTPUT_DIR}"
-
