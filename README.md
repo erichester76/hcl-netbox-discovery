@@ -382,6 +382,11 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 
 > **xclarity.hcl.example** — The unified XClarity example supports both inventory items and optional module sync. `COLLECTOR_SYNC_INVENTORY=true` keeps the default inventory-item behavior, while `COLLECTOR_SYNC_MODULES=true` enables the richer `dcim.module_bays` -> `dcim.modules` -> `dcim.module_types` object graph for CPUs, memory, drives, add-in cards, power supplies, and fans.
 
+> **Ansible / Salt management tags** — The example mappings add
+> `ansible-managed` and `salt-managed` as additive tags on positive discovery.
+> Reuse the same `field "tags"` pattern in VM mappings when those hosts should
+> sync to `virtualization.virtual_machines`.
+
 ---
 
 ## Regex Pattern Files

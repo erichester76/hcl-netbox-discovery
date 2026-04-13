@@ -16,6 +16,10 @@
 #   SALT_EAUTH           External auth backend (default: pam)
 #   SALT_ARTIFACT_PATH   Fallback artifact path when mode = artifact
 #   DRY_RUN              true | false (default: false)
+#
+# This example asserts the `salt-managed` tag on positively discovered
+# objects. Reuse the same field in a `virtualization.virtual_machines` mapping
+# if you map Salt hosts to VMs instead of devices.
 
 source "salt" {
   api_type   = "salt"
