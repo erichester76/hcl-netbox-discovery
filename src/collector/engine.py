@@ -463,9 +463,67 @@ class Engine:
 
         return None
 
+    @classmethod
+    def _record_attr_values_recursive(cls, value: Any, name: str) -> list[Any]:
+        values: list[Any] = []
+        seen_ids: set[int] = set()
+
+        def _walk(node: Any) -> None:
+            node_id = id(node)
+            if node_id in seen_ids:
+                return
+            seen_ids.add(node_id)
+
+            direct = cls._record_attr_value(node, name)
+            if direct is not None:
+                values.append(direct)
+
+            if isinstance(node, dict):
+                for child in node.values():
+                    if isinstance(child, (dict, list, tuple)):
+                        _walk(child)
+                return
+
+            node_dict = getattr(node, "__dict__", None)
+            if isinstance(node_dict, dict):
+                for child in node_dict.values():
+                    if isinstance(child, (dict, list, tuple)):
+                        _walk(child)
+
+            serialize = getattr(node, "serialize", None)
+            if callable(serialize) and type(node).__module__ != "unittest.mock":
+                try:
+                    serialized = serialize()
+                except Exception as exc:
+                    logger.debug(
+                        "Record serialization failed during recursive lookup normalization  type=%s  attr=%s  error=%s",
+                        type(node).__name__,
+                        name,
+                        exc,
+                    )
+                    serialized = None
+                if isinstance(serialized, dict):
+                    _walk(serialized)
+                elif isinstance(serialized, (list, tuple)):
+                    for child in serialized:
+                        if isinstance(child, (dict, list, tuple)):
+                            _walk(child)
+
+            if isinstance(node, (list, tuple)):
+                for child in node:
+                    if isinstance(child, (dict, list, tuple)):
+                        _walk(child)
+
+        _walk(value)
+        return values
+
     @staticmethod
     def _is_ambiguous_lookup_error(exc: Exception) -> bool:
         return "more than one result" in str(exc).lower()
+
+    @staticmethod
+    def _uses_plugin_custom_object_matching(resource: str) -> bool:
+        return resource.startswith("plugins.custom_objects.")
 
     @classmethod
     def _normalize_compare_field(
@@ -596,10 +654,7 @@ class Engine:
     ) -> dict[str, Any]:
         subset: dict[str, Any] = {}
         for key in keys:
-            if isinstance(existing, dict):
-                value = existing.get(key)
-            else:
-                value = getattr(existing, key, None)
+            value = Engine._record_attr_value(existing, key)
             subset[key] = Engine._normalize_compare_field(ctx, resource, key, value)
         return subset
 
@@ -654,7 +709,13 @@ class Engine:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         existing = None
         resolved_from_ambiguity = False
-        if filters and (field_configs or "tags" in payload):
+        if filters and self._uses_plugin_custom_object_matching(resource):
+            existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                ctx,
+                resource,
+                filters,
+            )
+        elif filters and (field_configs or "tags" in payload):
             try:
                 existing = nb_client.get(resource, **filters)
             except Exception as exc:
@@ -690,6 +751,35 @@ class Engine:
             payload = dict(payload)
             payload["id"] = existing_id
             effective_lookup_fields = ["id"]
+        if self._uses_plugin_custom_object_matching(resource):
+            desired_subset = {
+                key: self._normalize_compare_field(ctx, resource, key, value)
+                for key, value in payload.items()
+                if not self._is_preview_reference(value)
+            }
+            if existing is not None:
+                existing_subset = self._build_existing_subset(
+                    ctx,
+                    resource,
+                    existing,
+                    list(desired_subset.keys()),
+                )
+                payload_diff = DeepDiff(existing_subset, desired_subset, ignore_order=True)
+                if not payload_diff:
+                    return existing, "noop", payload
+
+                update_helper = getattr(nb_client, "update", None)
+                if callable(update_helper) and existing_id is not None:
+                    update_result = update_helper(resource, existing_id, payload)
+                    return update_result or existing, "updated", payload
+                raise RuntimeError(
+                    f"Found existing {resource} record but cannot update it safely: "
+                    "update helper unavailable or existing object has no id"
+                )
+
+            create_helper = getattr(nb_client, "create", None)
+            if callable(create_helper):
+                return create_helper(resource, payload), "created", payload
         outcome = "created"
         obj = None
         upsert_with_outcome = getattr(nb_client, "upsert_with_outcome", None)
@@ -823,46 +913,71 @@ class Engine:
         candidate: Any,
         filters: dict[str, Any],
     ) -> bool:
+        use_recursive_plugin_matching = cls._uses_plugin_custom_object_matching(resource)
         for field, expected in filters.items():
             compare_key = field[:-3] if field.endswith("_id") else field
-            actual = cls._record_attr_value(candidate, field)
-            if actual is None and compare_key != field:
-                actual = cls._record_attr_value(candidate, compare_key)
-            if (
-                resource == "plugins.custom_objects.custom_object_types"
-                and compare_key == "slug"
-                and actual is None
-            ):
-                actual = cls._record_attr_value(candidate, "name")
+            if use_recursive_plugin_matching:
+                actual_values = cls._record_attr_values_recursive(candidate, field)
+                if compare_key != field:
+                    actual_values.extend(
+                        cls._record_attr_values_recursive(candidate, compare_key)
+                    )
+                if (
+                    resource == "plugins.custom_objects.custom_object_types"
+                    and compare_key == "slug"
+                ):
+                    actual_values.extend(cls._record_attr_values_recursive(candidate, "name"))
+            else:
+                actual_values = [cls._record_attr_value(candidate, field)]
+                if compare_key != field:
+                    actual_values.append(cls._record_attr_value(candidate, compare_key))
+                if (
+                    resource == "plugins.custom_objects.custom_object_types"
+                    and compare_key == "slug"
+                ):
+                    actual_values.append(cls._record_attr_value(candidate, "name"))
+            actual_values = [value for value in actual_values if value is not None]
 
             expected_id = expected if isinstance(expected, int) else extract_id(expected)
-            actual_id = actual if isinstance(actual, int) else extract_id(actual)
-            if expected_id is not None or actual_id is not None:
-                if actual_id != expected_id:
-                    return False
-                continue
-
             normalized_expected = cls._normalize_compare_field(
                 ctx,
                 resource,
                 compare_key,
                 expected,
             )
-            normalized_actual = cls._normalize_compare_field(
-                ctx,
-                resource,
-                compare_key,
-                actual,
-            )
             if (
                 resource == "plugins.custom_objects.custom_object_types"
                 and compare_key == "slug"
                 and isinstance(normalized_expected, str)
-                and isinstance(normalized_actual, str)
             ):
                 normalized_expected = normalized_expected.replace("_", "-")
-                normalized_actual = normalized_actual.replace("_", "-")
-            if normalized_actual != normalized_expected:
+
+            matched = False
+            for actual in actual_values:
+                actual_id = actual if isinstance(actual, int) else extract_id(actual)
+                if expected_id is not None or actual_id is not None:
+                    if actual_id == expected_id:
+                        matched = True
+                        break
+                    continue
+
+                normalized_actual = cls._normalize_compare_field(
+                    ctx,
+                    resource,
+                    compare_key,
+                    actual,
+                )
+                if (
+                    resource == "plugins.custom_objects.custom_object_types"
+                    and compare_key == "slug"
+                    and isinstance(normalized_actual, str)
+                ):
+                    normalized_actual = normalized_actual.replace("_", "-")
+                if normalized_actual == normalized_expected:
+                    matched = True
+                    break
+
+            if not matched:
                 return False
         return True
 
@@ -919,25 +1034,30 @@ class Engine:
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
-        try:
-            existing = nb_client.get(resource, **filters) if filters else None
-        except ValueError as exc:
-            if "more than one result" not in str(exc):
-                raise
-            existing, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
+        if filters and self._uses_plugin_custom_object_matching(resource):
+            existing, _, _ = self._resolve_ambiguous_lookup_candidate(
                 ctx,
                 resource,
                 filters,
             )
-            if existing is not None:
-                pass
-            else:
-                raise AmbiguousDryRunLookupError(
+        else:
+            try:
+                existing = nb_client.get(resource, **filters) if filters else None
+            except ValueError as exc:
+                if "more than one result" not in str(exc):
+                    raise
+                existing, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
+                    ctx,
                     resource,
                     filters,
-                    match_count=match_count,
-                    matched_ids=matched_ids,
-                ) from exc
+                )
+                if existing is None:
+                    raise AmbiguousDryRunLookupError(
+                        resource,
+                        filters,
+                        match_count=match_count,
+                        matched_ids=matched_ids,
+                    ) from exc
         if existing is None:
             return "would_create", filters, None, payload
 
@@ -1516,6 +1636,12 @@ class Engine:
                         field_cfg.resource,
                         lookup,
                         lookup_fields=list(lookup.keys()),
+                    )
+                elif self._uses_plugin_custom_object_matching(field_cfg.resource):
+                    obj, _, _ = self._resolve_ambiguous_lookup_candidate(
+                        ctx,
+                        field_cfg.resource,
+                        lookup,
                     )
                 else:
                     obj = nb_client.get(field_cfg.resource, **lookup)
