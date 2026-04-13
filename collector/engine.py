@@ -139,6 +139,7 @@ def _build_nb_client(cfg_nb: Any) -> Any:
 
 def _get_source_adapter(api_type: str) -> Any:
     """Instantiate the correct DataSource sub-class for *api_type*."""
+    from .sources.ansible import AnsibleSource
     from .sources.azure import AzureSource
     from .sources.catc import CatalystCenterSource
     from .sources.f5 import F5Source
@@ -152,6 +153,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.vmware import VMwareSource
 
     registry = {
+        "ansible":   AnsibleSource,
         "vmware":     VMwareSource,
         "rest":       RestSource,
         "catc":       CatalystCenterSource,

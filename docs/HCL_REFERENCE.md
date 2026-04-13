@@ -53,7 +53,7 @@ See specific source examples at end of document
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Selects the source adapter: `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, `tenable`, or `netbox` |
+| `api_type` | yes | Selects the source adapter: `ansible`, `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, `tenable`, or `netbox` |
 | `url` | yes | Base URL / hostname of the source system |
 | `username` | no | Credential (required for `basic` auth) |
 | `password` | no | Credential / token value |
@@ -743,6 +743,19 @@ source "prometheus" {
 }
 ```
 
+### Ansible facts artifact (`api_type = "ansible"`)
+
+```hcl
+source "ansible" {
+  api_type      = "ansible"
+  artifact_path = env("ANSIBLE_ARTIFACT_PATH")
+}
+```
+
+MVP Ansible support is artifact-backed. Point `artifact_path` at an exported
+hostvars JSON file or a fact-cache directory. The adapter normalises the input
+into a `hosts` collection with nested `interfaces` and `ip_addresses`.
+
 ### SNMP (`api_type = "snmp"`)
 
 ```hcl
@@ -788,4 +801,3 @@ source "source_nb" {
 ```
 
 This adapter reads from a source NetBox instance and returns plain dicts that can be remapped into the destination NetBox.
-
