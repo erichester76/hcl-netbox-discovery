@@ -20,6 +20,8 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 
+display_name = "F5 BIG-IP"
+
 source "f5" {
   api_type          = "f5"
   url               = "env('F5_HOST')"

@@ -56,6 +56,8 @@
 #   serialNumber         — Hardware serial (populated by some management tools)
 #   distinguishedName    — Full LDAP DN; useful for debugging / comments
 
+display_name = "Active Directory Computers"
+
 source "ldap" {
   api_type   = "ldap"
   url        = "env('AD_SERVER')"

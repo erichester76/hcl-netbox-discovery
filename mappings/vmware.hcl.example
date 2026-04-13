@@ -28,6 +28,8 @@
 #       max_workers = 2
 #     }
 
+display_name = "VMware vCenter"
+
 source "vmware" {
   api_type    = "vmware"
   url         = "env('VCENTER_URL')"
