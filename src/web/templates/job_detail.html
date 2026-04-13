@@ -122,6 +122,7 @@
     <span>Log Output</span>
     <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
       <button type="button" class="btn btn-sm btn-outline-light" id="toggle-live-update">Live Update: {{ 'On' if job.status in ['queued', 'running'] else 'Off' }}</button>
+      <button type="button" class="btn btn-sm btn-outline-light" id="copy-log-window">Copy Visible Logs</button>
       <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-DEBUG" data-level="DEBUG" aria-pressed="true">DEBUG</button>
       <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-INFO" data-level="INFO" aria-pressed="true">INFO</button>
       <button type="button" class="btn btn-sm btn-outline-light active" id="toggle-level-WARNING" data-level="WARNING" aria-pressed="true">WARNING</button>
@@ -148,6 +149,7 @@
   const statusBadge = document.getElementById("job-status-badge");
   const liveBadge = document.getElementById("live-badge");
   const liveToggle = document.getElementById("toggle-live-update");
+  const copyButton = document.getElementById("copy-log-window");
   const levelButtons = Array.from(document.querySelectorAll("[id^='toggle-level-']"));
   const activeStatuses = new Set(["queued", "running"]);
   const terminalStatuses = new Set(["success", "partial", "failed", "stopped"]);
@@ -222,6 +224,41 @@
     pre.scrollTop = pre.scrollHeight;
   }
 
+  function visibleLogText() {
+    return Array.from(pre.querySelectorAll("[data-level]"))
+      .filter((line) => !line.classList.contains("log-hidden"))
+      .map((line) => line.textContent || "")
+      .join("\n");
+  }
+
+  async function copyVisibleLogs() {
+    const originalLabel = copyButton.textContent;
+    const text = visibleLogText();
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "absolute";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+      }
+      copyButton.textContent = "Copied";
+    } catch {
+      copyButton.textContent = "Copy Failed";
+    }
+
+    setTimeout(() => {
+      copyButton.textContent = originalLabel;
+    }, 1500);
+  }
+
   function poll() {
     fetch(`/jobs/${jobId}/logs?after_id=${afterId}`)
       .then(r => r.json())
@@ -257,6 +294,10 @@
       clearTimeout(pollTimer);
       pollTimer = null;
     }
+  });
+
+  copyButton.addEventListener("click", () => {
+    copyVisibleLogs();
   });
 
   applyLevelFilters();
