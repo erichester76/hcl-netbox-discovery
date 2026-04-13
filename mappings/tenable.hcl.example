@@ -23,8 +23,6 @@
 #   NETBOX_CACHE_URL              Redis URL or SQLite path
 #   DRY_RUN                       Set to "true" to log payloads without writing
 
-display_name = "Tenable One"
-
 source "tenable" {
   api_type   = "tenable"
   url        = "env('TENABLE_HOST', 'https://cloud.tenable.com')"

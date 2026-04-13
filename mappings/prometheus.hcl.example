@@ -23,8 +23,6 @@
 #   DRY_RUN                       Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES     true | false  (default: true)
 
-display_name = "Prometheus Node Exporter"
-
 source "prometheus" {
   api_type         = "prometheus"
   url              = "env('PROMETHEUS_URL')"

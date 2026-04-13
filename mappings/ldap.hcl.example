@@ -31,8 +31,6 @@
 #   NETBOX_CACHE_URL      Redis URL or SQLite path
 #   DRY_RUN               Set to "true" to log payloads without writing
 
-display_name = "Generic LDAP"
-
 source "ldap" {
   api_type   = "ldap"
   url        = "env('LDAP_SERVER')"

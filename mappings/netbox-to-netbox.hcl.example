@@ -33,8 +33,6 @@
 #   COLLECTOR_SYNC_INTERFACES  true | false  (default: true)
 #   NETBOX_SYNC_TAG            Tag applied to all synced objects (default: netbox-sync)
 
-display_name = "NetBox to NetBox"
-
 source "source_netbox" {
   api_type   = "netbox"
   url        = "env('SOURCE_NETBOX_URL')"

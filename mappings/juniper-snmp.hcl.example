@@ -30,8 +30,6 @@
 #   SNMP_V3_PRIV_PASS  Privacy (encryption) password
 #   SNMP_V3_PRIV_PROTO Privacy protocol: des | aes | aes128 | aes192 | aes256  (default: aes)
 
-display_name = "Juniper SNMP"
-
 source "juniper" {
   api_type   = "snmp"
   url        = "env('SNMP_HOSTS')"
