@@ -13,10 +13,19 @@
 #                             When true, interfaces are fetched per-switch and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   NDFC_FETCH_MODULES        true | false  (default: false)
 #   NETBOX_CACHE_BACKEND      Cache backend: none | redis | sqlite  (default: none)
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
+#   NETBOX_USE_CUSTOM_OBJECTS true | false  (default: false)
+#                             When true, emit Nexus fabric / vPC topology into
+#                             NetBox Custom Objects. This requires the
+#                             ``netbox-custom-objects`` plugin to be installed
+#                             and the ``ndfc_fabrics``, ``ndfc_vpc_domains``,
+#                             and ``ndfc_vpc_peer_links`` custom object types
+#                             (with matching fields) to already exist.
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
+#   COLLECTOR_SYNC_MODULES    true | false  (default: true)
 
 source "nexus" {
   api_type          = "nexus"
@@ -25,6 +34,7 @@ source "nexus" {
   password          = "env('NDFC_PASS')"
   verify_ssl        = "env('NDFC_VERIFY_SSL', 'true')"
   fetch_interfaces  = "env('NDFC_FETCH_INTERFACES', 'false')"
+  fetch_modules     = "env('NDFC_FETCH_MODULES', 'false')"
 }
 
 netbox {
@@ -41,6 +51,352 @@ collector {
   sync_tag         = "ndfc-sync"
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
+  use_custom_objects = "env('NETBOX_USE_CUSTOM_OBJECTS', 'false')"
+  sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
+}
+
+# ---------------------------------------------------------------------------
+# Shared anycast / VARP addresses
+#
+# The Nexus adapter derives a separate collection of duplicated interface IPs
+# after canonicalizing interface names (for example ``eth1/1`` →
+# ``Ethernet1/1``). Shared loopbacks remain standalone anycast IP addresses.
+# Shared VLAN VIPs are modeled as FHRP groups with ``protocol = other`` so the
+# VIP can be attached to the group instead of bouncing between physical
+# interfaces every run.
+# ---------------------------------------------------------------------------
+
+object "shared_ip" {
+  source_collection = "shared_ips"
+  netbox_resource   = "ipam.ip_addresses"
+  lookup_by         = ["address"]
+
+  field "address" {
+    value = "source('address')"
+  }
+
+  field "role" {
+    value = "source('role')"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+}
+
+object "shared_fhrp_group" {
+  source_collection = "shared_fhrp_groups"
+  netbox_resource   = "ipam.fhrp_groups"
+  lookup_by         = ["name"]
+
+  field "name" {
+    value = "source('group_name')"
+  }
+
+  field "protocol" {
+    value = "source('protocol')"
+  }
+
+  field "group_id" {
+    value = "source('group_id')"
+  }
+}
+
+object "shared_fhrp_vip" {
+  source_collection = "shared_fhrp_groups"
+  netbox_resource   = "ipam.ip_addresses"
+  lookup_by         = ["address"]
+
+  field "address" {
+    value = "source('address')"
+  }
+
+  field "role" {
+    value = "source('role')"
+  }
+
+  field "status" {
+    value = "'active'"
+  }
+
+  field "assigned_object_type" {
+    value = "'ipam.fhrpgroup'"
+  }
+
+  field "assigned_object_id" {
+    type     = "fk"
+    resource = "ipam.fhrp_groups"
+    lookup   = { name = "source('group_name')" }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Fallback Nexus topology custom fields
+#
+# When custom objects are disabled, bootstrap the custom fields needed to keep
+# fabric / vPC metadata on the device and interface records themselves.
+# ---------------------------------------------------------------------------
+
+object "ndfc_topology_custom_field" {
+  source_collection = "topology_custom_fields"
+  netbox_resource   = "extras.custom_fields"
+  lookup_by         = ["name"]
+  enabled_if        = "not collector.use_custom_objects"
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "label" {
+    value = "source('label')"
+  }
+
+  field "group_name" {
+    value = "source('group_name')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+
+  field "type" {
+    value = "source('type')"
+  }
+
+  field "object_types" {
+    value = "source('object_types')"
+  }
+
+  field "ui_visible" {
+    value = "source('ui_visible')"
+  }
+
+  field "ui_editable" {
+    value = "source('ui_editable')"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Optional Nexus topology custom objects
+#
+# Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``. When enabled, the
+# mapping first bootstraps the required custom object types and fields in
+# NetBox and then writes the Nexus topology instances. When disabled, the
+# mapping falls back to synchronized device/interface custom fields, and the
+# ``ndfc_topology_custom_field`` block above bootstraps those fields in NetBox.
+# ---------------------------------------------------------------------------
+
+object "ndfc_topology_custom_object_type" {
+  source_collection = "topology_custom_object_types"
+  netbox_resource   = "plugins.custom_objects.custom_object_types"
+  lookup_by         = ["slug"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "slug" {
+    value = "source('slug')"
+  }
+
+  field "verbose_name" {
+    value = "source('verbose_name')"
+  }
+
+  field "verbose_name_plural" {
+    value = "source('verbose_name_plural')"
+  }
+
+  field "group_name" {
+    value = "source('group_name')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+}
+
+object "ndfc_topology_custom_object_type_field" {
+  source_collection = "topology_custom_object_type_fields"
+  netbox_resource   = "plugins.custom_objects.custom_object_type_fields"
+  lookup_by         = ["custom_object_type", "name"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "custom_object_type" {
+    type     = "fk"
+    resource = "plugins.custom_objects.custom_object_types"
+    lookup   = { slug = "source('custom_object_type_slug')" }
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "label" {
+    value = "source('label')"
+  }
+
+  field "description" {
+    value = "source('description')"
+  }
+
+  field "type" {
+    value = "source('type')"
+  }
+
+  field "primary" {
+    value = "source('primary')"
+  }
+
+  field "required" {
+    value = "source('required')"
+  }
+
+  field "unique" {
+    value = "source('unique')"
+  }
+
+  field "app_label" {
+    value = "when(source('app_label'), source('app_label'), None)"
+  }
+
+  field "model" {
+    value = "when(source('model'), source('model'), None)"
+  }
+
+  field "ui_visible" {
+    value = "source('ui_visible')"
+  }
+
+  field "ui_editable" {
+    value = "source('ui_editable')"
+  }
+}
+
+object "ndfc_fabric" {
+  source_collection = "fabrics"
+  netbox_resource   = "plugins.custom_objects.ndfc_fabrics"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "site_names" {
+    value = "source('site_names')"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "devices" {
+    value = "[{'name': name} for name in (source('device_names') or [])]"
+  }
+}
+
+object "ndfc_vpc_domain" {
+  source_collection = "vpc_domains"
+  netbox_resource   = "plugins.custom_objects.ndfc_vpc_domains"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_identifier" {
+    value = "source('fabric_identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "vpc_domain_id" {
+    value = "source('vpc_domain_id')"
+  }
+
+  field "vpc_name" {
+    value = "source('vpc_name')"
+  }
+
+  field "primary_device" {
+    value = "when(source('primary_device_name') != '', {'name': source('primary_device_name')}, None)"
+  }
+
+  field "secondary_device" {
+    value = "when(source('secondary_device_name') != '', {'name': source('secondary_device_name')}, None)"
+  }
+
+  field "peer_devices" {
+    value = "[{'name': name} for name in (source('peer_device_names') or [])]"
+  }
+
+  field "member_lags" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('member_lag_refs') or [])]"
+  }
+
+  field "vpc_interfaces" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('vpc_interface_refs') or [])]"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "vrf_names" {
+    value = "source('vrf_names')"
+  }
+}
+
+object "ndfc_vpc_peer_link" {
+  source_collection = "vpc_peer_links"
+  netbox_resource   = "plugins.custom_objects.ndfc_vpc_peer_links"
+  lookup_by         = ["identifier"]
+  enabled_if        = "collector.use_custom_objects"
+
+  field "identifier" {
+    value = "source('identifier')"
+  }
+
+  field "fabric_identifier" {
+    value = "source('fabric_identifier')"
+  }
+
+  field "fabric_name" {
+    value = "source('fabric_name')"
+  }
+
+  field "vpc_domain_identifier" {
+    value = "source('vpc_domain_identifier')"
+  }
+
+  field "devices" {
+    value = "[{'name': name} for name in (source('device_names') or [])]"
+  }
+
+  field "interfaces" {
+    value = "[{'device': {'name': ref['device_name']}, 'name': ref['name']} for ref in (source('interface_refs') or [])]"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "tenant_names" {
+    value = "source('tenant_names')"
+  }
+
+  field "vrf_names" {
+    value = "source('vrf_names')"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -69,7 +425,7 @@ object "device" {
   prerequisite "device_type" {
     method   = "ensure_device_type"
     args     = {
-      model        = "coalesce(source('model'), 'Unknown')"
+      model        = "when(source('model'), source('model'), 'Unknown')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = false
@@ -77,29 +433,32 @@ object "device" {
 
   prerequisite "role" {
     method   = "ensure_device_role"
-    args     = { name = "coalesce(source('role'), 'Network Device')" }
+    args     = { name = "when(source('role'), source('role'), 'Network Device')" }
     optional = false
   }
 
-  # Fabric name is used as the NetBox site so that all switches in the same
-  # fabric are grouped together in the same site.
+  # Site/fabric membership comes from the adapter's best-available
+  # site_name derivation so NDFC environments that do not populate
+  # fabricName can still map devices into NetBox sites. A regex mapping
+  # file can normalize raw NDFC fabric/site labels into the target
+  # NetBox site names for a given environment.
   prerequisite "site" {
     method   = "ensure_site"
-    args     = { name = "coalesce(source('fabric_name'), 'Unknown')" }
+    args     = { name = "when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), 'Unknown')" }
     optional = false
   }
 
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
-      name         = "coalesce(source('platform_name'), 'NX-OS')"
+      name         = "when(source('platform_name'), source('platform_name'), 'NX-OS')"
       manufacturer = "prereq('manufacturer')"
     }
     optional = true
   }
 
   field "name" {
-    value = "coalesce(source('name'), 'Unknown')"
+    value = "when(source('name'), source('name'), 'Unknown')"
   }
 
   field "device_type" {
@@ -133,6 +492,13 @@ object "device" {
     value = "['ndfc-sync']"
   }
 
+  # Fallback path for deployments without NetBox Custom Objects support.
+  # When custom objects are disabled, keep Nexus fabric / vPC metadata on the
+  # device record instead of dropping it.
+  field "custom_fields" {
+    value = "when(not collector.use_custom_objects, {k: v for k, v in {'ndfc_fabric': source('fabric_name'), 'ndfc_vpc_domain': source('vpc_domain_id'), 'ndfc_vpc_role': source('vpc_role'), 'ndfc_vpc_peer': source('vpc_peer_name'), 'ndfc_tenant': source('tenant_name')}.items() if v not in (None, '', [], {})}, {})"
+  }
+
   # ---------------------------------------------------------------------------
   # Network Interfaces
   #
@@ -150,7 +516,7 @@ object "device" {
     }
 
     field "type" {
-      value = "coalesce(source('type'), 'other')"
+      value = "when(source('type'), source('type'), 'other')"
     }
 
     field "enabled" {
@@ -158,11 +524,256 @@ object "device" {
     }
 
     field "description" {
-      value = "coalesce(source('description'), '')"
+      value = "when(source('description'), source('description'), '')"
+    }
+
+    field "mgmt_only" {
+      value = "source('mgmt_only')"
     }
 
     field "mac_address" {
       value = "when(source('mac_address') != '', source('mac_address'), None)"
     }
+
+    field "speed" {
+      value = "source('speed')"
+    }
+
+    field "mtu" {
+      value = "source('mtu')"
+    }
+
+    field "mode" {
+      value = "source('mode')"
+    }
+
+    field "untagged_vlan" {
+      type     = "fk"
+      resource = "ipam.vlans"
+      lookup   = {
+        vid  = "source('untagged_vlan_vid')"
+        site = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
+      }
+    }
+
+    field "lag" {
+      type     = "fk"
+      resource = "dcim.interfaces"
+      allow_null = true
+      lookup   = {
+        device = "when(source('lag_name') != '' and not lower(str(source('name') or '')).startswith('vpc'), parent_id, None)"
+        name   = "when(source('lag_name') != '' and not lower(str(source('name') or '')).startswith('vpc'), source('lag_name'), None)"
+      }
+    }
+
+    field "custom_fields" {
+      value = "when(not collector.use_custom_objects, {k: v for k, v in {'ndfc_fabric': source('fabric_name'), 'ndfc_vrf': source('vrf_name'), 'ndfc_vpc': source('vpc_name'), 'ndfc_vpc_parent_lag': source('vpc_parent_lag_name')}.items() if v not in (None, '', [], {})}, {})"
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      primary_if   = "first"
+      enabled_if   = "not source('mgmt_only')"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+
+    ip_address {
+      source_items = "when(source('ip_address') != '', [{'address': source('ip_address')}], [])"
+      oob_if       = "first"
+      enabled_if   = "source('mgmt_only')"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "'active'"
+      }
+    }
+
+    tagged_vlan {
+      source_items = "[{'vid': vid} for vid in (source('tagged_vlan_vids') or [])]"
+
+      field "vid" {
+        value = "source('vid')"
+      }
+
+      field "site" {
+        value = "when(getattr(parent, 'site', None), getattr(getattr(parent, 'site', None), 'id', None), None)"
+      }
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Power supply']"
+    profile      = "Power supply"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    power_input {
+      name = "'Power Input ' + str(source('position') or source('bay_name'))"
+      type = "'iec-60320-c14'"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "hardware_revision" {
+      value = "source('hardware_revision')"
+    }
+
+    attribute "software_revision" {
+      value = "source('software_revision')"
+    }
+
+    attribute "asset_id" {
+      value = "source('asset_id')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Fan']"
+    profile      = "Fan"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Transceiver']"
+    profile      = "Transceiver"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name') or source('model')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "map_value(lower(source('status')), {'ok': 'active', 'active': 'active', 'up': 'active', 'offenvpower': 'offline', 'down': 'offline'}, 'active')"
+    }
+
+    attribute "status" {
+      value = "source('status')"
+    }
+
+    attribute "module_type" {
+      value = "source('module_type')"
+    }
+
+    attribute "module_version" {
+      value = "source('module_version')"
+    }
+  }
+}
+
+object "shared_fhrp_assignment" {
+  source_collection = "shared_fhrp_assignments"
+  netbox_resource   = "ipam.fhrp_group_assignments"
+  lookup_by         = ["group", "interface_type", "interface_id"]
+
+  field "group" {
+    type     = "fk"
+    resource = "ipam.fhrp_groups"
+    lookup   = { name = "source('group_name')" }
+  }
+
+  field "interface_type" {
+    value = "'dcim.interface'"
+  }
+
+  field "interface_id" {
+    value = "nb_id('dcim.interfaces', {'device_id': nb_id('dcim.devices', {'name': source('device_name'), 'site': nb_id('dcim.sites', {'name': when(source('site_name'), regex_file(source('site_name'), 'nexus_site_to_site'), None)})}), 'name': source('interface_name')})"
+  }
+
+  field "priority" {
+    value = "when(source('priority') not in (None, '', 100), source('priority'), None)"
   }
 }

@@ -22,7 +22,13 @@
   <div class="col-auto">
     <div class="card shadow-sm text-center px-4 py-2">
       <div class="fs-4 fw-bold">{{ cache_info.total }}</div>
-      <div class="text-muted small">Total Entries</div>
+      <div class="text-muted small">Current Namespace Entries</div>
+    </div>
+  </div>
+  <div class="col-auto">
+    <div class="card shadow-sm text-center px-4 py-2">
+      <div class="fs-4 fw-bold">{{ cache_info.total_all }}</div>
+      <div class="text-muted small">All Namespace Entries</div>
     </div>
   </div>
   <div class="col-auto">
@@ -61,7 +67,9 @@
 <!-- Per-resource table -->
 {% if cache_info.entries %}
 <div class="card shadow-sm">
-  <div class="card-header card-header-cu fw-semibold">Cache by Object Type</div>
+  <div class="card-header card-header-cu fw-semibold">
+    Current Namespace{% if cache_info.current_namespace %}: <code>{{ cache_info.current_namespace }}</code>{% endif %}
+  </div>
   <div class="card-body p-0">
     <table class="table table-sm table-hover mb-0">
       <thead class="table-light">
@@ -112,6 +120,55 @@
 </div>
 {% else %}
 <div class="alert alert-secondary">No cached entries found.</div>
+{% endif %}
+
+{% if cache_info.namespaces %}
+<div class="card shadow-sm mt-4">
+  <div class="card-header card-header-cu fw-semibold">All Cache Namespaces</div>
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>Namespace</th>
+          <th class="text-end">Entries</th>
+          <th class="text-end">Resources</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for namespace, info in cache_info.namespaces.items() %}
+        <tr>
+          <td>
+            <code>{{ namespace }}</code>
+            {% if namespace == cache_info.current_namespace %}
+              <span class="badge bg-primary ms-2">current</span>
+            {% endif %}
+          </td>
+          <td class="text-end">{{ info.total }}</td>
+          <td class="text-end">{{ info.entries|length }}</td>
+        </tr>
+        <tr>
+          <td colspan="3" class="bg-light-subtle">
+            {% if info.entries %}
+            <div class="small">
+              {% for resource, resource_info in info.entries.items() %}
+                <span class="me-3">
+                  <code>{{ resource }}</code>: {{ resource_info.count }}
+                  {% if resource_info.sentinel_ttl is not none %}
+                    <span class="text-muted">(sentinel {{ resource_info.sentinel_ttl }}s)</span>
+                  {% endif %}
+                </span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="text-muted small">No resource entries.</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% endif %}
 
 {% endif %}

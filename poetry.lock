@@ -1305,11 +1305,14 @@ netboxlabs-diode-sdk = ">=1.10.0"
 pynetbox = ">=7.3.3"
 redis = ">=5.0.0"
 
+[package.extras]
+turbobulk = ["turbobulk-client (>=0.1.4)"]
+
 [package.source]
 type = "git"
 url = "https://github.com/erichester76/pynetbox-wrapper.git"
-reference = "e353c76affc6266b3dba36d2a170131ebde44697"
-resolved_reference = "e353c76affc6266b3dba36d2a170131ebde44697"
+reference = "96871bba7234ef32e818a30457308297260b98fa"
+resolved_reference = "96871bba7234ef32e818a30457308297260b98fa"
 
 [[package]]
 name = "pysnmp"
@@ -1791,6 +1794,28 @@ files = [
 ]
 
 [[package]]
+name = "turbobulk-client"
+version = "0.1.4"
+description = "Python client for TurboBulk NetBox plugin - High-performance bulk data operations for NetBox"
+optional = false
+python-versions = ">=3.10"
+files = []
+develop = false
+
+[package.dependencies]
+requests = ">=2.28.0"
+
+[package.extras]
+dev = ["black (>=23.0.0)", "isort (>=5.12.0)", "mypy (>=1.0.0)", "pytest (>=7.0.0)", "pytest-cov (>=4.0.0)", "types-requests (>=2.28.0)"]
+parquet = ["pyarrow (>=12.0.0)"]
+
+[package.source]
+type = "git"
+url = "https://github.com/netboxlabs/netbox-turbobulk-public.git"
+reference = "0405054fa538080c1d6e7f23b01ba4e16d8e01ec"
+resolved_reference = "0405054fa538080c1d6e7f23b01ba4e16d8e01ec"
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 description = "Backported and Experimental Type Hints for Python 3.9+"
@@ -1855,4 +1880,4 @@ watchdog = ["watchdog (>=2.3)"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<4.0"
-content-hash = "37cb7c9233a3ff366b46e3b8a12e326ada47ff2bd98b3a9447a1e434dd78e827"
+content-hash = "b3b1db082b7d54b592495b3d565879ec77fae98939e8b46de24328b07c341bda"

@@ -6,7 +6,10 @@ import logging
 import os
 import re as _re
 import types
+from functools import lru_cache
 from typing import Any
+
+from .prerequisites import extract_id
 
 try:
     from .db import get_config as _get_config
@@ -17,6 +20,12 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=512)
+def _compile_expression(expression: str) -> types.CodeType:
+    """Compile a field expression once and reuse it across evaluations."""
+    return compile(expression, "<field-expression>", "eval", dont_inherit=True)
+
+
 def _get_attr(obj: Any, key: str) -> Any:
     """Return obj[key] or getattr(obj, key), preferring dict access."""
     if obj is None:
@@ -24,7 +33,6 @@ def _get_attr(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
-
 
 def _matches_filter(item: Any, key: str) -> bool:
     """Return True if *item* matches the filter key.
@@ -158,7 +166,8 @@ class Resolver:
         if not isinstance(expression, str):
             return expression
         try:
-            return eval(expression, {"__builtins__": {}}, self._scope)  # noqa: S307
+            compiled = _compile_expression(expression)
+            return eval(compiled, {"__builtins__": {}}, self._scope)  # noqa: S307
         except Exception as exc:
             logger.debug("Expression eval failed %r: %s", expression, exc)
             return None
@@ -173,9 +182,12 @@ class Resolver:
         if not isinstance(expression, str):
             return expression
         try:
-            return eval(expression, {"__builtins__": {}}, self._scope)  # noqa: S307
+            compiled = _compile_expression(expression)
+            return eval(compiled, {"__builtins__": {}}, self._scope)  # noqa: S307
         except Exception as exc:
-            raise ValueError(f"{label} evaluation failed: {exc}") from exc
+            raise ValueError(
+                f"{label} evaluation failed for {expression!r}: {exc}"
+            ) from exc
 
     def _build_scope(self) -> dict:
         ctx = self._ctx
@@ -333,6 +345,30 @@ class Resolver:
                 return getattr(val, parts[1], None)
             return val
 
+        # ---- nb_id() ----
+        def nb_id(resource: str, lookup: dict[str, Any] | None = None) -> int | None:
+            if not resource or ctx.nb is None or ctx.dry_run:
+                return None
+            if not isinstance(lookup, dict):
+                return None
+
+            if not lookup:
+                return None
+            if any(
+                value is None
+                or value == []
+                or (isinstance(value, str) and value.strip() == "")
+                for value in lookup.values()
+            ):
+                return None
+
+            try:
+                obj = ctx.nb.get(resource, **lookup)
+            except Exception as exc:
+                logger.debug("nb_id lookup failed resource=%s lookup=%s: %s", resource, lookup, exc)
+                return None
+            return extract_id(obj)
+
         # ---- collector namespace ----
         col_attrs = {
             "max_workers": opts.max_workers,
@@ -342,6 +378,10 @@ class Resolver:
         }
         col_attrs.update(opts.extra_flags)
         collector_ns = types.SimpleNamespace(**col_attrs)
+        parent_obj = ctx.parent_nb_obj
+        parent_id = getattr(parent_obj, "id", None)
+        if parent_id is None and isinstance(parent_obj, dict):
+            parent_id = parent_obj.get("id")
 
         return {
             # Helpers
@@ -366,7 +406,10 @@ class Resolver:
             "int": int_val,
             "float": float_val,
             "prereq": prereq,
+            "nb_id": nb_id,
             "collector": collector_ns,
+            "parent": parent_obj,
+            "parent_id": parent_id,
             # Attribute access helper (safe: only reads attributes, no side-effects)
             "getattr": getattr,
             # Safe literals

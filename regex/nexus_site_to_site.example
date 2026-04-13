@@ -1,0 +1,9 @@
+# Nexus Dashboard / NDFC site/fabric name normalization
+# Format: regex,replacement
+#
+# Copy to regex/nexus_site_to_site and adjust for your environment.
+# The first matching regex wins.
+#
+# Example Clemson-style mappings:
+# ^ITC-CUProd$,ITC
+# ^ITC-CUProd-.+$,ITC

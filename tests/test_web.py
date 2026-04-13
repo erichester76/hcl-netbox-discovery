@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -24,6 +25,7 @@ def app(tmp_path, monkeypatch):
     """Create a Flask test client backed by a temporary DB."""
     db_path = str(tmp_path / "test_web.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "test-db-encryption-key")
     monkeypatch.setenv("WEB_AUTH_ENABLED", "false")
     monkeypatch.setenv("WEB_SECRET_KEY", "test-secret-key")
     monkeypatch.setattr(db_module, "_lock", threading.Lock())
@@ -42,6 +44,7 @@ def secured_app(tmp_path, monkeypatch):
     """Create a Flask test client with web auth and CSRF enabled."""
     db_path = str(tmp_path / "test_web_secured.sqlite3")
     monkeypatch.setenv("COLLECTOR_DB_PATH", db_path)
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "test-db-encryption-key")
     monkeypatch.setenv("WEB_AUTH_ENABLED", "true")
     monkeypatch.setenv("WEB_USERNAME", "admin")
     monkeypatch.setenv("WEB_PASSWORD", "secret")
@@ -90,6 +93,47 @@ def test_index_empty(app):
     resp = app.get("/")
     assert resp.status_code == 200
     assert b"HCL NetBox Discovery" in resp.data
+
+
+def test_index_shows_tagged_version_in_header(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "get_code_version",
+        lambda: {
+            "version": "1.1.1",
+            "git_commit": "abcdef1234567890",
+            "git_branch": "dev",
+            "git_tag": "v1.1.1",
+        },
+    )
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b"Version v1.1.1" in resp.data
+    assert b"(abcdef1)" not in resp.data
+
+
+def test_index_shows_version_and_commit_when_not_tagged(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "get_code_version",
+        lambda: {
+            "version": "1.1.1",
+            "git_commit": "abcdef1234567890",
+            "git_branch": "dev",
+            "git_tag": None,
+        },
+    )
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b"Version 1.1.1 (abcdef1)" in resp.data
 
 
 def test_login_page_renders_when_auth_enabled(secured_app):
@@ -150,6 +194,30 @@ def test_api_job_logs_allows_token_auth(secured_app):
     assert resp.status_code == 200
     assert resp.get_json()["status"] == "running"
     assert resp.get_json()["logs"][0]["message"] == "first"
+
+
+def test_settings_page_masks_sensitive_db_overrides(app, monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "web-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+
+    resp = app.get("/settings")
+
+    assert resp.status_code == 200
+    assert b"VCENTER_PASS" in resp.data
+    assert b"super-secret" not in resp.data
+    assert b"(stored override)" in resp.data
+
+
+def test_settings_page_renders_sensitive_overrides_without_bootstrap_key(app, monkeypatch):
+    monkeypatch.setenv("COLLECTOR_DB_ENCRYPTION_KEY", "web-test-db-key")
+    set_setting("VCENTER_PASS", "super-secret")
+    monkeypatch.delenv("COLLECTOR_DB_ENCRYPTION_KEY", raising=False)
+
+    resp = app.get("/settings")
+
+    assert resp.status_code == 200
+    assert b"VCENTER_PASS" in resp.data
+    assert b"(stored override)" in resp.data
 
 
 def test_create_app_requires_non_default_web_password(tmp_path, monkeypatch):
@@ -275,6 +343,54 @@ def test_job_detail_shows_runtime_snapshot_modal(app):
     assert b"abc123" in resp.data
 
 
+def test_job_detail_has_live_and_level_controls_for_queued_job(app):
+    job_id = create_job("mappings/test.hcl")
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'id="toggle-live-update"' in resp.data
+    assert b'id="copy-log-window"' in resp.data
+    assert b"Copy Visible Logs" in resp.data
+    assert b"Live Update: On" in resp.data
+    assert b'id="toggle-level-DEBUG"' in resp.data
+    assert b'id="toggle-level-INFO"' in resp.data
+    assert b'id="toggle-level-WARNING"' in resp.data
+    assert b'id="toggle-level-ERROR"' in resp.data
+    assert b'id="job-status-badge"' in resp.data
+    assert b">Rerun</button>" in resp.data
+
+
+def test_job_detail_copy_button_wires_visible_log_copy_controls(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "INFO", "engine", "visible info")
+    add_log(job_id, "DEBUG", "engine", "hidden debug")
+    finish_job(job_id, success=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'id="copy-log-window"' in resp.data
+    assert b"Copy Visible Logs" in resp.data
+    assert b"log-hidden" in resp.data
+    assert b"navigator.clipboard.writeText(" in resp.data
+
+
+def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "CRITICAL", "engine", "Critical test line")
+    finish_job(job_id, success=False)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'data-level="CRITICAL"' in resp.data
+    assert b'line.classList.toggle("log-hidden"' in resp.data
+    assert b'class="log-row log-line-CRITICAL"' in resp.data
+
+
 def test_job_detail_partial_status(app):
     """A job finished with has_errors=True should show 'partial' badge."""
     job_id = create_job("mappings/test.hcl")
@@ -285,6 +401,44 @@ def test_job_detail_partial_status(app):
     resp = app.get(f"/jobs/{job_id}")
     assert resp.status_code == 200
     assert b"partial" in resp.data
+
+
+def test_job_detail_terminal_job_shows_live_update_off(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b"Live Update: Off" in resp.data
+    assert b"LIVE OFF" in resp.data
+
+
+def test_index_shows_rerun_button_for_recent_jobs(app):
+    job_id = create_job("mappings/test.hcl", dry_run=True, debug_mode=True)
+    start_job(job_id)
+    finish_job(job_id, success=True)
+
+    resp = app.get("/")
+
+    assert resp.status_code == 200
+    assert b'action="/jobs/run"' in resp.data
+    assert b'name="hcl_file" value="mappings/test.hcl"' in resp.data
+    assert b'name="dry_run" value="1"' in resp.data
+    assert b'name="debug_mode" value="1"' in resp.data
+    assert b">Rerun</button>" in resp.data
+
+
+def test_job_detail_rerun_uses_repo_relative_mapping_path(app):
+    repo_mapping = str(Path(__file__).resolve().parents[1] / "mappings" / "test.hcl")
+    job_id = create_job(repo_mapping, dry_run=True, debug_mode=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'name="hcl_file" value="mappings/test.hcl"' in resp.data
+    assert f'name="hcl_file" value="{repo_mapping}"'.encode() not in resp.data
 
 
 def test_job_detail_not_found(app):
@@ -591,6 +745,67 @@ def test_cache_status_page(app):
     resp = app.get("/cache")
     assert resp.status_code == 200
     assert b"Cache" in resp.data
+
+
+def test_cache_status_page_renders_namespaces(app, monkeypatch):
+    import web.app as web_app_module  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        web_app_module,
+        "_get_cache_info",
+        lambda: {
+            "backend": "redis",
+            "entries": {"dcim.devices": {"count": 2, "sentinel_ttl": 120}},
+            "total": 3,
+            "total_all": 8,
+            "current_namespace": "dev:abc123def456",
+            "namespaces": {
+                "dev:abc123def456": {
+                    "total": 3,
+                    "entries": {"dcim.devices": {"count": 2, "sentinel_ttl": 120}},
+                },
+                "main:789xyz654uvw": {
+                    "total": 5,
+                    "entries": {"ipam.vlans": {"count": 4, "sentinel_ttl": None}},
+                },
+            },
+        },
+    )
+
+    resp = app.get("/cache")
+
+    assert resp.status_code == 200
+    assert b"Current Namespace Entries" in resp.data
+    assert b"All Namespace Entries" in resp.data
+    assert b"All Cache Namespaces" in resp.data
+    assert b"dev:abc123def456" in resp.data
+    assert b"main:789xyz654uvw" in resp.data
+
+
+def test_build_namespace_cache_info_groups_raw_keys():
+    import web.app as web_app_module  # noqa: PLC0415
+
+    namespaces = web_app_module._build_namespace_cache_info(
+        [
+            "nbx:dev:aaaa1111bbbb:dcim.devices:1",
+            "nbx:dev:aaaa1111bbbb:dcim.devices:2",
+            "nbx:dev:aaaa1111bbbb:precache:complete:devices",
+            "nbx:main:cccc2222dddd:ipam.vlans:99",
+        ],
+        base_prefix="nbx:",
+        sentinel_ttl_lookup={"nbx:dev:aaaa1111bbbb:precache:complete:devices": 42},
+        object_type_to_resource={"devices": "dcim.devices"},
+    )
+
+    assert namespaces["dev:aaaa1111bbbb"]["total"] == 3
+    assert namespaces["dev:aaaa1111bbbb"]["entries"]["dcim.devices"] == {
+        "count": 2,
+        "sentinel_ttl": 42,
+    }
+    assert namespaces["main:cccc2222dddd"]["entries"]["ipam.vlans"] == {
+        "count": 1,
+        "sentinel_ttl": None,
+    }
 
 
 # ---------------------------------------------------------------------------

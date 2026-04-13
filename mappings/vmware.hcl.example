@@ -64,6 +64,7 @@ object "cluster" {
   source_collection = "clusters"
   netbox_resource   = "virtualization.clusters"
   lookup_by         = ["name"]
+  enabled_if        = "not source('name').startswith('Staging')"
 
   prerequisite "cluster_type" {
     method   = "ensure_cluster_type"
@@ -109,6 +110,7 @@ object "host" {
   netbox_resource   = "dcim.devices"
   lookup_by         = ["name"]
   max_workers       = 8
+  enabled_if        = "not source('parent.name').startswith('Staging')"
 
   prerequisite "manufacturer" {
     method   = "ensure_manufacturer"
@@ -137,10 +139,34 @@ object "host" {
     optional = false
   }
 
+  prerequisite "cluster_type" {
+    method   = "ensure_cluster_type"
+    args     = { name = "'VMWare'" }
+    optional = false
+  }
+
+  prerequisite "cluster" {
+    method   = "ensure_cluster"
+    args     = {
+      name = "source('parent.name')"
+      type = "prereq('cluster_type')"
+      site = "prereq('site')"
+    }
+    optional = false
+  }
+
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = {
        name              = "source('config.product.fullName') or 'Unknown'"
+    }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = {
+      name = "tenant_name if (tenant_name := regex_file(source('name'), 'host_to_tenant')) != source('name') else None"
     }
     optional = true
   }
@@ -161,8 +187,16 @@ object "host" {
     value = "prereq('site')"
   }
 
+  field "cluster" {
+    value = "prereq('cluster')"
+  }
+
   field "platform" {
     value = "prereq('platform')"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
   }
 
   field "status" {
@@ -180,45 +214,57 @@ object "host" {
 
   # Physical NICs
   interface {
-    source_items = "config.network.pnic"
+    source_items = "[{'_nic': nic, '_host_name': source('name')} for nic in (source('config.network.pnic') or [])]"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "source('device')"
+      value = "source('_nic.device')"
     }
 
     field "mac_address" {
-      value = "upper(source('mac'))"
+      value = "upper(source('_nic.mac'))"
     }
 
     field "type" {
-      value = "map_value(source('linkSpeed.speedMb'), {1000: '1000base-t', 10000: '10gbase-x-sfpp', 25000: '25gbase-x-sfp28', 40000: '40gbase-x-qsfpp', 100000: '100gbase-x-qsfp28'}, '1000base-t')"
+      value = "map_value(source('_nic.linkSpeed.speedMb'), {1000: '1000base-t', 10000: '10gbase-x-sfpp', 25000: '25gbase-x-sfp28', 40000: '40gbase-x-qsfpp', 100000: '100gbase-x-qsfp28'}, '1000base-t')"
+    }
+
+    field "speed" {
+      value = "source('_nic.linkSpeed.speedMb')"
+    }
+
+    field "duplex" {
+      value = "map_value(source('_nic.linkSpeed.duplex'), {True: 'full', False: 'half'}, None)"
     }
 
     field "description" {
-      value = "join(' ', [source('driver'), source('driverVersion')])"
+      value = "join(' ', [source('_host_name'), source('_nic.device')])"
     }
   }
 
   # Management / VMkernel vNICs
   interface {
-    source_items = "_enriched_vnics"
+    source_items = "[{'_vnic': nic, '_host_name': replace(source('name'), '.clemson.edu', '')} for nic in (source('_enriched_vnics') or [])]"
     enabled_if   = "collector.sync_interfaces"
 
     field "name" {
-      value = "source('device')"
+      value = "source('_vnic.device')"
     }
 
     field "mac_address" {
-      value = "upper(source('spec.mac'))"
+      value = "upper(source('_vnic.spec.mac'))"
     }
 
     field "type" {
       value = "'virtual'"
     }
 
+    field "description" {
+      value = "join(' ', [source('_host_name'), source('_vnic.device')])"
+    }
+
     ip_address {
-      source_items = "spec.ip"
+      source_items = "_vnic.spec.ip"
       primary_if   = "first"
 
       field "address" {
@@ -231,7 +277,7 @@ object "host" {
     }
 
     tagged_vlan {
-      source_items = "_vlans"
+      source_items = "_vnic._vlans"
 
       field "vid" {
         value = "source('id')"
@@ -257,6 +303,7 @@ object "vm" {
   netbox_resource   = "virtualization.virtual_machines"
   lookup_by         = ["name", "cluster"]
   max_workers       = 8
+  enabled_if        = "not source('runtime.host.parent.name').startswith('Staging')"
 
   prerequisite "cluster" {
     method   = "ensure_cluster"
@@ -264,9 +311,33 @@ object "vm" {
     optional = false
   }
 
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = {
+      name = "site_name if (site_name := regex_file(source('runtime.host.parent.name'), 'cluster_to_site')) != source('runtime.host.parent.name') else None"
+    }
+    optional = true
+  }
+
   prerequisite "platform" {
     method   = "ensure_platform"
     args     = { name = "source('guest.guestFullName') or 'Unknown'" }
+    optional = true
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = {
+      name = "role_name if (role_name := regex_file(source('name'), 'vm_to_role')) != source('name') else 'Virtual Machine'"
+    }
+    optional = true
+  }
+
+  prerequisite "tenant" {
+    method   = "ensure_tenant"
+    args     = {
+      name = "tenant_name if (tenant_name := regex_file(source('name'), 'vm_to_tenant')) != source('name') else None"
+    }
     optional = true
   }
 
@@ -276,6 +347,28 @@ object "vm" {
 
   field "cluster" {
     value = "prereq('cluster')"
+  }
+
+  field "device" {
+    type     = "fk"
+    resource = "dcim.devices"
+    lookup   = { name = "replace(source('runtime.host.name'), '.clemson.edu', '')" }
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "platform" {
+    value = "prereq('platform')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "tenant" {
+    value = "prereq('tenant')"
   }
 
   field "status" {
@@ -326,7 +419,7 @@ object "vm" {
     }
 
     tagged_vlan {
-      source_items = "[{**v, 'site_name': regex_file(source('runtime.host.parent.name'), 'cluster_to_site')} for v in (source('_vlans') or [])]"
+      source_items = "_vlans"
 
       field "vid" {
         value = "source('id')"
@@ -337,9 +430,7 @@ object "vm" {
       }
 
       field "site" {
-        type     = "fk"
-        resource = "dcim.sites"
-        lookup   = { name = "source('site_name')" }
+        value = "prereq('site')"
       }
     }
   }

@@ -4,7 +4,7 @@ This document is for developers new to `hcl-netbox-discovery` who want to get pr
 
 ## What This Project Is
 
-`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `collector/`, the Flask UI is in `web/`, and the custom NetBox client wrapper is provided by the external `pynetbox-wrapper` dependency.
+`hcl-netbox-discovery` is a Python 3.12 project that syncs infrastructure data into NetBox using HCL mapping files. The collector engine is in `src/collector/`, the Flask UI is in `src/web/`, and the custom NetBox client wrapper is provided by the external `pynetbox-wrapper` dependency.
 
 The web UI and the scheduler share one SQLite database:
 
@@ -33,14 +33,6 @@ Run commands through Poetry:
 poetry run pytest
 poetry run ruff check .
 poetry run python main.py --mapping mappings/vmware.hcl --dry-run
-```
-
-### Legacy fallback
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 If you need environment-based config for local runs:
@@ -81,13 +73,13 @@ poetry run python main.py --run-scheduler
 ### Run the web UI
 
 ```bash
-poetry run python web_server.py
+poetry run python -m web.web_server
 ```
 
 ## Repo Layout
 
-- `collector/`: parser, engine, DB, field resolvers, prerequisites, source adapters
-- `web/`: Flask app and templates
+- `src/collector/`: parser, engine, DB, field resolvers, prerequisites, source adapters
+- `src/web/`: Flask app and templates
 - `pynetbox-wrapper`: external NetBox client wrapper dependency with retries, caching, and upsert helpers
 - `mappings/`: example HCL mapping files
 - `regex/`: plain-text mapping files used by `regex_file()`
@@ -105,6 +97,21 @@ poetry run python web_server.py
 4. Run focused tests locally.
 5. Update docs if behavior or usage changed.
 6. Run `poetry run ruff check .` and `poetry run ruff format .` before opening a PR.
+
+## Versioning Method
+
+- `pyproject.toml` holds the base release version for the project.
+- Job/runtime metadata should capture both the base app version and
+  per-component versions/fingerprints for the engine, collector, source
+  adapters, mapping examples, and the actual mapping file used by a run.
+- Component versions should default to the same value as the base app version.
+- When a PR changes a specific component family, increment that component's
+  internal version metadata in the same PR, even if the rest of the component
+  families remain on the base version.
+- When preparing a release, align all component versions back to the final
+  release version so the shipped build reports one coherent version set.
+- Unless the change is part of an intentional minor or major release step,
+  bump the patch version in `pyproject.toml` for every PR.
 
 ## Branching And Release Flow
 

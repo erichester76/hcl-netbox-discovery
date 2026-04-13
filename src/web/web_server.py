@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-File: web_server.py
+File: src/web/web_server.py
 Purpose: Entry point for the hcl-netbox-discovery web UI (Flask dev/production server).
 Created: 2026-03-30
 Last Changed: Copilot 2026-03-30 Issue: #web-ui
 
 Usage
 -----
-  python web_server.py                   # listens on 0.0.0.0:5000
-  python web_server.py --port 8080
-  WEB_PORT=8080 python web_server.py
+  python -m web.web_server                   # listens on 0.0.0.0:5000
+  python -m web.web_server --port 8080
+  WEB_PORT=8080 python -m web.web_server
 
 For production, run behind gunicorn::
 
@@ -27,7 +27,7 @@ from collector import setup_logging
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="web_server.py",
+        prog="python -m web.web_server",
         description="HCL NetBox Discovery – web monitor",
     )
     parser.add_argument(

@@ -124,6 +124,23 @@ Follow this workflow by default unless the user explicitly overrides it:
 For repository-specific documentation updates, use `docs/REPOSITORY_GUIDE.md`
 as the index of what belongs where.
 
+## Versioning Method
+
+- `pyproject.toml` is the base release version for the project.
+- Job/runtime metadata should record:
+  - the base app version
+  - per-component versions
+  - content fingerprints for the engine, collector, source adapters, mapping
+    examples, and the specific mapping file used by a run
+- By default, component versions should match the base app version.
+- When a PR changes a specific component family, increment that component's
+  internal version metadata in the same PR, even if the other component
+  families remain on the base version.
+- At release time, align all component versions back to the final release
+  version so the shipped build reports one coherent version set.
+- Keep the patch version in `pyproject.toml` moving forward for every PR unless
+  the user explicitly wants a minor or major release step.
+
 ## Safety Notes
 
 - Never commit secrets.
