@@ -618,6 +618,7 @@ def _debug_module_fetch_payload(*, switch_db_id: Any, fabric_name: str, switch_i
         sample_preview,
     )
 
+
 def _normalize_interface_name(name: str) -> str:
     """Return a canonical interface name for mixed NDFC short/long forms."""
     text = str(name or "").strip()
@@ -2345,6 +2346,7 @@ class NexusDashboardSource(DataSource):
             len(normalized),
         )
         return normalized
+
     def _fetch_switch_interfaces(
         self,
         serial: str,
