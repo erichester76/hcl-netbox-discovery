@@ -654,10 +654,7 @@ class Engine:
     ) -> dict[str, Any]:
         subset: dict[str, Any] = {}
         for key in keys:
-            if isinstance(existing, dict):
-                value = existing.get(key)
-            else:
-                value = getattr(existing, key, None)
+            value = Engine._record_attr_value(existing, key)
             subset[key] = Engine._normalize_compare_field(ctx, resource, key, value)
         return subset
 
