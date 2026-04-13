@@ -572,18 +572,37 @@ def _flatten_module_payload(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
 
-    for key in ("modules", "items", "data", "DATA", "results", "result"):
+    if any(
+        key in payload for key in ("modelName", "serialNumber", "moduleType", "slot", "name", "type")
+    ):
+        return [payload]
+
+    flattened: list[dict[str, Any]] = []
+    for key in (
+        "modules",
+        "items",
+        "data",
+        "DATA",
+        "results",
+        "result",
+        "moduleInfo",
+        "fexDetails",
+    ):
         nested = payload.get(key)
         if isinstance(nested, list):
-            flattened: list[dict[str, Any]] = []
             for item in nested:
                 flattened.extend(_flatten_module_payload(item))
-            return flattened
-        if isinstance(nested, dict):
-            return _flatten_module_payload(nested)
+        elif isinstance(nested, dict):
+            flattened.extend(_flatten_module_payload(nested))
 
-    if any(key in payload for key in ("modelName", "serialNumber", "moduleType", "slot", "name", "type")):
-        return [payload]
+    if flattened:
+        return flattened
+
+    for value in payload.values():
+        if isinstance(value, (dict, list)):
+            flattened.extend(_flatten_module_payload(value))
+    if flattened:
+        return flattened
 
     return []
 
