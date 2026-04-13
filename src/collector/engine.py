@@ -161,7 +161,9 @@ def _extract_http_status_code(exc: Exception) -> int | None:
             except (TypeError, ValueError):
                 pass
 
-    response = getattr(exc, "response", None) or getattr(exc, "resp", None)
+    response = getattr(exc, "response", None)
+    if response is None:
+        response = getattr(exc, "resp", None)
     for attr in ("status_code", "status"):
         value = getattr(response, attr, None)
         if value is not None:

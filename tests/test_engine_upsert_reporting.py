@@ -846,6 +846,34 @@ class TestEngineUpsertReporting:
         )
         assert "falling back to custom fields" in caplog.text
 
+    def test_run_disables_custom_objects_when_falsy_response_has_404_status(self, caplog):
+        class FalseyResponse:
+            status_code = 404
+
+            def __bool__(self):
+                return False
+
+        engine = Engine()
+        nb = MagicMock()
+        exc = Exception("plugin missing")
+        exc.response = FalseyResponse()  # type: ignore[attr-defined]
+        nb.list.side_effect = exc
+        cfg = CollectorConfig(
+            source=SourceConfig(api_type="nexus", url="https://example.invalid"),
+            netbox=NetBoxConfig(url="https://netbox.example", token="token"),
+            collector=CollectorOptions(extra_flags={"use_custom_objects": True}),
+            objects=[],
+        )
+
+        with patch("collector.engine.load_config", return_value=cfg), patch(
+            "collector.engine._build_nb_client",
+            return_value=nb,
+        ), patch.object(engine, "_run_pass", return_value=[]), caplog.at_level(logging.WARNING):
+            engine.run("fake.hcl")
+
+        assert cfg.collector.extra_flags["use_custom_objects"] is False
+        assert "falling back to custom fields" in caplog.text
+
     def test_run_probes_custom_objects_with_branchless_client(self):
         engine = Engine()
         nb = MagicMock()
