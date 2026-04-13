@@ -893,13 +893,32 @@ class CatalystCenterSource(DataSource):
         limit = 500
         while True:
             try:
-                resp = self._call_with_rate_limit_backoff(
-                    self._client.devices.get_modules,
-                    f"module inventory for device {device_id}",
-                    deviceId=device_id,
-                    offset=offset,
-                    limit=limit,
-                )
+                try:
+                    resp = self._call_with_rate_limit_backoff(
+                        self._client.devices.get_modules,
+                        f"module inventory for device {device_id}",
+                        device_id=device_id,
+                        offset=offset,
+                        limit=limit,
+                    )
+                except TypeError as exc:
+                    exc_message = str(exc)
+                    if not re.search(
+                        r"unexpected keyword argument [\"']device_id[\"']",
+                        exc_message,
+                    ):
+                        raise
+                    logger.debug(
+                        "CatalystCenter: retrying modules endpoint for device %s with legacy deviceId kwarg",
+                        device_id,
+                    )
+                    resp = self._call_with_rate_limit_backoff(
+                        self._client.devices.get_modules,
+                        f"module inventory for device {device_id}",
+                        deviceId=device_id,
+                        offset=offset,
+                        limit=limit,
+                    )
                 page = _response_items(resp)
             except Exception as exc:
                 logger.warning(
