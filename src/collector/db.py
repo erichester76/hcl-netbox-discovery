@@ -300,7 +300,7 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
     (
         "NETBOX_USE_CUSTOM_OBJECTS",
         "false",
-        'Set to "true" when mappings should target NetBox Custom Objects instead of custom-field fallbacks',
+        'Set to "true" when mappings should target NetBox Custom Objects; runs fall back to custom fields when the plugin endpoint is unavailable',
         "NetBox",
     ),
     (

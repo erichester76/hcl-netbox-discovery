@@ -203,7 +203,7 @@ object "host" {
 | Attribute | Required | Description |
 |---|---|---|
 | `source_collection` | yes | Collection name passed to `source.get_objects()` |
-| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`). Plugin resources use the same dotted form, for example `"plugins.custom_objects.projects"` or a custom-object instance endpoint such as `"plugins.custom_objects.ndfc_fabrics"` |
+| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`). Plugin resources use the same dotted form, for example `"plugins.custom_objects.projects"` or a custom-object instance endpoint such as `"plugins.custom_objects.ndfc_fabrics"`. When a mapping enables optional custom-object writes and the plugin endpoint is unavailable, the collector can disable those blocks for the run and use the mapping's fallback path instead. |
 | `lookup_by` | no | Field names used as the upsert key (default: `["name"]`) |
 | `enabled_if` | no | Expression evaluated per source item; falsey items are skipped before processing |
 | `max_workers` | no | Thread pool size for this object (overrides `collector.max_workers`) |
