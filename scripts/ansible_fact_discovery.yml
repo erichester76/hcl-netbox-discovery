@@ -1,0 +1,5 @@
+---
+- name: Gather facts for NetBox discovery import
+  hosts: all
+  gather_facts: true
+  tasks: []

@@ -822,6 +822,13 @@ The example mapping also adds an additive `ansible-managed` tag; use the same
 pattern for VM mappings when Ansible-backed hosts should land in
 `virtualization.virtual_machines`.
 
+For environments that use remote execution environments, the repository ships
+`scripts/ansible_ee_fact_discovery.sh` plus
+`scripts/ansible_fact_discovery.yml`. The script runs `ansible-playbook`
+inside a container image, enables the `jsonfile` fact cache plugin, and writes
+an importer-ready fact-cache directory under `artifacts/ansible-facts/` by
+default.
+
 ### Salt grains source (`api_type = "salt"`)
 
 ```hcl
@@ -837,7 +844,6 @@ source "salt" {
 }
 ```
 
-<<<<<<< HEAD
 Salt supports two modes:
 
 - `mode = "master"` polls Salt NetAPI live from the configured master URL and
@@ -856,7 +862,6 @@ source "snmp_devices" {
   api_type   = "snmp"
   url        = env("SNMP_HOSTS")          # comma-separated list of hosts
   username   = env("SNMP_COMMUNITY", "public")  # v2c community string
-
   # Optional SNMP parameters
   version    = env("SNMP_VERSION", "2c")
   port       = env("SNMP_PORT", "161")
