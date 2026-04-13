@@ -813,18 +813,29 @@ MVP Ansible support is artifact-backed. Point `artifact_path` at an exported
 hostvars JSON file or a fact-cache directory. The adapter normalises the input
 into a `hosts` collection with nested `interfaces` and `ip_addresses`.
 
-### Salt grains artifact (`api_type = "salt"`)
+### Salt grains source (`api_type = "salt"`)
 
 ```hcl
 source "salt" {
-  api_type      = "salt"
-  artifact_path = env("SALT_ARTIFACT_PATH")
+  api_type  = "salt"
+  mode      = "master"
+  url       = env("SALT_MASTER_URL")
+  username  = env("SALT_USER")
+  password  = env("SALT_PASS")
+  target    = env("SALT_TARGET", "*")
+  expr_form = env("SALT_EXPR_FORM", "")
+  eauth     = env("SALT_EAUTH", "pam")
 }
 ```
 
-MVP Salt support is artifact-backed. Point `artifact_path` at an exported Salt
-JSON file containing grains or other host facts. The adapter normalises the
-artifact into a `hosts` collection with nested `interfaces` and `ip_addresses`.
+Salt supports two modes:
+
+- `mode = "master"` polls Salt NetAPI live from the configured master URL and
+  runs `grains.items` against the requested target.
+- `mode = "artifact"` reads an exported JSON artifact from `artifact_path`.
+
+Both modes normalise the input into a `hosts` collection with nested
+`interfaces` and `ip_addresses`.
 
 ### SNMP (`api_type = "snmp"`)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import requests
 
 from collector.sources.salt import (
     SaltSource,
@@ -13,6 +14,40 @@ from collector.sources.salt import (
     _iter_records,
     _normalise_host,
 )
+
+
+class _FakeResponse:
+    def __init__(self, payload, status_code=200, json_error=False):
+        self._payload = payload
+        self.status_code = status_code
+        self._json_error = json_error
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def json(self):
+        if self._json_error:
+            raise ValueError("bad json")
+        return self._payload
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.verify = True
+        self.headers = {}
+        self.requests = []
+        self.closed = False
+
+    def post(self, url, **kwargs):
+        self.requests.append({"url": url, **kwargs})
+        if not self._responses:
+            raise AssertionError("No fake response queued for session.post()")
+        return self._responses.pop(0)
+
+    def close(self):
+        self.closed = True
 
 
 class TestCleanIpList:
@@ -174,3 +209,113 @@ class TestSaltSource:
 
         with pytest.raises(ValueError, match="contains invalid JSON"):
             source.get_objects("hosts")
+
+    def test_reads_hosts_collection_from_salt_master(self, monkeypatch, salt_config):
+        fake_session = _FakeSession(
+            [
+                _FakeResponse({"return": [{"token": "salt-token"}]}),
+                _FakeResponse(
+                    {
+                        "return": [
+                            {
+                                "minion-1": {
+                                    "host": "web-01",
+                                    "fqdn": "web-01.example.com",
+                                    "os": "Ubuntu",
+                                    "osrelease": "24.04",
+                                    "ip_interfaces": {"eth0": ["10.0.0.5"]},
+                                    "hwaddr_interfaces": {
+                                        "eth0": "00:11:22:33:44:55",
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "collector.sources.salt.requests.Session",
+            lambda: fake_session,
+        )
+        salt_config.url = "https://salt-master.example.com"
+        salt_config.username = "salt-user"
+        salt_config.password = "salt-pass"
+        salt_config.extra = {
+            "mode": "master",
+            "eauth": "pam",
+            "target": "G@roles:web",
+            "expr_form": "compound",
+        }
+
+        source = SaltSource()
+        source.connect(salt_config)
+        hosts = source.get_objects("hosts")
+
+        assert hosts[0]["name"] == "web-01"
+        assert hosts[0]["source_system"] == "salt"
+        assert fake_session.headers["X-Auth-Token"] == "salt-token"
+        assert fake_session.requests[0]["url"].endswith("/login")
+        assert fake_session.requests[0]["data"]["username"] == "salt-user"
+        assert fake_session.requests[1]["url"].endswith("/run")
+        assert fake_session.requests[1]["json"] == [
+            {
+                "client": "local",
+                "tgt": "G@roles:web",
+                "fun": "grains.items",
+                "expr_form": "compound",
+            }
+        ]
+
+    def test_supports_token_auth_for_salt_master(self, monkeypatch, salt_config):
+        fake_session = _FakeSession(
+            [
+                _FakeResponse(
+                    {
+                        "return": {
+                            "minion-1": {
+                                "host": "web-01",
+                                "ip_interfaces": {"eth0": ["10.0.0.5"]},
+                            }
+                        }
+                    }
+                )
+            ]
+        )
+        monkeypatch.setattr(
+            "collector.sources.salt.requests.Session",
+            lambda: fake_session,
+        )
+        salt_config.url = "https://salt-master.example.com"
+        salt_config.extra = {
+            "mode": "master",
+            "auth_type": "token",
+            "auth_token": "preissued-token",
+        }
+
+        source = SaltSource()
+        source.connect(salt_config)
+        hosts = source.get_objects("hosts")
+
+        assert len(hosts) == 1
+        assert fake_session.headers["X-Auth-Token"] == "preissued-token"
+        assert len(fake_session.requests) == 1
+        assert fake_session.requests[0]["url"].endswith("/run")
+
+    def test_raises_when_salt_login_response_has_no_token(
+        self, monkeypatch, salt_config
+    ):
+        fake_session = _FakeSession([_FakeResponse({"return": [{"user": "salt-user"}]})])
+        monkeypatch.setattr(
+            "collector.sources.salt.requests.Session",
+            lambda: fake_session,
+        )
+        salt_config.url = "https://salt-master.example.com"
+        salt_config.username = "salt-user"
+        salt_config.password = "salt-pass"
+        salt_config.extra = {"mode": "master"}
+
+        source = SaltSource()
+
+        with pytest.raises(ValueError, match="did not include a token"):
+            source.connect(salt_config)

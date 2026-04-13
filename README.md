@@ -41,7 +41,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 |---|---|
 | **Zero Python per new REST source** | Configure entirely in HCL; the generic `rest` adapter handles the HTTP layer |
 | **Declarative HCL mappings** | Describe *what* to sync, not *how* — the engine takes care of execution |
-| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, Ansible facts artifacts, Salt grains artifacts, LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
+| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, Ansible facts artifacts, Salt grains (live master or artifact), LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
 | **Automatic prerequisites** | Creates manufacturers, device types, sites, racks, platforms, cluster types, and more on the fly |
 | **Thread-safe parallel execution** | Configurable worker pools; each item gets an isolated execution context |
 | **Dry-run mode** | Preview all payloads that *would* be sent without writing anything to NetBox |
@@ -100,7 +100,7 @@ Key components:
 | `src/collector/sources/ldap.py` | LDAP3 adapter |
 | `src/collector/sources/catc.py` | Cisco Catalyst Center adapter |
 | `src/collector/sources/ansible.py` | Ansible facts artifact adapter |
-| `src/collector/sources/salt.py` | Salt grains artifact adapter |
+| `src/collector/sources/salt.py` | Salt grains adapter (live master or artifact) |
 | `pynetbox-wrapper` dependency | Production-ready NetBox client wrapper: caching, rate-limiting, upsert, retry |
 | `src/web/app.py` | Flask application factory; dashboard, job detail, schedules, cache, and settings routes |
 | `src/web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
@@ -372,7 +372,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
 | `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
 | `mappings/ansible.hcl.example` | Ansible facts export / fact cache | Hosts, interfaces, IP addresses |
-| `mappings/salt.hcl.example` | Salt grains artifact export | Hosts, interfaces, IP addresses |
+| `mappings/salt.hcl.example` | Salt master grains / artifact fallback | Hosts, interfaces, IP addresses |
 | `mappings/juniper-snmp.hcl.example` | SNMP (Juniper routers) | Devices, interfaces, IP addresses |
 | `mappings/linux-snmp.hcl.example` | SNMP (Linux / net-snmp) | Devices, interfaces, IP addresses |
 | `mappings/ldap.hcl.example` | LDAP directory | Generic LDAP objects |
@@ -436,7 +436,7 @@ hcl-netbox-discovery/
 │   │       ├── base.py            # Abstract DataSource interface
 │   │       ├── rest.py            # Generic REST adapter
 │   │       ├── ansible.py         # Ansible facts artifact adapter
-│   │       ├── salt.py            # Salt grains artifact adapter
+│   │       ├── salt.py            # Salt grains adapter (live master or artifact)
 │   │       ├── vmware.py          # VMware vCenter (pyVmomi)
 │   │       ├── azure.py           # Microsoft Azure
 │   │       ├── ldap.py            # LDAP directory
