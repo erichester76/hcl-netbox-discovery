@@ -530,6 +530,7 @@ def test_runtime_settings_are_seeded():
     assert netbox_settings["NETBOX_USE_CUSTOM_OBJECTS"]["default_value"] == "false"
     assert netbox_settings["NETBOX_SYNC_TAG"]["default_value"] == "netbox-sync"
     assert catc_settings["CATC_FETCH_INTERFACES"]["default_value"] == "true"
+    assert catc_settings["CATC_FETCH_MODULES"]["default_value"] == "false"
     assert catc_settings["CATC_SITE_ASSIGNMENT_STRATEGY"]["default_value"] == "auto"
     assert ndfc_settings["NDFC_FETCH_INTERFACES"]["default_value"] == "false"
     assert ndfc_settings["NDFC_FETCH_MODULES"]["default_value"] == "false"

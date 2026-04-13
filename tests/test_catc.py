@@ -873,7 +873,6 @@ class TestCatalystModules:
             call(deviceId="device-uuid-1", offset=1, limit=500),
             call(deviceId="device-uuid-1", offset=501, limit=500),
         ]
-
     def test_get_objects_fetches_modules_when_enabled(self):
         src = self._connected_source()
         src._fetch_interfaces = False
