@@ -151,8 +151,37 @@ def _build_nb_client(cfg_nb: Any) -> Any:
     return pynetbox.api(**kwargs)
 
 
+def _extract_http_status_code(exc: Exception) -> int | None:
+    """Return an HTTP status code from *exc* when one is exposed."""
+    for attr in ("status_code", "status", "http_status"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
+    response = getattr(exc, "response", None)
+    if response is None:
+        response = getattr(exc, "resp", None)
+    for attr in ("status_code", "status"):
+        value = getattr(response, attr, None)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                pass
+
+    message = str(exc).lower()
+    if "404" in message and "not found" in message:
+        return 404
+
+    return None
+
+
 def _get_source_adapter(api_type: str) -> Any:
     """Instantiate the correct DataSource sub-class for *api_type*."""
+    from .sources.ansible import AnsibleSource
     from .sources.azure import AzureSource
     from .sources.catc import CatalystCenterSource
     from .sources.f5 import F5Source
@@ -167,6 +196,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.vmware import VMwareSource
 
     registry = {
+        "ansible":    AnsibleSource,
         "vmware":     VMwareSource,
         "rest":       RestSource,
         "catc":       CatalystCenterSource,
@@ -319,6 +349,47 @@ class Engine:
             self.stop_requested = True
             return True
         return self.stop_requested
+
+    @staticmethod
+    def _custom_objects_enabled(cfg: CollectorConfig) -> bool:
+        extra_flags = getattr(cfg.collector, "extra_flags", {}) or {}
+        return bool(extra_flags.get("use_custom_objects"))
+
+    def _validate_custom_object_plugin(
+        self,
+        cfg: CollectorConfig,
+        nb: Any,
+        nb_main: Any | None = None,
+    ) -> None:
+        """Disable custom-object writes for this run when the plugin is absent."""
+        if not self._custom_objects_enabled(cfg):
+            return
+
+        probe_client = nb_main or nb
+        try:
+            probe_client.list("plugins.custom_objects.custom_object_types", limit=1)
+        except Exception as exc:
+            if _extract_http_status_code(exc) == 404:
+                cfg.collector.extra_flags["use_custom_objects"] = False
+                logger.warning(
+                    "NetBox custom-object plugin endpoint unavailable; "
+                    "disabling collector.use_custom_objects for this run and "
+                    "falling back to custom fields: %s",
+                    exc,
+                )
+                return
+
+            logger.warning(
+                "Custom-object plugin availability check failed; leaving "
+                "collector.use_custom_objects enabled: %s",
+                exc,
+            )
+            return
+
+        logger.info(
+            "NetBox custom-object plugin endpoint available; "
+            "collector.use_custom_objects remains enabled for this run"
+        )
 
     @staticmethod
     def _drain_bounded_futures(
@@ -1201,6 +1272,8 @@ class Engine:
                 main_cfg = deepcopy(cfg.netbox)
                 main_cfg.branch = None
                 nb_main = _build_nb_client(main_cfg)
+
+            self._validate_custom_object_plugin(cfg, nb, nb_main)
 
             if cfg.collector.sync_tag and not dry_run:
                 # Ensure the sync tag exists once (shared across all iterations)

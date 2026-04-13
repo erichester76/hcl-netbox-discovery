@@ -41,7 +41,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 |---|---|
 | **Zero Python per new REST source** | Configure entirely in HCL; the generic `rest` adapter handles the HTTP layer |
 | **Declarative HCL mappings** | Describe *what* to sync, not *how* — the engine takes care of execution |
-| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, Salt grains artifacts, Ansible facts artifacts, LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
+| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, Ansible facts artifacts, Salt grains artifacts, LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
 | **Automatic prerequisites** | Creates manufacturers, device types, sites, racks, platforms, cluster types, and more on the fly |
 | **Thread-safe parallel execution** | Configurable worker pools; each item gets an isolated execution context |
 | **Dry-run mode** | Preview all payloads that *would* be sent without writing anything to NetBox |
@@ -50,6 +50,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 | **Field-level update modes** | Mark individual fields as `if_missing` so confirmed NetBox values are only filled when blank |
 | **Nested collections** | Sync interfaces, IP addresses, inventory items, virtual disks, and modules within a single mapping file |
 | **Module support** | Full NetBox module bay / module type / module hierarchy for detailed hardware tracking |
+| **Custom-object fallback** | Nexus topology mappings can target NetBox Custom Objects and automatically fall back to custom fields when the plugin endpoint is unavailable |
 | **Error isolation** | Failures on individual items are logged and skipped without aborting the run |
 | **Tag management** | Automatically tag every synced object; tags are merged with existing values |
 | **Web UI** | Browser-based dashboard to queue syncs, monitor running jobs, browse logs, manage schedules and settings, and control the NetBox cache |
@@ -422,47 +423,6 @@ cp regex/xclarity_room_to_location.example  regex/xclarity_room_to_location
 ```
 hcl-netbox-discovery/
 ├── main.py                        # CLI entry point
-<<<<<<< HEAD
-├── web_server.py                  # Web UI entry point
-├── requirements.txt               # Legacy/fallback dependency export
-│
-├── collector/                     # Core framework package
-│   ├── engine.py                  # Top-level orchestrator
-│   ├── config.py                  # HCL parser + dataclass models
-│   ├── context.py                 # Per-run execution context
-│   ├── db.py                      # SQLite job-tracking store
-│   ├── job_log_handler.py         # Logging handler → job DB
-│   ├── field_resolvers.py         # Expression evaluator
-│   ├── prerequisites.py           # Prerequisite resolution
-│   └── sources/
-│       ├── base.py                # Abstract DataSource interface
-│       ├── rest.py                # Generic REST adapter
-│       ├── ansible.py             # Ansible facts artifact adapter
-│       ├── vmware.py              # VMware vCenter (pyVmomi)
-│       ├── azure.py               # Microsoft Azure
-│       ├── ldap.py                # LDAP directory
-│       ├── catc.py                # Cisco Catalyst Center
-│       ├── salt.py                # Salt grains artifact adapter
-│       ├── nexus.py               # Cisco Nexus Dashboard (NDFC)
-│       ├── f5.py                  # F5 BIG-IP
-│       ├── prometheus.py          # Prometheus node-exporter
-│       ├── snmp.py                # SNMP (vendor-agnostic)
-│       ├── tenable.py             # Tenable One / Nessus
-│       └── netbox.py              # NetBox-to-NetBox source adapter
-│
-├── web/                           # Web UI package
-│   ├── app.py                     # Flask application factory + routes
-│   └── templates/
-│       ├── base.html              # Shared navbar / layout (Bootstrap 5)
-│       ├── index.html             # Dashboard: running jobs, recent history, run form
-│       ├── job_detail.html        # Job log viewer + sync summary table
-│       ├── schedules.html         # Schedule list and create form
-│       ├── schedule_edit.html     # Schedule edit form
-│       ├── cache.html             # Cache status and flush UI
-│       ├── settings.html          # DB-backed settings UI
-│       └── 404.html               # Not-found page
-│
-=======
 ├── src/
 │   ├── collector/                 # Core framework package
 │   │   ├── engine.py              # Top-level orchestrator
@@ -475,6 +435,8 @@ hcl-netbox-discovery/
 │   │   └── sources/
 │   │       ├── base.py            # Abstract DataSource interface
 │   │       ├── rest.py            # Generic REST adapter
+│   │       ├── ansible.py         # Ansible facts artifact adapter
+│   │       ├── salt.py            # Salt grains artifact adapter
 │   │       ├── vmware.py          # VMware vCenter (pyVmomi)
 │   │       ├── azure.py           # Microsoft Azure
 │   │       ├── ldap.py            # LDAP directory
@@ -497,7 +459,6 @@ hcl-netbox-discovery/
 │           ├── cache.html         # Cache status and flush UI
 │           ├── settings.html      # DB-backed settings UI
 │           └── 404.html           # Not-found page
->>>>>>> origin/dev
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example

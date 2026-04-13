@@ -18,11 +18,11 @@
 #   NETBOX_CACHE_URL          Redis URL or SQLite path
 #   NETBOX_USE_CUSTOM_OBJECTS true | false  (default: false)
 #                             When true, emit Nexus fabric / vPC topology into
-#                             NetBox Custom Objects. This requires the
-#                             ``netbox-custom-objects`` plugin to be installed
-#                             and the ``ndfc_fabrics``, ``ndfc_vpc_domains``,
-#                             and ``ndfc_vpc_peer_links`` custom object types
-#                             (with matching fields) to already exist.
+#                             NetBox Custom Objects. The mapping bootstraps the
+#                             required custom object types and fields when the
+#                             plugin is installed. If the plugin endpoint is
+#                             unavailable, the run logs a warning and falls
+#                             back to the custom-field path automatically.
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_MODULES    true | false  (default: true)
@@ -181,8 +181,9 @@ object "ndfc_topology_custom_field" {
 #
 # Toggle them with ``NETBOX_USE_CUSTOM_OBJECTS=true``. When enabled, the
 # mapping first bootstraps the required custom object types and fields in
-# NetBox and then writes the Nexus topology instances. When disabled, the
-# mapping falls back to synchronized device/interface custom fields, and the
+# NetBox and then writes the Nexus topology instances. If the plugin endpoint
+# is unavailable, the collector disables custom objects for that run and uses
+# the synchronized device/interface custom-field fallback instead. The
 # ``ndfc_topology_custom_field`` block above bootstraps those fields in NetBox.
 # ---------------------------------------------------------------------------
 

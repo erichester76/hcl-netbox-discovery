@@ -17,6 +17,18 @@ from collector.context import RunContext
 
 
 @pytest.fixture()
+def ansible_config():
+    return SourceConfig(
+        api_type="ansible",
+        url="/tmp/ansible-facts",
+        username="",
+        password="",
+        verify_ssl=True,
+        extra={"artifact_path": "/tmp/ansible-facts"},
+    )
+
+
+@pytest.fixture()
 def vmware_config():
     return SourceConfig(
         api_type="vmware",
