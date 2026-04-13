@@ -50,6 +50,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 | **Field-level update modes** | Mark individual fields as `if_missing` so confirmed NetBox values are only filled when blank |
 | **Nested collections** | Sync interfaces, IP addresses, inventory items, virtual disks, and modules within a single mapping file |
 | **Module support** | Full NetBox module bay / module type / module hierarchy for detailed hardware tracking |
+| **Custom-object fallback** | Nexus topology mappings can target NetBox Custom Objects and automatically fall back to custom fields when the plugin endpoint is unavailable |
 | **Error isolation** | Failures on individual items are logged and skipped without aborting the run |
 | **Tag management** | Automatically tag every synced object; tags are merged with existing values |
 | **Web UI** | Browser-based dashboard to queue syncs, monitor running jobs, browse logs, manage schedules and settings, and control the NetBox cache |

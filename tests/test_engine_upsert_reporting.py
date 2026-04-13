@@ -929,6 +929,89 @@ class TestEngineUpsertReporting:
 
         nb.close.assert_called_once_with()
 
+    def test_run_disables_custom_objects_when_plugin_endpoint_returns_404(self, caplog):
+        engine = Engine()
+        nb = MagicMock()
+        exc = Exception("404 not found")
+        exc.status_code = 404  # type: ignore[attr-defined]
+        nb.list.side_effect = exc
+        cfg = CollectorConfig(
+            source=SourceConfig(api_type="nexus", url="https://example.invalid"),
+            netbox=NetBoxConfig(url="https://netbox.example", token="token"),
+            collector=CollectorOptions(extra_flags={"use_custom_objects": True}),
+            objects=[],
+        )
+
+        with patch("collector.engine.load_config", return_value=cfg), patch(
+            "collector.engine._build_nb_client",
+            return_value=nb,
+        ), patch.object(engine, "_run_pass", return_value=[]), caplog.at_level(logging.WARNING):
+            engine.run("fake.hcl")
+
+        assert cfg.collector.extra_flags["use_custom_objects"] is False
+        nb.list.assert_called_once_with(
+            "plugins.custom_objects.custom_object_types",
+            limit=1,
+        )
+        assert "falling back to custom fields" in caplog.text
+
+    def test_run_disables_custom_objects_when_falsy_response_has_404_status(self, caplog):
+        class FalseyResponse:
+            status_code = 404
+
+            def __bool__(self):
+                return False
+
+        engine = Engine()
+        nb = MagicMock()
+        exc = Exception("plugin missing")
+        exc.response = FalseyResponse()  # type: ignore[attr-defined]
+        nb.list.side_effect = exc
+        cfg = CollectorConfig(
+            source=SourceConfig(api_type="nexus", url="https://example.invalid"),
+            netbox=NetBoxConfig(url="https://netbox.example", token="token"),
+            collector=CollectorOptions(extra_flags={"use_custom_objects": True}),
+            objects=[],
+        )
+
+        with patch("collector.engine.load_config", return_value=cfg), patch(
+            "collector.engine._build_nb_client",
+            return_value=nb,
+        ), patch.object(engine, "_run_pass", return_value=[]), caplog.at_level(logging.WARNING):
+            engine.run("fake.hcl")
+
+        assert cfg.collector.extra_flags["use_custom_objects"] is False
+        assert "falling back to custom fields" in caplog.text
+
+    def test_run_probes_custom_objects_with_branchless_client(self):
+        engine = Engine()
+        nb = MagicMock()
+        nb_main = MagicMock()
+        nb.list.side_effect = AssertionError("branched client should not probe custom objects")
+        cfg = CollectorConfig(
+            source=SourceConfig(api_type="nexus", url="https://example.invalid"),
+            netbox=NetBoxConfig(
+                url="https://netbox.example",
+                token="token",
+                branch="feature/custom-objects",
+            ),
+            collector=CollectorOptions(extra_flags={"use_custom_objects": True}),
+            objects=[],
+        )
+
+        with patch("collector.engine.load_config", return_value=cfg), patch(
+            "collector.engine._build_nb_client",
+            side_effect=[nb, nb_main],
+        ), patch.object(engine, "_run_pass", return_value=[]):
+            engine.run("fake.hcl")
+
+        assert cfg.collector.extra_flags["use_custom_objects"] is True
+        nb.list.assert_not_called()
+        nb_main.list.assert_called_once_with(
+            "plugins.custom_objects.custom_object_types",
+            limit=1,
+        )
+
     def test_live_non_valueerror_with_same_message_uses_generic_failure_path(self, caplog):
         engine = Engine()
         stats = RunStats("devices")
