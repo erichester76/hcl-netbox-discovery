@@ -6,8 +6,9 @@ return network device inventory as plain Python dicts.
 Supported collections
 ---------------------
 ``"devices"`` – all managed network devices, enriched with site hierarchy data
-                and optionally with embedded interface lists when
-                ``fetch_interfaces`` is enabled in the source config.
+                and optionally with embedded interface and module lists when
+                ``fetch_interfaces`` and ``fetch_modules`` are enabled in the
+                source config.
 
 Each returned dict includes both normalised convenience fields and the original
 Catalyst Center response attributes:
@@ -24,6 +25,7 @@ Normalised fields
   location_name     Building/location from hierarchy (level 3; empty string if absent)
   status            ``"active"`` if Reachable, otherwise ``"offline"``
   interfaces        List of normalised interface dicts (when fetch_interfaces enabled)
+  modules           List of normalised module dicts (when fetch_modules enabled)
 
 Raw fields (passthrough from DNAC)
   hostname, platformId, softwareType, softwareVersion, serialNumber,
@@ -40,6 +42,16 @@ Interface dict fields (when fetch_interfaces is enabled)
                     or empty string
   speed             Speed in Mbps (integer or ``None``)
   portName, interfaceType, adminStatus, operStatus (raw passthrough)
+
+Module dict fields (when fetch_modules is enabled)
+  bay_name          Stable bay label for the module
+  profile           NetBox module profile label
+  model             Best available model/type string
+  serial            Upper-case serial number
+  position          Slot/index string when available
+  status            Normalized module status
+  manufacturer      Module manufacturer
+  attributes        Module attribute dict for additional metadata
 """
 
 from __future__ import annotations
@@ -90,6 +102,13 @@ _IFACE_TYPE_MAP: dict[str, str] = {
     "NVE":                         "virtual",
 }
 
+_MODULE_PROFILE_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("power", "psu"), "Power supply"),
+    (("fan",), "Fan"),
+    (("linecard", "line card", "lc-"), "Line card"),
+    (("supervisor", "sup-", "sup "), "Supervisor"),
+)
+
 
 def _normalize_model(platform_id: str) -> str:
     """Return a normalised Cisco model string from *platform_id*."""
@@ -108,6 +127,36 @@ def _normalize_iface_type(raw_type: str) -> str:
     if not raw_type:
         return "other"
     return _IFACE_TYPE_MAP.get(raw_type, "other")
+
+
+def _normalize_module_profile(name: str, vendor_equipment_type: str) -> str:
+    """Return a best-effort NetBox module profile label."""
+    haystack = f"{name} {vendor_equipment_type}".lower()
+    compact = haystack.replace("-", "").replace("_", "").strip()
+    for tokens, profile in _MODULE_PROFILE_PATTERNS:
+        if any(token in haystack or token in compact for token in tokens):
+            return profile
+    return "Module"
+
+
+def _normalize_module_status(operational_state_code: str) -> str:
+    """Return a normalized module status string."""
+    state = str(operational_state_code or "").strip().lower()
+    if state in {"ok", "up", "active", "enabled", "ready", "warning", "warn", "degraded", "standby"}:
+        return "active"
+    if state in {
+        "down",
+        "offline",
+        "failed",
+        "fault",
+        "faulty",
+        "notpresent",
+        "not present",
+        "absent",
+        "missing",
+    }:
+        return "offline"
+    return "active"
 
 
 def _parse_speed_mbps(speed_str: str) -> int | None:
@@ -293,6 +342,7 @@ class CatalystCenterSource(DataSource):
         self._client: Any | None = None
         self._config: Any | None = None
         self._fetch_interfaces: bool = False
+        self._fetch_modules: bool = False
         self._site_assignment_strategy: str = "auto"
         self._wait_on_rate_limit: bool = True
         self._rate_limit_retry_attempts: int = 3
@@ -327,6 +377,7 @@ class CatalystCenterSource(DataSource):
 
         extra = config.extra or {}
         self._fetch_interfaces = _coerce_bool(extra.get("fetch_interfaces", "true"), True)
+        self._fetch_modules = _coerce_bool(extra.get("fetch_modules", "false"), False)
         assignment_strategy = str(extra.get("site_assignment_strategy", "auto")).strip().lower()
         if assignment_strategy not in {"auto", "bulk", "membership"}:
             logger.warning(
@@ -460,6 +511,11 @@ class CatalystCenterSource(DataSource):
                     device_id=device_id,
                     enriched_device=enriched,
                 )
+            if self._fetch_modules:
+                enriched["modules"] = self._collect_modules_for_device(
+                    device=device,
+                    device_id=device_id,
+                )
             devices.append(enriched)
 
         logger.debug("CatalystCenter: returning %d devices", len(devices))
@@ -506,6 +562,11 @@ class CatalystCenterSource(DataSource):
                             device=device,
                             device_id=device_id,
                             enriched_device=enriched,
+                        )
+                    if self._fetch_modules:
+                        enriched["modules"] = self._collect_modules_for_device(
+                            device=device,
+                            device_id=device_id,
                         )
                     devices.append(enriched)
 
@@ -825,6 +886,51 @@ class CatalystCenterSource(DataSource):
 
         return [self._enrich_interface(iface) for iface in raw_list]
 
+    def _fetch_device_modules(self, device_id: str) -> list[dict]:
+        """Return a list of normalized module dicts for *device_id*."""
+        raw_list: list[dict] = []
+        offset = 1
+        limit = 500
+        while True:
+            try:
+                resp = self._call_with_rate_limit_backoff(
+                    self._client.devices.get_modules,
+                    f"module inventory for device {device_id}",
+                    deviceId=device_id,
+                    offset=offset,
+                    limit=limit,
+                )
+                page = _response_items(resp)
+            except Exception as exc:
+                logger.warning(
+                    "CatalystCenter: failed to fetch modules for device %s: %s",
+                    device_id,
+                    exc,
+                )
+                return []
+
+            if not isinstance(page, list):
+                page = []
+
+            raw_list.extend(page)
+
+            if len(page) < limit:
+                break
+            offset += limit
+
+        modules = [self._enrich_module(module) for module in raw_list]
+        return [module for module in modules if module]
+
+    def _collect_modules_for_device(
+        self,
+        device: Any,
+        device_id: str,
+    ) -> list[dict]:
+        """Return the module list for a device."""
+        if not device_id:
+            return []
+        return self._fetch_device_modules(device_id)
+
     def _collect_interfaces_for_device(
         self,
         device: Any,
@@ -938,6 +1044,57 @@ class CatalystCenterSource(DataSource):
             "interfaceType": iface_type,
             "adminStatus":   admin_status,
             "operStatus":    oper_status,
+        }
+
+    def _enrich_module(self, module: Any) -> dict[str, Any] | None:
+        """Return a normalized dict for a single Catalyst Center module record."""
+        name = _safe_get(module, "name", "") or ""
+        vendor_equipment_type = _safe_get(module, "vendorEquipmentType", "") or ""
+        part_number = _safe_get(module, "partNumber", "") or ""
+        serial_number = _safe_get(module, "serialNumber", "") or ""
+        manufacturer = _safe_get(module, "manufacturer", "") or ""
+        module_index = _safe_get(module, "moduleIndex", "")
+        operational_state = _safe_get(module, "operationalStateCode", "") or ""
+        description = _safe_get(module, "description", "") or ""
+        assembly_number = _safe_get(module, "assemblyNumber", "") or ""
+        assembly_revision = _safe_get(module, "assemblyRevision", "") or ""
+        entity_physical_index = _safe_get(module, "entityPhysicalIndex", "") or ""
+        containment_entity = _safe_get(module, "containmentEntity", "") or ""
+
+        bay_name = name.strip() or (f"Slot {module_index}" if module_index not in (None, "") else "")
+        model = vendor_equipment_type.strip() or part_number.strip() or bay_name
+        if not bay_name or not model:
+            return None
+
+        attributes = {
+            "part_number": part_number.strip(),
+            "assembly_number": assembly_number.strip(),
+            "assembly_revision": assembly_revision.strip(),
+            "entity_physical_index": str(entity_physical_index).strip()
+            if entity_physical_index not in (None, "")
+            else "",
+            "containment_entity": str(containment_entity).strip()
+            if containment_entity not in (None, "")
+            else "",
+        }
+
+        return {
+            "bay_name": bay_name,
+            "profile": _normalize_module_profile(name, vendor_equipment_type),
+            "model": model,
+            "serial": serial_number.upper().strip() if serial_number else "",
+            "position": str(module_index).strip() if module_index not in (None, "") else "",
+            "status": _normalize_module_status(operational_state),
+            "manufacturer": manufacturer.strip() or "Cisco",
+            "description": description.strip(),
+            "attributes": {key: value for key, value in attributes.items() if value},
+            # raw passthrough
+            "name": name,
+            "vendorEquipmentType": vendor_equipment_type,
+            "partNumber": part_number,
+            "serialNumber": serial_number,
+            "moduleIndex": module_index,
+            "operationalStateCode": operational_state,
         }
 
 

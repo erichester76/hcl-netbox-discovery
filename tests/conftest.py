@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import types
-from unittest.mock import MagicMock
-
 import pytest
 
 from collector.config import (
@@ -14,10 +11,21 @@ from collector.config import (
 )
 from collector.context import RunContext
 
-
 # ---------------------------------------------------------------------------
 # Source config factories
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def ansible_config():
+    return SourceConfig(
+        api_type="ansible",
+        url="/tmp/ansible-facts",
+        username="",
+        password="",
+        verify_ssl=True,
+        extra={"artifact_path": "/tmp/ansible-facts"},
+    )
 
 
 @pytest.fixture()
