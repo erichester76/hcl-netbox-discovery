@@ -902,7 +902,11 @@ class CatalystCenterSource(DataSource):
                         limit=limit,
                     )
                 except TypeError as exc:
-                    if "device_id" not in str(exc):
+                    exc_message = str(exc)
+                    if not re.search(
+                        r"unexpected keyword argument [\"']device_id[\"']",
+                        exc_message,
+                    ):
                         raise
                     logger.debug(
                         "CatalystCenter: retrying modules endpoint for device %s with legacy deviceId kwarg",
