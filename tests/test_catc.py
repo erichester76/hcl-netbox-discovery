@@ -852,7 +852,7 @@ class TestCatalystModules:
         assert len(result) == 1
         assert result[0]["profile"] == "Fan"
         src._client.devices.get_modules.assert_called_once_with(
-            deviceId="device-uuid-1",
+            device_id="device-uuid-1",
             offset=1,
             limit=500,
         )
@@ -870,8 +870,31 @@ class TestCatalystModules:
 
         assert len(result) == 501
         assert src._client.devices.get_modules.call_args_list == [
+            call(device_id="device-uuid-1", offset=1, limit=500),
+            call(device_id="device-uuid-1", offset=501, limit=500),
+        ]
+
+    def test_fetch_device_modules_falls_back_to_legacy_deviceId_kwarg(self):
+        src = self._connected_source()
+        raw_module = {
+            "name": "Fan 1",
+            "vendorEquipmentType": "FAN-T1",
+            "moduleIndex": 2,
+        }
+
+        def side_effect(**kwargs):
+            if "device_id" in kwargs:
+                raise TypeError("Devices.get_modules() got an unexpected keyword argument 'device_id'")
+            return SimpleNamespace(response=[raw_module])
+
+        src._client.devices.get_modules.side_effect = side_effect
+
+        result = src._fetch_device_modules("device-uuid-1")
+
+        assert len(result) == 1
+        assert src._client.devices.get_modules.call_args_list == [
+            call(device_id="device-uuid-1", offset=1, limit=500),
             call(deviceId="device-uuid-1", offset=1, limit=500),
-            call(deviceId="device-uuid-1", offset=501, limit=500),
         ]
     def test_get_objects_fetches_modules_when_enabled(self):
         src = self._connected_source()
