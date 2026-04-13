@@ -350,6 +350,8 @@ def test_job_detail_has_live_and_level_controls_for_queued_job(app):
 
     assert resp.status_code == 200
     assert b'id="toggle-live-update"' in resp.data
+    assert b'id="copy-log-window"' in resp.data
+    assert b"Copy Visible Logs" in resp.data
     assert b"Live Update: On" in resp.data
     assert b'id="toggle-level-DEBUG"' in resp.data
     assert b'id="toggle-level-INFO"' in resp.data
@@ -357,6 +359,22 @@ def test_job_detail_has_live_and_level_controls_for_queued_job(app):
     assert b'id="toggle-level-ERROR"' in resp.data
     assert b'id="job-status-badge"' in resp.data
     assert b">Rerun</button>" in resp.data
+
+
+def test_job_detail_copy_button_wires_visible_log_copy_controls(app):
+    job_id = create_job("mappings/test.hcl")
+    start_job(job_id)
+    add_log(job_id, "INFO", "engine", "visible info")
+    add_log(job_id, "DEBUG", "engine", "hidden debug")
+    finish_job(job_id, success=True)
+
+    resp = app.get(f"/jobs/{job_id}")
+
+    assert resp.status_code == 200
+    assert b'id="copy-log-window"' in resp.data
+    assert b"Copy Visible Logs" in resp.data
+    assert b"log-hidden" in resp.data
+    assert b"navigator.clipboard.writeText(" in resp.data
 
 
 def test_job_detail_keeps_unknown_levels_visible_and_renders_line_breaks(app):
