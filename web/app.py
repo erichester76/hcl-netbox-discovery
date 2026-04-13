@@ -18,7 +18,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from collector.config import load_config  # noqa: E402
+from collector.config import load_mapping_display_name  # noqa: E402
 from collector.db import (  # noqa: E402
     create_job,
     create_schedule,
@@ -535,12 +535,12 @@ def _discover_mappings() -> list[MappingChoice]:
         rel_path = os.path.relpath(path, _ROOT)
         label = os.path.basename(rel_path)
         try:
-            cfg = load_config(path)
+            display_name = load_mapping_display_name(path)
         except Exception:
             logger.debug("Failed to read display_name from %s; using filename", rel_path, exc_info=True)
         else:
-            if cfg.display_name:
-                label = cfg.display_name
+            if display_name:
+                label = display_name
         mappings.append(MappingChoice(path=rel_path, label=label))
     return mappings
 

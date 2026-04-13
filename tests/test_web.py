@@ -139,6 +139,43 @@ def test_index_uses_mapping_display_names_in_dropdown(app, tmp_path, monkeypatch
     assert b"fallback-name.hcl" in resp.data
 
 
+def test_schedules_page_uses_mapping_display_names_in_dropdown(app, tmp_path, monkeypatch):
+    from web import app as web_app  # noqa: PLC0415
+
+    _write_mapping(tmp_path, "vmware.hcl", """
+        display_name = "VMware vCenter"
+
+        source "vmware" {
+          api_type = "vmware"
+          url      = "vc.example.com"
+        }
+
+        netbox {
+          url   = "https://nb.example.com"
+          token = "tok"
+        }
+    """)
+    _write_mapping(tmp_path, "fallback-name.hcl", """
+        source "azure" {
+          api_type = "azure"
+          url      = ""
+        }
+
+        netbox {
+          url   = "https://nb.example.com"
+          token = "tok"
+        }
+    """)
+    monkeypatch.setattr(web_app, "_ROOT", str(tmp_path))
+
+    resp = app.get("/schedules")
+
+    assert resp.status_code == 200
+    assert b'option value="mappings/vmware.hcl"' in resp.data
+    assert b"VMware vCenter" in resp.data
+    assert b"fallback-name.hcl" in resp.data
+
+
 def test_login_page_renders_when_auth_enabled(secured_app):
     resp = secured_app.get("/login")
     assert resp.status_code == 200
@@ -680,6 +717,7 @@ def test_schedule_create(app):
     from collector.db import get_schedules  # noqa: PLC0415
     schedules = get_schedules()
     assert any(s["name"] == "my-schedule" for s in schedules)
+    assert any(s["hcl_file"].endswith("mappings/test.hcl") for s in schedules)
 
 
 def test_schedule_create_missing_fields(app):
@@ -719,6 +757,34 @@ def test_schedule_edit_get(app):
     resp = app.get(f"/schedules/{sid}/edit")
     assert resp.status_code == 200
     assert b"editable" in resp.data
+
+
+def test_schedule_edit_get_uses_display_name_and_path_value(app, tmp_path, monkeypatch):
+    from collector.db import create_schedule  # noqa: PLC0415
+    from web import app as web_app  # noqa: PLC0415
+
+    _write_mapping(tmp_path, "vmware.hcl", """
+        display_name = "VMware vCenter"
+
+        source "vmware" {
+          api_type = "vmware"
+          url      = "vc.example.com"
+        }
+
+        netbox {
+          url   = "https://nb.example.com"
+          token = "tok"
+        }
+    """)
+    monkeypatch.setattr(web_app, "_ROOT", str(tmp_path))
+    sid = create_schedule("editable", str(tmp_path / "mappings" / "vmware.hcl"), "0 * * * *")
+
+    resp = app.get(f"/schedules/{sid}/edit")
+
+    assert resp.status_code == 200
+    assert b'option value="mappings/vmware.hcl"' in resp.data
+    assert b"VMware vCenter" in resp.data
+    assert b"selected" in resp.data
 
 
 def test_schedule_edit_post(app):

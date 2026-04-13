@@ -366,6 +366,18 @@ class CollectorConfig:
     source_label: str = ""
 
 
+def _normalize_display_name(value: Any) -> str:
+    resolved = _eval_config_str(value)
+    return str(resolved).strip() if resolved is not None else ""
+
+
+def load_mapping_display_name(mapping_path: str) -> str:
+    """Return the optional top-level ``display_name`` for an HCL mapping."""
+    with open(mapping_path) as fh:
+        raw = hcl2.load(fh)
+    return _normalize_display_name(raw.get("display_name", ""))
+
+
 # ---------------------------------------------------------------------------
 # Block parsers
 # ---------------------------------------------------------------------------
@@ -654,8 +666,7 @@ def load_config(mapping_path: str) -> CollectorConfig:
     with open(mapping_path, "r") as fh:
         raw = hcl2.load(fh)
 
-    display_name_raw = _eval_config_str(raw.get("display_name", ""))
-    display_name = str(display_name_raw).strip() if display_name_raw is not None else ""
+    display_name = _normalize_display_name(raw.get("display_name", ""))
 
     # --- source ---
     source_list = raw.get("source", [])

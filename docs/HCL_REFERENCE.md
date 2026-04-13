@@ -21,7 +21,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 
 ## Top-Level Structure
 
-Every mapping file contains these top-level blocks:
+Every mapping file contains top-level attributes and blocks:
 
 ```hcl
 display_name = "VMware vCenter"  # optional web UI label

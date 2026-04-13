@@ -27,6 +27,7 @@ from collector.config import (
     build_source_config,
     build_source_groups,
     load_config,
+    load_mapping_display_name,
 )
 from collector.db import init_db, set_setting
 
@@ -227,6 +228,22 @@ class TestLoadConfigMinimal:
         """)
         cfg = load_config(path)
         assert cfg.display_name == ""
+
+    def test_load_mapping_display_name_returns_trimmed_value(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            display_name = "  VMware vCenter  "
+
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://netbox.example.com"
+              token = "abc123"
+            }
+        """)
+        assert load_mapping_display_name(path) == "VMware vCenter"
 
     def test_raises_when_source_block_missing(self, tmp_path):
         path = _write_hcl(tmp_path, """
