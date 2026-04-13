@@ -142,11 +142,21 @@ def _normalize_module_profile(name: str, vendor_equipment_type: str) -> str:
 def _normalize_module_status(operational_state_code: str) -> str:
     """Return a normalized module status string."""
     state = str(operational_state_code or "").strip().lower()
-    if state in {"ok", "up", "active", "enabled", "ready"}:
+    if state in {"ok", "up", "active", "enabled", "ready", "warning", "warn", "degraded", "standby"}:
         return "active"
-    if state in {"down", "offline", "failed", "fault", "notpresent", "not present"}:
+    if state in {
+        "down",
+        "offline",
+        "failed",
+        "fault",
+        "faulty",
+        "notpresent",
+        "not present",
+        "absent",
+        "missing",
+    }:
         return "offline"
-    return state or "active"
+    return "active"
 
 
 def _parse_speed_mbps(speed_str: str) -> int | None:
@@ -878,25 +888,35 @@ class CatalystCenterSource(DataSource):
 
     def _fetch_device_modules(self, device_id: str) -> list[dict]:
         """Return a list of normalized module dicts for *device_id*."""
-        try:
-            resp = self._call_with_rate_limit_backoff(
-                self._client.devices.get_modules,
-                f"module inventory for device {device_id}",
-                deviceId=device_id,
-                offset=1,
-                limit=500,
-            )
-            raw_list = _response_items(resp)
-        except Exception as exc:
-            logger.warning(
-                "CatalystCenter: failed to fetch modules for device %s: %s",
-                device_id,
-                exc,
-            )
-            return []
+        raw_list: list[dict] = []
+        offset = 1
+        limit = 500
+        while True:
+            try:
+                resp = self._call_with_rate_limit_backoff(
+                    self._client.devices.get_modules,
+                    f"module inventory for device {device_id}",
+                    deviceId=device_id,
+                    offset=offset,
+                    limit=limit,
+                )
+                page = _response_items(resp)
+            except Exception as exc:
+                logger.warning(
+                    "CatalystCenter: failed to fetch modules for device %s: %s",
+                    device_id,
+                    exc,
+                )
+                return []
 
-        if not isinstance(raw_list, list):
-            raw_list = []
+            if not isinstance(page, list):
+                page = []
+
+            raw_list.extend(page)
+
+            if len(page) < limit:
+                break
+            offset += limit
 
         modules = [self._enrich_module(module) for module in raw_list]
         return [module for module in modules if module]

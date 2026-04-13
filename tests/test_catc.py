@@ -793,7 +793,10 @@ class TestNormalizeModuleHelpers:
             ("up", "active"),
             ("DOWN", "offline"),
             ("failed", "offline"),
-            ("warning", "warning"),
+            ("warning", "active"),
+            ("degraded", "active"),
+            ("missing", "offline"),
+            ("mystery", "active"),
             ("", "active"),
         ],
     )
@@ -853,6 +856,23 @@ class TestCatalystModules:
             offset=1,
             limit=500,
         )
+
+    def test_fetch_device_modules_paginates_until_short_page(self):
+        src = self._connected_source()
+        first_page = [{"name": f"Module {idx}", "vendorEquipmentType": "MOD", "moduleIndex": idx} for idx in range(1, 501)]
+        second_page = [{"name": "Module 501", "vendorEquipmentType": "MOD", "moduleIndex": 501}]
+        src._client.devices.get_modules.side_effect = [
+            SimpleNamespace(response=first_page),
+            SimpleNamespace(response=second_page),
+        ]
+
+        result = src._fetch_device_modules("device-uuid-1")
+
+        assert len(result) == 501
+        assert src._client.devices.get_modules.call_args_list == [
+            call(deviceId="device-uuid-1", offset=1, limit=500),
+            call(deviceId="device-uuid-1", offset=501, limit=500),
+        ]
 
     def test_get_objects_fetches_modules_when_enabled(self):
         src = self._connected_source()
