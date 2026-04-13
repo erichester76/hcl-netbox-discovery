@@ -41,7 +41,7 @@ Adding support for a new REST-based data source requires only a new `.hcl` file 
 |---|---|
 | **Zero Python per new REST source** | Configure entirely in HCL; the generic `rest` adapter handles the HTTP layer |
 | **Declarative HCL mappings** | Describe *what* to sync, not *how* — the engine takes care of execution |
-| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
+| **Multi-source support** | VMware vCenter, Microsoft Azure, Lenovo XClarity, Cisco Catalyst Center, Cisco NDFC, F5 BIG-IP, Prometheus, Ansible facts artifacts, LDAP, SNMP, Tenable, NetBox-to-NetBox, and any HTTP/REST API |
 | **Automatic prerequisites** | Creates manufacturers, device types, sites, racks, platforms, cluster types, and more on the fly |
 | **Thread-safe parallel execution** | Configurable worker pools; each item gets an isolated execution context |
 | **Dry-run mode** | Preview all payloads that *would* be sent without writing anything to NetBox |
@@ -99,6 +99,7 @@ Key components:
 | `src/collector/sources/azure.py` | Azure SDK adapter |
 | `src/collector/sources/ldap.py` | LDAP3 adapter |
 | `src/collector/sources/catc.py` | Cisco Catalyst Center adapter |
+| `src/collector/sources/ansible.py` | Ansible facts artifact adapter |
 | `pynetbox-wrapper` dependency | Production-ready NetBox client wrapper: caching, rate-limiting, upsert, retry |
 | `src/web/app.py` | Flask application factory; dashboard, job detail, schedules, cache, and settings routes |
 | `src/web/templates/` | Jinja2 HTML templates (Bootstrap 5, Clemson colour palette) |
@@ -369,6 +370,7 @@ cp mappings/vmware.hcl.example mappings/vmware.hcl
 | `mappings/nexus.hcl.example` | Cisco Nexus Dashboard (NDFC) | Fabric switches, interfaces |
 | `mappings/f5.hcl.example` | F5 BIG-IP | Appliances, interfaces, self-IPs |
 | `mappings/prometheus.hcl.example` | Prometheus node-exporter | Linux hosts, interfaces |
+| `mappings/ansible.hcl.example` | Ansible facts export / fact cache | Hosts, interfaces, IP addresses |
 | `mappings/juniper-snmp.hcl.example` | SNMP (Juniper routers) | Devices, interfaces, IP addresses |
 | `mappings/linux-snmp.hcl.example` | SNMP (Linux / net-snmp) | Devices, interfaces, IP addresses |
 | `mappings/ldap.hcl.example` | LDAP directory | Generic LDAP objects |
@@ -419,6 +421,46 @@ cp regex/xclarity_room_to_location.example  regex/xclarity_room_to_location
 ```
 hcl-netbox-discovery/
 ├── main.py                        # CLI entry point
+<<<<<<< HEAD
+├── web_server.py                  # Web UI entry point
+├── requirements.txt               # Legacy/fallback dependency export
+│
+├── collector/                     # Core framework package
+│   ├── engine.py                  # Top-level orchestrator
+│   ├── config.py                  # HCL parser + dataclass models
+│   ├── context.py                 # Per-run execution context
+│   ├── db.py                      # SQLite job-tracking store
+│   ├── job_log_handler.py         # Logging handler → job DB
+│   ├── field_resolvers.py         # Expression evaluator
+│   ├── prerequisites.py           # Prerequisite resolution
+│   └── sources/
+│       ├── base.py                # Abstract DataSource interface
+│       ├── rest.py                # Generic REST adapter
+│       ├── ansible.py             # Ansible facts artifact adapter
+│       ├── vmware.py              # VMware vCenter (pyVmomi)
+│       ├── azure.py               # Microsoft Azure
+│       ├── ldap.py                # LDAP directory
+│       ├── catc.py                # Cisco Catalyst Center
+│       ├── nexus.py               # Cisco Nexus Dashboard (NDFC)
+│       ├── f5.py                  # F5 BIG-IP
+│       ├── prometheus.py          # Prometheus node-exporter
+│       ├── snmp.py                # SNMP (vendor-agnostic)
+│       ├── tenable.py             # Tenable One / Nessus
+│       └── netbox.py              # NetBox-to-NetBox source adapter
+│
+├── web/                           # Web UI package
+│   ├── app.py                     # Flask application factory + routes
+│   └── templates/
+│       ├── base.html              # Shared navbar / layout (Bootstrap 5)
+│       ├── index.html             # Dashboard: running jobs, recent history, run form
+│       ├── job_detail.html        # Job log viewer + sync summary table
+│       ├── schedules.html         # Schedule list and create form
+│       ├── schedule_edit.html     # Schedule edit form
+│       ├── cache.html             # Cache status and flush UI
+│       ├── settings.html          # DB-backed settings UI
+│       └── 404.html               # Not-found page
+│
+=======
 ├── src/
 │   ├── collector/                 # Core framework package
 │   │   ├── engine.py              # Top-level orchestrator
@@ -453,6 +495,7 @@ hcl-netbox-discovery/
 │           ├── cache.html         # Cache status and flush UI
 │           ├── settings.html      # DB-backed settings UI
 │           └── 404.html           # Not-found page
+>>>>>>> origin/dev
 ├── mappings/                      # HCL mapping file templates (copy to *.hcl to use)
 │   ├── vmware.hcl.example
 │   ├── xclarity.hcl.example
@@ -461,6 +504,7 @@ hcl-netbox-discovery/
 │   ├── nexus.hcl.example
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
+│   ├── ansible.hcl.example
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example

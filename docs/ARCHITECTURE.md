@@ -33,6 +33,7 @@ hcl-netbox-discovery/
 │   └── sources/
 │       ├── base.py                # Abstract DataSource interface
 │       ├── rest.py                # Generic REST adapter — no Python needed per source
+│       ├── ansible.py             # Ansible facts artifact adapter
 │       ├── vmware.py              # pyVmomi adapter (SDK requires Python; fixed built-in)
 │       ├── azure.py               # Microsoft Azure SDK adapter
 │       ├── ldap.py                # LDAP directory adapter (ldap3)
@@ -65,6 +66,7 @@ hcl-netbox-discovery/
 │   ├── nexus.hcl.example
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
+│   ├── ansible.hcl.example
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
