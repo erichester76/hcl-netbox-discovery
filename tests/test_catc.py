@@ -31,6 +31,8 @@ from collector.sources.catc import (  # noqa: E402
     _mask_to_prefix,
     _normalize_iface_type,
     _normalize_model,
+    _normalize_module_profile,
+    _normalize_module_status,
     _parse_speed_mbps,
     _safe_get,
 )
@@ -546,6 +548,24 @@ class TestCatalystConnectFetchInterfaces:
         src.connect(catc_config)
         assert src._fetch_interfaces is False
 
+    def test_fetch_modules_false_by_default(self, catc_config):
+        catc_config.extra = {}
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+        assert src._fetch_modules is False
+
+    def test_fetch_modules_enabled_via_extra(self, catc_config):
+        catc_config.extra = {"fetch_modules": "true"}
+        _fake_dnac_api = sys.modules["dnacentersdk.api"]
+        _fake_dnac_api.DNACenterAPI = MagicMock(return_value=MagicMock())
+
+        src = CatalystCenterSource()
+        src.connect(catc_config)
+        assert src._fetch_modules is True
+
 
 # ---------------------------------------------------------------------------
 # _enrich_device() — management IP and device ID
@@ -745,6 +765,155 @@ class TestCatalystFetchDeviceInterfaces:
 
         result = src._fetch_device_interfaces("device-uuid-1")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# module normalization and fetch
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeModuleHelpers:
+    @pytest.mark.parametrize(
+        "name, vendor_equipment_type, expected",
+        [
+            ("Power Supply 1", "", "Power supply"),
+            ("FAN1", "", "Fan"),
+            ("Line Card 1", "", "Line card"),
+            ("Supervisor Engine", "", "Supervisor"),
+            ("Module 1", "C9300-NM-8X", "Module"),
+        ],
+    )
+    def test_normalize_module_profile(self, name, vendor_equipment_type, expected):
+        assert _normalize_module_profile(name, vendor_equipment_type) == expected
+
+    @pytest.mark.parametrize(
+        "state, expected",
+        [
+            ("OK", "active"),
+            ("up", "active"),
+            ("DOWN", "offline"),
+            ("failed", "offline"),
+            ("warning", "active"),
+            ("degraded", "active"),
+            ("missing", "offline"),
+            ("mystery", "active"),
+            ("", "active"),
+        ],
+    )
+    def test_normalize_module_status(self, state, expected):
+        assert _normalize_module_status(state) == expected
+
+
+class TestCatalystModules:
+    def _connected_source(self) -> CatalystCenterSource:
+        src = CatalystCenterSource()
+        src._client = MagicMock()
+        src._client.site_design = None
+        return src
+
+    def test_enrich_module(self):
+        src = self._connected_source()
+        module = {
+            "name": "Power Supply 1",
+            "vendorEquipmentType": "PWR-C1-715WAC-P",
+            "partNumber": "341-100215-01",
+            "serialNumber": "LIT1234ABC",
+            "manufacturer": "Cisco",
+            "moduleIndex": 1,
+            "operationalStateCode": "OK",
+            "description": "Primary power supply",
+        }
+
+        result = src._enrich_module(module)
+
+        assert result is not None
+        assert result["bay_name"] == "Power Supply 1"
+        assert result["profile"] == "Power supply"
+        assert result["model"] == "PWR-C1-715WAC-P"
+        assert result["serial"] == "LIT1234ABC"
+        assert result["status"] == "active"
+        assert result["attributes"]["part_number"] == "341-100215-01"
+
+    def test_fetch_device_modules_returns_normalized_modules(self):
+        src = self._connected_source()
+        raw_module = {
+            "name": "Fan 1",
+            "vendorEquipmentType": "FAN-T1",
+            "partNumber": "FAN-T1",
+            "serialNumber": "FAN123",
+            "manufacturer": "Cisco",
+            "moduleIndex": 2,
+            "operationalStateCode": "OK",
+        }
+        src._client.devices.get_modules.return_value = SimpleNamespace(response=[raw_module])
+
+        result = src._fetch_device_modules("device-uuid-1")
+
+        assert len(result) == 1
+        assert result[0]["profile"] == "Fan"
+        src._client.devices.get_modules.assert_called_once_with(
+            deviceId="device-uuid-1",
+            offset=1,
+            limit=500,
+        )
+
+    def test_fetch_device_modules_paginates_until_short_page(self):
+        src = self._connected_source()
+        first_page = [{"name": f"Module {idx}", "vendorEquipmentType": "MOD", "moduleIndex": idx} for idx in range(1, 501)]
+        second_page = [{"name": "Module 501", "vendorEquipmentType": "MOD", "moduleIndex": 501}]
+        src._client.devices.get_modules.side_effect = [
+            SimpleNamespace(response=first_page),
+            SimpleNamespace(response=second_page),
+        ]
+
+        result = src._fetch_device_modules("device-uuid-1")
+
+        assert len(result) == 501
+        assert src._client.devices.get_modules.call_args_list == [
+            call(deviceId="device-uuid-1", offset=1, limit=500),
+            call(deviceId="device-uuid-1", offset=501, limit=500),
+        ]
+
+    def test_get_objects_fetches_modules_when_enabled(self):
+        src = self._connected_source()
+        src._fetch_interfaces = False
+        src._fetch_modules = True
+
+        site = SimpleNamespace(id="site-1", siteNameHierarchy="Global/US/Southeast/Clemson")
+        device = SimpleNamespace(
+            hostname="switch-01",
+            platformId="C9300-48P-K9",
+            role="ACCESS",
+            softwareType="IOS-XE",
+            softwareVersion="17.6.4",
+            serialNumber="FOC12345678",
+            reachabilityStatus="Reachable",
+            family="Switches",
+            managementIpAddress="10.0.0.1",
+            id="device-uuid-1",
+        )
+        member = SimpleNamespace(response=[device])
+        membership = SimpleNamespace(device=[member])
+        raw_module = {
+            "name": "Power Supply 1",
+            "vendorEquipmentType": "PWR-C1-715WAC-P",
+            "partNumber": "341-100215-01",
+            "serialNumber": "LIT1234ABC",
+            "manufacturer": "Cisco",
+            "moduleIndex": 1,
+            "operationalStateCode": "OK",
+        }
+
+        src._client.sites.get_site.return_value = SimpleNamespace(response=[site])
+        src._client.sites.get_membership.return_value = membership
+        src._client.devices.get_modules.return_value = SimpleNamespace(response=[raw_module])
+
+        result = src.get_objects("devices")
+
+        assert len(result) == 1
+        assert "modules" in result[0]
+        assert len(result[0]["modules"]) == 1
+        assert result[0]["modules"][0]["bay_name"] == "Power Supply 1"
 
     def test_returns_empty_list_when_response_not_list(self):
         src = self._connected_source()
