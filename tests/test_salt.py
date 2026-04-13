@@ -256,7 +256,7 @@ class TestSaltSource:
         assert hosts[0]["source_system"] == "salt"
         assert fake_session.headers["X-Auth-Token"] == "salt-token"
         assert fake_session.requests[0]["url"].endswith("/login")
-        assert fake_session.requests[0]["data"]["username"] == "salt-user"
+        assert fake_session.requests[0]["json"]["username"] == "salt-user"
         assert fake_session.requests[1]["url"].endswith("/run")
         assert fake_session.requests[1]["json"] == [
             {

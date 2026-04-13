@@ -347,7 +347,7 @@ class SaltSource(DataSource):
         login_path = str(extra.get("login_path") or "/login").strip() or "/login"
         response = session.post(
             f"{self._base_url}{login_path}",
-            data={
+            json={
                 "username": username,
                 "password": password,
                 "eauth": str(extra.get("eauth") or "pam"),

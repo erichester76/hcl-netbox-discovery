@@ -819,12 +819,12 @@ into a `hosts` collection with nested `interfaces` and `ip_addresses`.
 source "salt" {
   api_type  = "salt"
   mode      = "master"
-  url       = env("SALT_MASTER_URL")
-  username  = env("SALT_USER")
-  password  = env("SALT_PASS")
-  target    = env("SALT_TARGET", "*")
-  expr_form = env("SALT_EXPR_FORM", "")
-  eauth     = env("SALT_EAUTH", "pam")
+  url       = "env('SALT_MASTER_URL')"
+  username  = "env('SALT_USER')"
+  password  = "env('SALT_PASS')"
+  target    = "env('SALT_TARGET', '*')"
+  expr_form = "env('SALT_EXPR_FORM', '')"
+  eauth     = "env('SALT_EAUTH', 'pam')"
 }
 ```
 
