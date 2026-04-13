@@ -8,7 +8,7 @@ import pytest
 
 from collector.config import CollectorOptions
 from collector.context import RunContext
-from collector.field_resolvers import Resolver, walk_path
+from collector.field_resolvers import Resolver, _compile_expression, walk_path
 
 # ---------------------------------------------------------------------------
 # walk_path()
@@ -73,7 +73,7 @@ class TestWalkPath:
 # ---------------------------------------------------------------------------
 
 
-def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp"):
+def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp", parent_nb_obj=None, nb=None):
     opts = CollectorOptions(
         max_workers=4,
         dry_run=False,
@@ -81,13 +81,13 @@ def _make_resolver(source_obj, prereqs=None, regex_dir="/tmp"):
         regex_dir=regex_dir,
     )
     ctx = RunContext(
-        nb=None,
+        nb=nb,
         source_adapter=None,
         collector_opts=opts,
         regex_dir=regex_dir,
         prereqs=prereqs or {},
         source_obj=source_obj,
-        parent_nb_obj=None,
+        parent_nb_obj=parent_nb_obj,
         dry_run=False,
     )
     return Resolver(ctx)
@@ -111,6 +111,14 @@ class TestResolverSource:
         assert r.evaluate(42) == 42
         assert r.evaluate(True) is True
         assert r.evaluate(None) is None
+
+    def test_parent_object_and_parent_id_are_available(self):
+        parent = SimpleNamespace(id=101, name="leaf-01")
+        r = _make_resolver({"name": "Ethernet1/1"}, parent_nb_obj=parent)
+
+        assert r.evaluate("parent.id") == 101
+        assert r.evaluate("parent.name") == "leaf-01"
+        assert r.evaluate("parent_id") == 101
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +362,67 @@ class TestResolverPrereq:
 
 
 # ---------------------------------------------------------------------------
+# Resolver – nb_id()
+# ---------------------------------------------------------------------------
+
+
+class TestResolverNetBoxLookup:
+    def test_nb_id_returns_record_id(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': 'leaf-01'})") == 101
+
+    def test_nb_id_returns_none_when_lookup_empty(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': ''})") is None
+
+    def test_nb_id_returns_none_when_lookup_value_is_whitespace(self):
+        from unittest.mock import Mock
+
+        nb = SimpleNamespace(get=Mock(return_value={"id": 101}))
+        r = _make_resolver({}, nb=nb)
+
+        assert r.evaluate("nb_id('dcim.devices', {'name': '   '})") is None
+        nb.get.assert_not_called()
+
+    def test_nb_id_returns_none_when_multikey_lookup_has_missing_component(self):
+        from unittest.mock import Mock
+
+        nb = SimpleNamespace(get=Mock(return_value={"id": 101}))
+        r = _make_resolver({}, nb=nb)
+
+        assert (
+            r.evaluate("nb_id('dcim.interfaces', {'device_id': None, 'name': 'Ethernet1/1'})")
+            is None
+        )
+        nb.get.assert_not_called()
+
+    def test_nb_id_returns_none_in_dry_run(self):
+        nb = SimpleNamespace(get=lambda resource, **lookup: {"id": 101})
+        opts = CollectorOptions(
+            max_workers=4,
+            dry_run=True,
+            sync_tag="test",
+            regex_dir="/tmp",
+        )
+        ctx = RunContext(
+            nb=nb,
+            source_adapter=None,
+            collector_opts=opts,
+            regex_dir="/tmp",
+            prereqs={},
+            source_obj={},
+            parent_nb_obj=None,
+            dry_run=True,
+        )
+
+        assert Resolver(ctx).evaluate("nb_id('dcim.devices', {'name': 'leaf-01'})") is None
+
+
+# ---------------------------------------------------------------------------
 # Resolver – regex_file()
 # ---------------------------------------------------------------------------
 
@@ -434,6 +503,17 @@ class TestResolverErrorHandling:
         r = _make_resolver({})
         assert r.evaluate_strict("'vmware-host'", label="lookup_name") == "vmware-host"
         assert r.evaluate("Hypervisor Host") is None
+
+    def test_compiles_identical_expression_once(self):
+        _compile_expression.cache_clear()
+        r = _make_resolver({"name": "alpha"})
+
+        assert r.evaluate("source('name')") == "alpha"
+        assert r.evaluate("source('name')") == "alpha"
+
+        cache_info = _compile_expression.cache_info()
+        assert cache_info.misses == 1
+        assert cache_info.hits >= 1
 
 
 # ---------------------------------------------------------------------------

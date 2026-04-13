@@ -57,8 +57,8 @@
                 <input type="password"
                        class="form-control form-control-sm font-monospace"
                        name="value"
-                       value="{{ s.effective_value if s.is_overridden else '' }}"
-                       placeholder="{{ '(from env)' if not s.is_overridden else '' }}"
+                       value=""
+                       placeholder="{% if s.is_overridden and s.has_sensitive_value %}(stored override){% elif s.default_value %}(default hidden){% else %}(from env){% endif %}"
                        autocomplete="new-password" />
                 {% else %}
                 <input type="text"

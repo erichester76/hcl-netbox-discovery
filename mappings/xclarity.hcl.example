@@ -20,6 +20,7 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
+#   COLLECTOR_SYNC_MODULES    true | false  (default: false)
 #
 # XClarity location mapping:
 #   location.location      → NetBox site
@@ -80,6 +81,7 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   sync_inventory   = "env('COLLECTOR_SYNC_INVENTORY', 'true')"
+  sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'false')"
 }
 
 # ---------------------------------------------------------------------------
@@ -182,7 +184,8 @@ object "node" {
   }
 
   field "status" {
-    value = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
+    value       = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -339,6 +342,254 @@ object "node" {
       value = "str(source('serialNumber'))"
     }
   }
+
+  # ---------------------------------------------------------------------------
+  # Hardware modules — each block corresponds to one component category.
+  # The engine ensures the ModuleBayTemplate -> ModuleBay -> ModuleType ->
+  # Module chain for every item when module sync is enabled.
+  #
+  # Fields used by the module processor (not written to NetBox directly):
+  #   bay_name     — unique slot label on the device (e.g. "CPU Socket 1")
+  #   position     — numeric position within the device type template
+  #   model        — identifies the ModuleType (make/model string)
+  #   serial       — installed module serial number
+  #   manufacturer — manufacturer name (looked up / created automatically)
+  # ---------------------------------------------------------------------------
+
+  # CPUs
+  module {
+    source_items = "processors"
+    profile      = "CPU"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('socket')"
+
+    field "bay_name" {
+      value = "coalesce('socket', 'productName', 'description')"
+    }
+
+    field "position" {
+      value = "str(source('slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('displayName', 'productVersion', 'model')"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    attribute "cores" {
+      value = "int(source('cores')) if source('cores') != None else None"
+    }
+
+    attribute "speed" {
+      value = "int(float(source('speed')) * 1000) if source('speed') != None and float(source('speed')) > 0 else (float(source('maxSpeedMHZ')) if source('maxSpeedMHZ') != None and float(source('maxSpeedMHZ')) > 0 else None)"
+    }
+
+    attribute "architecture" {
+      value = "coalesce('architecture', 'cpuFamily', 'family')"
+    }
+  }
+
+  # Memory DIMMs
+  module {
+    source_items = "memoryModules"
+    profile      = "Memory"
+    enabled_if   = "collector.sync_modules"
+
+    field "bay_name" {
+      value = "coalesce('displayName', 'productName', 'description')"
+    }
+
+    field "position" {
+      value = "str(source('slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('partNumber', 'description')"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    attribute "size" {
+      value = "int(coalesce('capacity', 'size')) if int(coalesce('capacity', 'size')) > 0 else None"
+    }
+
+    attribute "class" {
+      value = "coalesce('memoryType', 'type')"
+    }
+
+    attribute "data_rate" {
+      value = "int(source('speed')) if int(source('speed')) > 0 else None"
+    }
+
+    attribute "ecc" {
+      value = "coalesce('eccEnabled', 'ecc')"
+    }
+  }
+
+  # Hard Drives — raidSettings is the top-level array; each entry has a
+  # diskDrives list. The [*] wildcard flattens all drives from all controllers.
+  module {
+    source_items = "raidSettings[*].diskDrives"
+    profile      = "Hard disk"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "coalesce('name', 'description')"
+
+    field "bay_name" {
+      value = "str(coalesce('name', 'description'))"
+    }
+
+    field "position" {
+      value = "str(coalesce('bay', 'slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('model', 'partNumber', 'description')"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    attribute "size" {
+      value = "to_gb(int(source('capacity'))) if source('capacity') != None and int(source('capacity')) > 0 else None"
+    }
+
+    attribute "speed" {
+      value = "int(source('rpm')) if source('rpm') != None and int(source('rpm')) > 0 else None"
+    }
+
+    attribute "type" {
+      value = "map_value(upper(coalesce('mediaType', 'type', 'interfaceType')), {'ROTATIONAL': 'HDD', 'FLASH': 'SSD'}, upper(coalesce('mediaType', 'type', 'interfaceType')))"
+    }
+  }
+
+  # PCIe add-in cards
+  module {
+    source_items = "addinCards"
+    profile      = "Expansion card"
+    enabled_if   = "collector.sync_modules"
+
+    field "bay_name" {
+      value = "coalesce('slotName', 'productName', 'name')"
+    }
+
+    field "position" {
+      value = "str(coalesce('slotNumber', 'slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('productName', 'name', 'description')"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer') or 'Lenovo'"
+    }
+
+    attribute "bandwidth" {
+      value = "int(source('bandwidth')) if int(source('bandwidth') or 0) > 0 else None"
+    }
+
+    attribute "connector_type" {
+      value = "coalesce('pciExpressConnectorType', 'connectorType', 'slotType')"
+    }
+  }
+
+  # Power Supplies
+  module {
+    source_items = "powerSupplies"
+    profile      = "Power supply"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serialNumber')"
+
+    field "bay_name" {
+      value = "coalesce('name', 'description')"
+    }
+
+    field "position" {
+      value = "str(source('slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('partNumber', 'model', 'productName', 'fruPartNumber', 'description') or 'Unknown Power Supply'"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer') or 'Lenovo'"
+    }
+
+    power_input {
+      name = "'Power Input ' + str(source('slot') or source('name') or source('description'))"
+      type = "when(int(source('outputWatts') or 0) > 1800 or (int(source('outputWatts') or 0) <= 0 and int(source('powerAllocation.totalOutputPower') or 0) > 1800), 'iec-60320-c20', 'iec-60320-c14')"
+    }
+
+    attribute "hot_swappable" {
+      value = "coalesce('hotSwappable', 'isHotSwappable')"
+    }
+
+    attribute "input_current" {
+      value = "when(source('inputVoltageIsAC') == False, 'DC', 'AC')"
+    }
+
+    attribute "input_voltage" {
+      value = "int(source('inputVoltage')) if int(source('inputVoltage') or 0) > 0 else int(source('normalInputVoltage')) if int(source('normalInputVoltage') or 0) > 0 else int(source('nominalVoltage')) if int(source('nominalVoltage') or 0) > 0 else None"
+    }
+
+    attribute "wattage" {
+      value = "int(source('outputWatts')) if int(source('outputWatts') or 0) > 0 else int(source('powerAllocation.totalOutputPower')) if int(source('powerAllocation.totalOutputPower') or 0) > 0 else None"
+    }
+  }
+
+  # Fans
+  module {
+    source_items = "fans"
+    profile      = "Fan"
+    enabled_if   = "collector.sync_modules"
+
+    field "bay_name" {
+      value = "coalesce('name', 'description', 'bay')"
+    }
+
+    field "position" {
+      value = "str(source('slot'))"
+    }
+
+    field "model" {
+      value = "coalesce('partNumber', 'model') or 'Fan'"
+    }
+
+    field "serial" {
+      value = "str(source('serialNumber'))"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer') or 'Lenovo'"
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -431,7 +682,8 @@ object "chassis" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -530,7 +782,8 @@ object "switch" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {
@@ -647,7 +900,8 @@ object "storage" {
   }
 
   field "status" {
-    value = "'active'"
+    value       = "'active'"
+    update_mode = "if_missing"
   }
 
   field "tags" {

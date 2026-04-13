@@ -9,7 +9,9 @@ Covers:
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock
+import threading
+from contextlib import nullcontext
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -744,6 +746,74 @@ class TestEnsureCluster:
             {"name": "Azure eastus2", "type": 34, "group": 7, "site": 12},
             lookup_fields=["name", "type"],
         )
+
+
+class TestSerializedPrerequisiteUpserts:
+    """High-contention prerequisite creates should serialize by lookup identity."""
+
+    def test_concurrent_same_site_creates_only_once(self):
+        class FakeNB:
+            def __init__(self):
+                self.upsert_calls = 0
+                self.create_calls = 0
+                self.created_ids: list[int] = []
+                self._guard = threading.Lock()
+                self._first_entered = threading.Event()
+                self._second_entered = threading.Event()
+                self.overlap_observed = False
+
+            def upsert(self, resource, payload, *, lookup_fields):
+                assert resource == "dcim.sites"
+                assert lookup_fields == ["name"]
+                with self._guard:
+                    self.upsert_calls += 1
+                    if self.created_ids:
+                        return MagicMock(id=self.created_ids[0])
+                    if not self._first_entered.is_set():
+                        self._first_entered.set()
+                        is_first = True
+                    else:
+                        self.overlap_observed = True
+                        self._second_entered.set()
+                        is_first = False
+                if is_first:
+                    self._second_entered.wait(timeout=0.2)
+                with self._guard:
+                    if self.created_ids and not self.overlap_observed:
+                        return MagicMock(id=self.created_ids[0])
+                    self.create_calls += 1
+                    site_id = 500 + len(self.created_ids)
+                    self.created_ids.append(site_id)
+                    return MagicMock(id=site_id)
+
+        def run_two_workers(fake_nb: FakeNB) -> tuple[list[int | None], FakeNB]:
+            runner = PrerequisiteRunner(fake_nb)
+            results: list[int | None] = [None, None]
+
+            def worker(index: int) -> None:
+                results[index] = runner._ensure_site({"name": "ITC"}, dry_run=False)
+
+            threads = [threading.Thread(target=worker, args=(idx,)) for idx in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            return results, fake_nb
+
+        locked_results, locked_nb = run_two_workers(FakeNB())
+        assert locked_nb.upsert_calls == 2
+        assert locked_nb.overlap_observed is False
+        assert locked_nb.create_calls == 1
+        assert locked_nb.created_ids == [500]
+        assert locked_results == [500, 500]
+
+        with patch("collector.prerequisites.keyed_lock", lambda _key: nullcontext()):
+            raced_results, raced_nb = run_two_workers(FakeNB())
+        assert raced_nb.upsert_calls == 2
+        assert raced_nb.overlap_observed is True
+        assert raced_nb.create_calls == 2
+        assert raced_nb.created_ids == [500, 501]
+        assert sorted(raced_results) == [500, 501]
 
 
 class TestRequiredIdentityValidation:

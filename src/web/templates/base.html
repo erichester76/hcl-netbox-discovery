@@ -66,6 +66,13 @@
     .navbar { background-color: var(--cu-purple) !important; }
     .navbar-brand, .nav-link { color: #fff !important; }
     .nav-link:hover { color: var(--cu-orange) !important; }
+    .navbar-version {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
     .badge-queued   { background-color: #6c757d; }
     .badge-running  { background-color: #0d6efd; }
     .badge-success  { background-color: #198754; }
@@ -77,6 +84,13 @@
       padding: 1rem; border-radius: 4px;
       max-height: 60vh; overflow-y: auto;
       font-size: 0.8rem; white-space: pre-wrap;
+    }
+    .log-row {
+      display: block;
+      white-space: pre-wrap;
+    }
+    .log-row.log-hidden {
+      display: none !important;
     }
     .log-line-ERROR   { color: #f44336; }
     .log-line-WARNING { color: #ff9800; }
@@ -110,9 +124,12 @@
 <body>
 <nav class="navbar navbar-expand-lg navbar-dark mb-4">
   <div class="container-fluid">
-    <a class="navbar-brand fw-bold" href="/">
-      <span class="text-orange">HCL</span> NetBox Discovery
-    </a>
+    <div class="d-flex align-items-center gap-2">
+      <a class="navbar-brand fw-bold mb-0" href="/">
+        <span class="text-orange">HCL</span> NetBox Discovery
+      </a>
+      <span class="navbar-version" title="Version {{ web_version_label }}">Version {{ web_version_label }}</span>
+    </div>
     <div class="navbar-nav ms-auto d-flex align-items-center">
       {% if not web_auth_enabled or web_authenticated %}
       <a class="nav-link" href="/">Dashboard</a>
@@ -121,11 +138,11 @@
       <a class="nav-link" href="/settings">Settings</a>
       {% endif %}
       {% if web_auth_enabled and web_authenticated %}
-      <span class="navbar-text text-white-50 small me-2">{{ web_username }}</span>
       <form method="POST" action="/logout" class="ms-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <button type="submit" class="btn btn-sm btn-outline-light">Log Out</button>
       </form>
+      <span class="navbar-text text-white-50 small ms-2">{{ web_username }}</span>
       {% endif %}
       <!-- Dark mode toggle icon -- 2026-03-31 -->
       <button id="dark-mode-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">

@@ -24,19 +24,19 @@ Use the docs intentionally:
 
 At a high level, one collector run works like this:
 
-1. `collector/config.py` parses an HCL mapping file into dataclasses.
-2. `collector/engine.py` builds the source adapter and NetBox client.
+1. `src/collector/config.py` parses an HCL mapping file into dataclasses.
+2. `src/collector/engine.py` builds the source adapter and NetBox client.
 3. The source adapter returns raw objects for a named collection.
 4. The engine resolves prerequisites, evaluates fields, and upserts the parent
    object.
 5. Nested blocks like `interface`, `ip_address`, `inventory_item`, `disk`,
    `module`, and `tagged_vlan` are processed.
-6. Job state and logs are written to SQLite through `collector/db.py` and
-   `collector/job_log_handler.py`.
+6. Job state and logs are written to SQLite through `src/collector/db.py` and
+   `src/collector/job_log_handler.py`.
 
 The biggest operational nuance:
 
-- `web_server.py` / `web/app.py` do not execute jobs directly
+- `src/web/web_server.py` / `src/web/app.py` do not execute jobs directly
 - the web UI queues jobs in SQLite
 - `main.py --run-scheduler` executes queued and scheduled jobs
 
@@ -49,11 +49,11 @@ Read these in order:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/HCL_REFERENCE.md`
-4. `collector/config.py`
-5. `collector/engine.py`
-6. `collector/field_resolvers.py`
-7. `collector/db.py`
-8. `web/app.py`
+4. `src/collector/config.py`
+5. `src/collector/engine.py`
+6. `src/collector/field_resolvers.py`
+7. `src/collector/db.py`
+8. `src/web/app.py`
 
 Then read a couple of focused tests:
 
@@ -159,18 +159,18 @@ The resulting version is the version that must be tagged on `main` as
 ### Core runtime
 
 - `main.py`: CLI entry point and scheduler loop
-- `web_server.py`: Flask entry point
-- `collector/config.py`: HCL parsing and runtime config modeling
-- `collector/engine.py`: orchestration and threaded processing
-- `collector/context.py`: per-item and per-run execution context
-- `collector/field_resolvers.py`: HCL expression helpers
-- `collector/prerequisites.py`: ensure/lookup helpers for NetBox prerequisites
-- `collector/db.py`: jobs, logs, schedules, settings
-- `collector/job_log_handler.py`: persistence of job logs
+- `src/web/web_server.py`: Flask entry point
+- `src/collector/config.py`: HCL parsing and runtime config modeling
+- `src/collector/engine.py`: orchestration and threaded processing
+- `src/collector/context.py`: per-item and per-run execution context
+- `src/collector/field_resolvers.py`: HCL expression helpers
+- `src/collector/prerequisites.py`: ensure/lookup helpers for NetBox prerequisites
+- `src/collector/db.py`: jobs, logs, schedules, settings
+- `src/collector/job_log_handler.py`: persistence of job logs
 
 ### Source systems
 
-Adapters live in `collector/sources/`.
+Adapters live in `src/collector/sources/`.
 
 Use `rest.py` when the source can be modeled cleanly in HCL.
 Use a dedicated adapter when the source needs SDK behavior, complicated auth, or
@@ -191,8 +191,8 @@ actually implemented here:
 
 ### Web UI
 
-- `web/app.py`: routes and queueing behavior
-- `web/templates/`: dashboard, job detail, schedules, cache, settings
+- `src/web/app.py`: routes and queueing behavior
+- `src/web/templates/`: dashboard, job detail, schedules, cache, settings
 
 ## 5. Common Change Types
 
@@ -201,16 +201,16 @@ actually implemented here:
 Touch:
 
 - `docs/HCL_REFERENCE.md`
-- `collector/config.py`
-- `collector/engine.py` or the relevant consumer
+- `src/collector/config.py`
+- `src/collector/engine.py` or the relevant consumer
 - tests in `tests/test_config.py` and any affected behavior tests
 
 ### Add or update a source adapter
 
 Touch:
 
-- `collector/sources/<adapter>.py`
-- `collector/engine.py` registry if adding a new adapter
+- `src/collector/sources/<adapter>.py`
+- `src/collector/engine.py` registry if adding a new adapter
 - example mapping in `mappings/` if relevant
 - tests for that adapter
 - docs if the adapter is user-facing
@@ -220,9 +220,9 @@ Touch:
 Touch:
 
 - `main.py`
-- `collector/db.py`
-- `collector/job_log_handler.py`
-- `web/app.py`
+- `src/collector/db.py`
+- `src/collector/job_log_handler.py`
+- `src/web/app.py`
 - `tests/test_main.py`, `tests/test_db.py`, `tests/test_web.py`
 - `README.md` and `docs/ARCHITECTURE.md`
 
@@ -230,7 +230,7 @@ Touch:
 
 Touch:
 
-- `collector/field_resolvers.py`
+- `src/collector/field_resolvers.py`
 - `tests/test_field_resolvers.py`
 - `docs/HCL_REFERENCE.md`
 
@@ -242,7 +242,7 @@ Recommended targeted runs:
 
 - config parser: `poetry run pytest tests/test_config.py`
 - engine logic: `poetry run pytest tests/test_engine_tags.py tests/test_engine_tagged_vlans.py tests/test_engine_primary_ip.py tests/test_engine_oob_ip.py`
-- scheduler/web/DB: `poetry run pytest tests/test_db.py tests/test_main.py tests/test_web.py`
+- scheduler, web, DB: `poetry run pytest tests/test_db.py tests/test_main.py tests/test_web.py`
 - adapters: run only the adapter you changed
 
 Run the full suite before merging anything non-trivial.
@@ -392,7 +392,7 @@ falling back to manual file sync.
 - Do not treat `collector {}` flags as hardcoded schema beyond the reserved
   keys. Extra keys become `collector.<flag>` values in expressions.
 - Do not forget that DB-backed settings can override environment variables.
-- Do not change `collector/db.py` casually without considering both web and
+- Do not change `src/collector/db.py` casually without considering both web and
   scheduler paths.
 
 ## 11. Good Starter Tasks

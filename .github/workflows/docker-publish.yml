@@ -40,7 +40,7 @@ jobs:
         run: pip install poetry
 
       - name: Install dependencies
-        run: poetry install --with dev --no-root
+        run: poetry install --with dev
 
       - name: Run test suite
         run: poetry run pytest
@@ -122,3 +122,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             PYTHON_VER=3.12
+            APP_VERSION=${{ steps.project_version.outputs.version }}
+            APP_GIT_COMMIT=${{ github.sha }}
+            APP_GIT_BRANCH=${{ github.ref_type == 'branch' && github.ref_name || '' }}
+            APP_GIT_TAG=${{ github.ref_type == 'tag' && github.ref_name || '' }}

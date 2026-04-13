@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     run_token = os.environ.get("COLLECTOR_RUN_TOKEN")
 
     # Initialise the shared job-tracking database so the web UI can observe
-    # jobs started from the CLI (same SQLite file used by web_server.py).
+    # jobs started from the CLI (same SQLite file used by the web server).
     from collector.db import create_job, init_db  # noqa: PLC0415
 
     init_db()

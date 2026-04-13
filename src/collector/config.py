@@ -193,6 +193,7 @@ class NetBoxConfig:
     cache_url: str = ""
     cache_ttl: int = 300
     prewarm_sentinel_ttl: Optional[int] = None
+    use_turbobulk: bool = False
     rate_limit: float = 0.0
     rate_limit_burst: int = 1
     retry_attempts: int = 3
@@ -224,6 +225,7 @@ class FieldConfig:
     resource: Optional[str] = None
     lookup: Optional[dict] = None
     ensure: bool = False
+    allow_null: bool = False
     update_mode: str = "replace"  # replace | if_missing
 
 
@@ -345,6 +347,7 @@ class ObjectConfig:
     source_collection: str
     netbox_resource: str
     lookup_by: list[str] = field(default_factory=lambda: ["name"])
+    enabled_if: Optional[str] = None
     max_workers: Optional[int] = None
     prerequisites: list[PrerequisiteConfig] = field(default_factory=list)
     fields: list[FieldConfig] = field(default_factory=list)
@@ -393,6 +396,7 @@ def _parse_fields(raw: list) -> list[FieldConfig]:
             resource=body.get("resource"),
             lookup=lookup,
             ensure=_bool(body.get("ensure", False)),
+            allow_null=_bool(body.get("allow_null", False)),
             update_mode=_field_update_mode(body.get("update_mode", "replace")),
         ))
     return configs
@@ -522,6 +526,7 @@ def _parse_objects(raw: list) -> list[ObjectConfig]:
             source_collection=body.get("source_collection", ""),
             netbox_resource=body.get("netbox_resource", ""),
             lookup_by=list(lookup_by),
+            enabled_if=body.get("enabled_if"),
             max_workers=max_workers,
             prerequisites=_parse_prerequisites(body.get("prerequisite", [])),
             fields=_parse_fields(body.get("field", [])),
@@ -680,6 +685,10 @@ def load_config(mapping_path: str) -> CollectorConfig:
         cache_url=_eval_config_str(netbox_body.get("cache_url", "env('NETBOX_CACHE_URL', '')")),
         cache_ttl=_int(_eval_config_str(netbox_body.get("cache_ttl", "env('NETBOX_CACHE_TTL', '300')"))),
         prewarm_sentinel_ttl=_int(_raw_sentinel_ttl) if _raw_sentinel_ttl else None,
+        use_turbobulk=_bool(
+            _eval_config_str(netbox_body.get("use_turbobulk", "env('NETBOX_USE_TURBOBULK', 'false')")),
+            default=False,
+        ),
         rate_limit=_float(_eval_config_str(netbox_body.get("rate_limit", "env('NETBOX_RATE_LIMIT', '0')"))),
         rate_limit_burst=_int(_eval_config_str(netbox_body.get("rate_limit_burst", "env('NETBOX_RATE_LIMIT_BURST', '1')")), default=1),
         retry_attempts=_int(_eval_config_str(netbox_body.get("retry_attempts", "env('NETBOX_RETRY_ATTEMPTS', '3')")), default=3),

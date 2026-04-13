@@ -1,11 +1,11 @@
-"""Tests for the new module block support.
+"""Tests for module block support.
 
 Covers:
 - ModuleConfig dataclass and _parse_modules in collector/config.py
 - _ensure_module_bay_template, _ensure_module_bay, _ensure_module_type
   in collector/prerequisites.py
 - Engine._process_modules in collector/engine.py
-- xclarity-modules.hcl.example parses without error
+- xclarity.hcl.example parses without error
 """
 
 from __future__ import annotations
@@ -268,14 +268,14 @@ class TestModuleConfigParsing:
 
 
 # ---------------------------------------------------------------------------
-# xclarity-modules.hcl.example parses without error
+# xclarity.hcl.example parses without error
 # ---------------------------------------------------------------------------
 
 
 class TestXclarityModulesHcl:
-    """The new mapping file should parse cleanly and contain module blocks."""
+    """The unified XClarity mapping should parse cleanly and contain module blocks."""
 
-    HCL_PATH = "mappings/xclarity-modules.hcl.example"
+    HCL_PATH = "mappings/xclarity.hcl.example"
 
     def test_parses_without_error(self):
         cfg = load_config(self.HCL_PATH)
@@ -287,11 +287,11 @@ class TestXclarityModulesHcl:
         assert node is not None
         assert len(node.modules) > 0
 
-    def test_node_object_has_no_inventory_items(self):
+    def test_node_object_keeps_inventory_items(self):
         cfg = load_config(self.HCL_PATH)
         node = next((o for o in cfg.objects if o.name == "node"), None)
         assert node is not None
-        assert node.inventory_items == []
+        assert len(node.inventory_items) > 0
 
     def test_module_profiles_present(self):
         cfg = load_config(self.HCL_PATH)
@@ -348,6 +348,14 @@ class TestXclarityModulesHcl:
         field = next(f for f in mod.fields if f.name == field_name)
         return field.value
 
+    def _get_module_power_input_expr(self, profile: str, field_name: str):
+        """Return a power_input expression from a module block in the example mapping."""
+        cfg = load_config(self.HCL_PATH)
+        node = next(o for o in cfg.objects if o.name == "node")
+        mod = next(m for m in node.modules if m.profile == profile)
+        assert mod.power_input is not None
+        return getattr(mod.power_input, field_name)
+
     def _make_resolver(self, source_obj):
         from collector.config import CollectorOptions
         from collector.context import RunContext
@@ -385,6 +393,14 @@ class TestXclarityModulesHcl:
         return self._make_resolver(source_obj).evaluate_strict(
             expr,
             label=f"{profile}.{field_name}",
+        )
+
+    def _eval_module_power_input(self, profile: str, field_name: str, source_obj):
+        """Evaluate a module power_input expression against a source object."""
+        expr = self._get_module_power_input_expr(profile, field_name)
+        return self._make_resolver(source_obj).evaluate_strict(
+            expr,
+            label=f"{profile}.power_input.{field_name}",
         )
 
     def _eval_disk_type(self, source_obj):
@@ -505,6 +521,98 @@ class TestXclarityModulesHcl:
             {"manufacturer": "Delta"},
         )
         assert result == "Delta"
+
+    def test_expansion_card_bandwidth_zero_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 0})
+        assert result is None
+
+    def test_expansion_card_bandwidth_missing_is_suppressed(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {})
+        assert result is None
+
+    def test_expansion_card_bandwidth_positive_is_returned(self):
+        result = self._eval_module_attr("Expansion card", "bandwidth", {"bandwidth": 16})
+        assert result == 16
+
+    def test_power_supply_input_voltage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 0})
+        assert result is None
+
+    def test_power_supply_input_voltage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {})
+        assert result is None
+
+    def test_power_supply_input_voltage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "input_voltage", {"inputVoltage": 208})
+        assert result == 208
+
+    def test_power_supply_input_voltage_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"nominalVoltage": 240},
+        )
+        assert result == 240
+
+    def test_power_supply_input_voltage_zero_falls_back_to_normal_input_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "normalInputVoltage": 200},
+        )
+        assert result == 200
+
+    def test_power_supply_input_voltage_zero_falls_back_to_nominal_voltage(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "input_voltage",
+            {"inputVoltage": 0, "nominalVoltage": 240},
+        )
+        assert result == 240
+
+    def test_power_supply_wattage_zero_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 0})
+        assert result is None
+
+    def test_power_supply_wattage_missing_is_suppressed(self):
+        result = self._eval_module_attr("Power supply", "wattage", {})
+        assert result is None
+
+    def test_power_supply_wattage_positive_is_returned(self):
+        result = self._eval_module_attr("Power supply", "wattage", {"outputWatts": 1100})
+        assert result == 1100
+
+    def test_power_supply_wattage_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
+
+    def test_power_supply_wattage_zero_falls_back_to_total_output_power(self):
+        result = self._eval_module_attr(
+            "Power supply",
+            "wattage",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 900}},
+        )
+        assert result == 900
+
+    def test_power_supply_input_type_zero_output_watts_falls_back_to_total_output_power(self):
+        result = self._eval_module_power_input(
+            "Power supply",
+            "type",
+            {"outputWatts": 0, "powerAllocation": {"totalOutputPower": 2200}},
+        )
+        assert result == "iec-60320-c20"
 
 
 # ---------------------------------------------------------------------------
@@ -799,6 +907,29 @@ class TestEnsureModuleType:
         # The module_type upsert payload should NOT contain attributes
         module_type_upsert = nb.upsert.call_args_list[1]
         assert "attributes" not in module_type_upsert[0][1]
+
+    def test_empty_attributes_seed_empty_object_when_attribute_names_exist(self):
+        nb = MagicMock()
+        nb.upsert.side_effect = [MagicMock(id=99), MagicMock(id=50)]
+        runner = self._make_runner(nb)
+
+        result = runner._ensure_module_type(
+            {
+                "model": "Intel Xeon Gold 6240",
+                "profile": "CPU",
+                "attribute_names": ["cores", "speed", "architecture"],
+                "attributes": None,
+            },
+            dry_run=False,
+        )
+
+        assert result == 50
+        module_type_upsert = nb.upsert.call_args_list[1]
+        assert module_type_upsert[0][1]["attributes"] == {}
+        module_type_attr_calls = [
+            c for c in nb.update.call_args_list if c[0][0] == "dcim.module_types"
+        ]
+        assert module_type_attr_calls == []
 
     def test_attributes_patch_skipped_when_existing_attributes_match(self):
         nb = MagicMock()
@@ -1350,6 +1481,124 @@ class TestProcessModules:
         assert module_payload["status"] == "active"
         assert module_payload["serial"] == "ABC123"
 
+    def test_extra_module_fields_are_forwarded_to_dcim_modules(self):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "status": "offline",
+                    "description": "Socket CPU 1",
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),
+            MagicMock(id=40),
+            MagicMock(id=50),
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="switches",
+            netbox_resource="dcim.devices",
+            modules=[
+                ModuleConfig(
+                    source_items="processors",
+                    profile="CPU",
+                    fields=[
+                        FieldConfig(name="bay_name", value="source('socket')"),
+                        FieldConfig(name="model", value="source('displayName')"),
+                        FieldConfig(name="serial", value="source('serialNumber')"),
+                        FieldConfig(name="manufacturer", value="source('manufacturer')"),
+                        FieldConfig(name="status", value="source('status')"),
+                        FieldConfig(name="description", value="source('description')"),
+                    ],
+                )
+            ],
+        )
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 1
+        module_payload = module_calls[0][0][1]
+        assert module_payload["status"] == "offline"
+        assert module_payload["description"] == "Socket CPU 1"
+
+    def test_reserved_module_instance_fields_do_not_override_engine_linkage(self):
+        from collector.config import FieldConfig, ModuleConfig, ObjectConfig
+
+        engine = self._make_engine()
+        source_obj = {
+            "processors": [
+                {
+                    "socket": "CPU1",
+                    "displayName": "Intel Xeon Gold 6240",
+                    "serialNumber": "ABC123",
+                    "manufacturer": "Intel",
+                    "device": 12345,
+                    "module_bay": 23456,
+                    "module_type": 34567,
+                    "id": 999,
+                }
+            ]
+        }
+        ctx = self._make_ctx(source_obj)
+        nb = ctx.nb
+        nb.upsert.side_effect = [
+            MagicMock(id=1),
+            MagicMock(id=10),
+            MagicMock(id=20),
+            MagicMock(id=30),
+            MagicMock(id=40),
+            MagicMock(id=50),
+        ]
+
+        parent_nb_obj = {"id": 99, "device_type": {"id": 5}}
+        obj_cfg = ObjectConfig(
+            name="device",
+            source_collection="switches",
+            netbox_resource="dcim.devices",
+            modules=[
+                ModuleConfig(
+                    source_items="processors",
+                    profile="CPU",
+                    fields=[
+                        FieldConfig(name="bay_name", value="source('socket')"),
+                        FieldConfig(name="model", value="source('displayName')"),
+                        FieldConfig(name="serial", value="source('serialNumber')"),
+                        FieldConfig(name="manufacturer", value="source('manufacturer')"),
+                        FieldConfig(name="device", value="source('device')"),
+                        FieldConfig(name="module_bay", value="source('module_bay')"),
+                        FieldConfig(name="module_type", value="source('module_type')"),
+                        FieldConfig(name="id", value="source('id')"),
+                    ],
+                )
+            ],
+        )
+
+        engine._process_modules(obj_cfg, parent_nb_obj, ctx)
+
+        module_calls = [c for c in nb.upsert.call_args_list if c[0][0] == "dcim.modules"]
+        assert len(module_calls) == 1
+        module_payload = module_calls[0][0][1]
+        assert module_payload["device"] == 99
+        assert module_payload["module_bay"] == 20
+        assert module_payload["module_type"] == 40
+        assert "id" not in module_payload
+
     def test_skips_item_when_bay_name_missing(self):
         engine = self._make_engine()
         source_obj = {
@@ -1653,7 +1902,7 @@ class TestPowerInputConfigParsing:
         assert cfg.objects[0].modules[0].power_input is None
 
     def test_xclarity_power_supply_module_has_power_input(self):
-        cfg = load_config("mappings/xclarity-modules.hcl.example")
+        cfg = load_config("mappings/xclarity.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         psu_mod = next(m for m in node.modules if m.profile == "Power supply")
         assert psu_mod.power_input is not None
@@ -1661,7 +1910,7 @@ class TestPowerInputConfigParsing:
         assert psu_mod.power_input.type is not None
 
     def test_xclarity_non_psu_modules_have_no_power_input(self):
-        cfg = load_config("mappings/xclarity-modules.hcl.example")
+        cfg = load_config("mappings/xclarity.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         non_psu = [m for m in node.modules if m.profile != "Power supply"]
         assert len(non_psu) > 0
@@ -2334,11 +2583,11 @@ class TestProcessModulesPowerInput:
         assert len(module_type_attr_calls) == 0
 
     def test_xclarity_modules_hcl_has_attribute_blocks(self):
-        """The xclarity-modules.hcl.example mapping file should have attribute blocks
+        """The unified xclarity.hcl.example mapping file should have attribute blocks
         on its CPU, Memory, Hard disk, Expansion card, and Power supply
         module blocks."""
         from collector.config import load_config
-        cfg = load_config("mappings/xclarity-modules.hcl.example")
+        cfg = load_config("mappings/xclarity.hcl.example")
         node = next(o for o in cfg.objects if o.name == "node")
         profile_to_attrs: dict = {
             m.profile: [a.name for a in m.attributes]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import subprocess
@@ -9,6 +10,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlsplit, urlunsplit
@@ -27,7 +29,7 @@ _debug_capture_refcount: int = 0
 # Actual value is captured from the root logger on the first debug-capture
 # context entry (when refcount transitions 0→1) before it is ever read.
 _debug_capture_saved_level: int = logging.NOTSET
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MASKED = "********"
 _SENSITIVE_KEY_FRAGMENTS = ("password", "pass", "token", "secret", "client_secret", "api_key")
 
@@ -133,14 +135,17 @@ def capture_job_runtime_metadata(
     run_token: str | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return masked runtime snapshot and code version metadata for one job."""
+    code_version = get_code_version()
+    base_version = str(code_version.get("version") or _read_project_version() or "")
     return (
         _build_runtime_snapshot(
             hcl_file=hcl_file,
             dry_run=dry_run,
             debug_mode=debug_mode,
             run_token=run_token,
+            base_version=base_version,
         ),
-        _build_code_version(),
+        code_version,
     )
 
 
@@ -150,6 +155,7 @@ def _build_runtime_snapshot(
     dry_run: bool,
     debug_mode: bool,
     run_token: str | None,
+    base_version: str,
 ) -> dict[str, Any]:
     snapshot: dict[str, Any] = {
         "job": {
@@ -183,6 +189,10 @@ def _build_runtime_snapshot(
             "source_label": cfg.source_label,
         }
     )
+    snapshot["mapping"].update(_build_mapping_fingerprint(hcl_file, base_version))
+    snapshot["component_versions"] = {
+        "active_source": _build_active_source_component(cfg.source.api_type, base_version),
+    }
     snapshot["execution_plan"] = {
         "source_groups": [
             {
@@ -195,13 +205,139 @@ def _build_runtime_snapshot(
     return snapshot
 
 
-def _build_code_version() -> dict[str, Any]:
+@lru_cache(maxsize=1)
+def get_code_version() -> dict[str, Any]:
+    """Return the current app version metadata for UI and persisted job records."""
+    env_version = os.environ.get("APP_VERSION")
+    env_git_commit = os.environ.get("APP_GIT_COMMIT")
+    env_git_branch = os.environ.get("APP_GIT_BRANCH")
+    env_git_tag = os.environ.get("APP_GIT_TAG")
+    base_version = env_version or _read_project_version()
     return {
-        "version": _read_project_version(),
-        "git_commit": _git_output("rev-parse", "HEAD"),
-        "git_branch": _git_output("rev-parse", "--abbrev-ref", "HEAD"),
-        "git_tag": _git_output("describe", "--tags", "--exact-match"),
+        "version": base_version,
+        "git_commit": env_git_commit or _git_output("rev-parse", "HEAD"),
+        "git_branch": env_git_branch or _git_output("rev-parse", "--abbrev-ref", "HEAD"),
+        "git_tag": env_git_tag or _git_output("describe", "--tags", "--exact-match"),
+        "components": _build_component_versions(str(base_version or "")),
     }
+
+
+def _build_component_versions(base_version: str) -> dict[str, Any]:
+    source_files = {
+        path.stem: {
+            "version": base_version,
+            "sha256": _sha256_file(path),
+        }
+        for path in sorted((_PROJECT_ROOT / "src" / "collector" / "sources").glob("*.py"))
+        if path.name != "__init__.py"
+    }
+    mapping_files = {
+        path.name: {
+            "version": base_version,
+            "sha256": _sha256_file(path),
+        }
+        for path in sorted((_PROJECT_ROOT / "mappings").glob("*.hcl.example"))
+    }
+    return {
+        "collector": {
+            "version": base_version,
+            "path": "src/collector",
+            "sha256": _tree_sha256(_PROJECT_ROOT / "src" / "collector", "*.py"),
+        },
+        "engine": {
+            "version": base_version,
+            "path": "src/collector/engine.py",
+            "sha256": _sha256_file(_PROJECT_ROOT / "src" / "collector" / "engine.py"),
+        },
+        "sources": {
+            "version": base_version,
+            "path": "src/collector/sources",
+            "sha256": _tree_sha256(_PROJECT_ROOT / "src" / "collector" / "sources", "*.py"),
+            "files": source_files,
+        },
+        "mapping_examples": {
+            "version": base_version,
+            "path": "mappings",
+            "sha256": _tree_sha256(_PROJECT_ROOT / "mappings", "*.hcl.example"),
+            "files": mapping_files,
+        },
+    }
+
+
+def _build_active_source_component(api_type: str, base_version: str) -> dict[str, Any]:
+    path = _validated_active_source_path(api_type)
+    return {
+        "version": base_version,
+        "api_type": api_type,
+        "path": str(path.relative_to(_PROJECT_ROOT)) if path is not None else None,
+        "sha256": _sha256_file(path),
+    }
+
+
+def _build_mapping_fingerprint(hcl_file: str, base_version: str) -> dict[str, Any]:
+    mapping_path = Path(hcl_file)
+    example_path = _matching_example_mapping_path(mapping_path)
+    return {
+        "version": base_version,
+        "sha256": _sha256_file(mapping_path),
+        "example_version": base_version if example_path is not None else None,
+        "example_path": str(example_path) if example_path is not None else None,
+        "example_sha256": _sha256_file(example_path) if example_path is not None else None,
+    }
+
+
+def _matching_example_mapping_path(mapping_path: Path) -> Path | None:
+    if mapping_path.name.endswith(".hcl") and not mapping_path.name.endswith(".hcl.example"):
+        candidate = mapping_path.with_name(f"{mapping_path.name}.example")
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _validated_active_source_path(api_type: str) -> Path | None:
+    """Return a safe adapter path rooted under ``src/collector/sources``."""
+    if not api_type or Path(api_type).name != api_type:
+        return None
+
+    sources_root = (_PROJECT_ROOT / "src" / "collector" / "sources").resolve()
+    candidate = (sources_root / f"{api_type}.py").resolve()
+    try:
+        candidate.relative_to(sources_root)
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _sha256_file(path: Path | None) -> str | None:
+    if path is None or not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _tree_sha256(root: Path, pattern: str) -> str | None:
+    if not root.exists():
+        return None
+    digest = hashlib.sha256()
+    matched = False
+    for path in sorted(root.rglob(pattern)):
+        if not path.is_file():
+            continue
+        matched = True
+        rel_path = path.relative_to(_PROJECT_ROOT).as_posix().encode("utf-8")
+        digest.update(rel_path)
+        file_hash = _sha256_file(path)
+        if file_hash is None:
+            logging.warning("Unable to hash file while computing tree sha256: %s", path)
+            return None
+        digest.update(file_hash.encode("utf-8"))
+    return digest.hexdigest() if matched else None
 
 
 def _read_project_version() -> str | None:

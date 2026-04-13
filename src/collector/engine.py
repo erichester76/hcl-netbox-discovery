@@ -8,7 +8,7 @@ import ipaddress
 import logging
 import re as _re
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from copy import deepcopy
 from dataclasses import dataclass
 from itertools import count
@@ -16,6 +16,7 @@ from typing import Any
 
 from deepdiff import DeepDiff
 
+from .cache_keys import build_effective_cache_key_prefix
 from .config import (
     CollectorConfig,
     FieldConfig,
@@ -25,7 +26,7 @@ from .config import (
     build_source_groups,
     load_config,
 )
-from .context import RunContext
+from .context import RunContext, netbox_client_for_resource
 from .field_resolvers import Resolver, walk_path
 from .prerequisites import (
     PrerequisiteArgumentError,
@@ -33,8 +34,16 @@ from .prerequisites import (
     extract_id,
     slugify,
 )
+from .write_locks import (
+    build_hotspot_upsert_lock_key,
+    build_vlan_lock_key,
+    keyed_lock,
+)
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_IN_FLIGHT_FACTOR = 4
+_EXPLICIT_NULL = object()
 
 # Default IEC 60320 power-port connector type used when a ``power_input`` block
 # omits a type expression or the expression resolves to a falsy value.
@@ -100,6 +109,10 @@ def _build_nb_client(cfg_nb: Any) -> Any:
     """Construct a pynetbox2 NetBoxAPI client from *cfg_nb* (NetBoxConfig)."""
     import pynetbox2 as pynetbox  # type: ignore[import]
 
+    effective_cache_key_prefix = build_effective_cache_key_prefix(
+        cfg_nb.cache_key_prefix,
+        netbox_url=cfg_nb.url,
+    )
     kwargs: dict[str, Any] = dict(
         url=cfg_nb.url,
         token=cfg_nb.token,
@@ -107,13 +120,14 @@ def _build_nb_client(cfg_nb: Any) -> Any:
         rate_limit_burst=cfg_nb.rate_limit_burst,
         cache_backend=cfg_nb.cache if cfg_nb.cache in ("none", "redis", "sqlite") else "none",
         cache_ttl_seconds=cfg_nb.cache_ttl,
-        cache_key_prefix=cfg_nb.cache_key_prefix,
+        cache_key_prefix=effective_cache_key_prefix,
         retry_attempts=cfg_nb.retry_attempts,
         retry_initial_delay_seconds=cfg_nb.retry_initial_delay,
         retry_backoff_factor=cfg_nb.retry_backoff_factor,
         retry_max_delay_seconds=cfg_nb.retry_max_delay,
         retry_jitter_seconds=cfg_nb.retry_jitter,
         retry_5xx_cooldown_seconds=cfg_nb.retry_5xx_cooldown,
+        turbobulk_export_for_prewarm=cfg_nb.use_turbobulk,
     )
     if cfg_nb.retry_on_4xx:
         try:
@@ -307,6 +321,36 @@ class Engine:
         return self.stop_requested
 
     @staticmethod
+    def _drain_bounded_futures(
+        items: Any,
+        *,
+        max_in_flight: int,
+        submit_item: Any,
+        on_complete: Any,
+    ) -> None:
+        """Submit work with a bounded in-flight future window."""
+        if max_in_flight < 1:
+            raise ValueError("max_in_flight must be >= 1")
+
+        in_flight: dict[Any, Any] = {}
+
+        for item in items:
+            while len(in_flight) >= max_in_flight:
+                done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                for future in done:
+                    source_item = in_flight.pop(future)
+                    on_complete(future, source_item)
+
+            future = submit_item(item)
+            in_flight[future] = item
+
+        while in_flight:
+            done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            for future in done:
+                source_item = in_flight.pop(future)
+                on_complete(future, source_item)
+
+    @staticmethod
     def _nb_helper(ctx: RunContext, name: str) -> Any:
         helper = getattr(ctx.nb, name, None)
         if type(ctx.nb).__module__ == "unittest.mock":
@@ -382,12 +426,48 @@ class Engine:
 
     @staticmethod
     def _record_attr_value(value: Any, name: str) -> Any:
+        def _from_mapping(mapping: dict[str, Any], key: str) -> Any:
+            if key in mapping:
+                return mapping.get(key)
+            for nested_key in ("data", "fields", "attributes", "custom_fields"):
+                nested = mapping.get(nested_key)
+                if isinstance(nested, dict) and key in nested:
+                    return nested.get(key)
+            return None
+
         if isinstance(value, dict):
-            return value.get(name)
+            return _from_mapping(value, name)
+
         record_dict = getattr(value, "__dict__", None)
-        if isinstance(record_dict, dict) and name in record_dict:
-            return record_dict.get(name)
-        return getattr(value, name, None)
+        if isinstance(record_dict, dict):
+            nested_value = _from_mapping(record_dict, name)
+            if nested_value is not None:
+                return nested_value
+
+        direct_value = getattr(value, name, None)
+        if direct_value is not None:
+            return direct_value
+
+        serialize = getattr(value, "serialize", None)
+        if callable(serialize) and type(value).__module__ != "unittest.mock":
+            try:
+                serialized = serialize()
+            except Exception as exc:
+                logger.debug(
+                    "Record serialization failed during lookup normalization  type=%s  attr=%s  error=%s",
+                    type(value).__name__,
+                    name,
+                    exc,
+                )
+                serialized = None
+            if isinstance(serialized, dict):
+                return _from_mapping(serialized, name)
+
+        return None
+
+    @staticmethod
+    def _is_ambiguous_lookup_error(exc: Exception) -> bool:
+        return "more than one result" in str(exc).lower()
 
     @classmethod
     def _normalize_compare_field(
@@ -474,13 +554,14 @@ class Engine:
             return
 
         desired_tags = payload.get("tags")
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if not filters or any(self._is_preview_reference(v) for v in filters.values()):
             payload["tags"] = self._normalize_tag_dicts(desired_tags)
             return
 
         try:
-            existing = ctx.nb.get(resource, **filters)
+            existing = nb_client.get(resource, **filters)
         except ValueError as exc:
             logger.debug(
                 "Tag merge lookup ambiguous  resource=%s  filters=%s  error=%s",
@@ -571,33 +652,63 @@ class Engine:
             payload["description"] = _normalize_vmware_virtual_disk_description(
                 payload.get("description")
             )
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
-        if filters and field_configs:
-            existing = ctx.nb.get(resource, **filters)
+        existing = None
+        resolved_from_ambiguity = False
+        if filters and (field_configs or "tags" in payload):
+            try:
+                existing = nb_client.get(resource, **filters)
+            except Exception as exc:
+                if not self._is_ambiguous_lookup_error(exc):
+                    raise
+                existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                    ctx,
+                    resource,
+                    filters,
+                )
+                if existing is None:
+                    raise
+                resolved_from_ambiguity = True
+        if filters and field_configs and existing is not None:
             payload = self._apply_field_update_modes(
                 existing,
                 payload,
                 lookup_fields,
                 field_configs,
             )
-        self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        if existing is not None and "tags" in payload:
+            existing_tags = (
+                existing.get("tags")
+                if isinstance(existing, dict)
+                else getattr(existing, "tags", None)
+            )
+            payload["tags"] = self._merge_tag_dicts(existing_tags, payload.get("tags"))
+        else:
+            self._merge_payload_tags_for_upsert(ctx, resource, payload, lookup_fields)
+        effective_lookup_fields = lookup_fields
+        existing_id = extract_id(existing)
+        if resolved_from_ambiguity and existing_id is not None:
+            payload = dict(payload)
+            payload["id"] = existing_id
+            effective_lookup_fields = ["id"]
         outcome = "created"
         obj = None
-        upsert_with_outcome = getattr(ctx.nb, "upsert_with_outcome", None)
+        upsert_with_outcome = getattr(nb_client, "upsert_with_outcome", None)
         if callable(upsert_with_outcome):
-            result = ctx.nb.upsert_with_outcome(
+            result = nb_client.upsert_with_outcome(
                 resource,
                 payload,
-                lookup_fields=lookup_fields,
+                lookup_fields=effective_lookup_fields,
             )
             candidate_outcome = getattr(result, "outcome", None)
             if candidate_outcome in {"created", "updated", "noop"}:
                 outcome = candidate_outcome
                 obj = getattr(result, "object", None)
             else:
-                obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+                obj = nb_client.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         else:
-            obj = ctx.nb.upsert(resource, payload, lookup_fields=lookup_fields)
+            obj = nb_client.upsert(resource, payload, lookup_fields=effective_lookup_fields)
         return obj, outcome, payload
 
     @staticmethod
@@ -684,7 +795,7 @@ class Engine:
         resource: str,
         filters: dict[str, Any],
     ) -> tuple[int | None, list[Any]]:
-        list_helper = getattr(ctx.nb, "list", None)
+        list_helper = getattr(netbox_client_for_resource(ctx, resource), "list", None)
         if not callable(list_helper):
             return None, []
         try:
@@ -706,6 +817,93 @@ class Engine:
                 matched_ids.append(candidate_id)
         return len(candidates), matched_ids
 
+    @classmethod
+    def _lookup_candidate_matches_filters(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        candidate: Any,
+        filters: dict[str, Any],
+    ) -> bool:
+        for field, expected in filters.items():
+            compare_key = field[:-3] if field.endswith("_id") else field
+            actual = cls._record_attr_value(candidate, field)
+            if actual is None and compare_key != field:
+                actual = cls._record_attr_value(candidate, compare_key)
+            if (
+                resource == "plugins.custom_objects.custom_object_types"
+                and compare_key == "slug"
+                and actual is None
+            ):
+                actual = cls._record_attr_value(candidate, "name")
+
+            expected_id = expected if isinstance(expected, int) else extract_id(expected)
+            actual_id = actual if isinstance(actual, int) else extract_id(actual)
+            if expected_id is not None or actual_id is not None:
+                if actual_id != expected_id:
+                    return False
+                continue
+
+            normalized_expected = cls._normalize_compare_field(
+                ctx,
+                resource,
+                compare_key,
+                expected,
+            )
+            normalized_actual = cls._normalize_compare_field(
+                ctx,
+                resource,
+                compare_key,
+                actual,
+            )
+            if (
+                resource == "plugins.custom_objects.custom_object_types"
+                and compare_key == "slug"
+                and isinstance(normalized_expected, str)
+                and isinstance(normalized_actual, str)
+            ):
+                normalized_expected = normalized_expected.replace("_", "-")
+                normalized_actual = normalized_actual.replace("_", "-")
+            if normalized_actual != normalized_expected:
+                return False
+        return True
+
+    @classmethod
+    def _resolve_ambiguous_lookup_candidate(
+        cls,
+        ctx: RunContext,
+        resource: str,
+        filters: dict[str, Any],
+    ) -> tuple[Any | None, int | None, list[Any]]:
+        list_helper = getattr(netbox_client_for_resource(ctx, resource), "list", None)
+        if not callable(list_helper):
+            return None, None, []
+        try:
+            candidates = list_helper(resource, **filters)
+        except Exception as exc:
+            logger.debug(
+                "Live ambiguous lookup candidate listing failed  resource=%s  filters=%s  error=%s",
+                resource,
+                filters,
+                exc,
+            )
+            return None, None, []
+        if not isinstance(candidates, (list, tuple)):
+            return None, None, []
+        matched_ids: list[Any] = []
+        for candidate in candidates[:10]:
+            candidate_id = cls._record_attr_value(candidate, "id")
+            if candidate_id is not None:
+                matched_ids.append(candidate_id)
+        matches = [
+            candidate
+            for candidate in candidates
+            if cls._lookup_candidate_matches_filters(ctx, resource, candidate, filters)
+        ]
+        if len(matches) == 1:
+            return matches[0], len(candidates), matched_ids
+        return None, len(candidates), matched_ids
+
     def _dry_run_outcome(
         self,
         ctx: RunContext,
@@ -719,25 +917,29 @@ class Engine:
             payload["description"] = _normalize_vmware_virtual_disk_description(
                 payload.get("description")
             )
+        nb_client = netbox_client_for_resource(ctx, resource)
         filters = self._lookup_filters(ctx, resource, payload, lookup_fields)
         if any(self._is_preview_reference(value) for value in filters.values()):
             return "would_create", filters, None, payload
         try:
-            existing = ctx.nb.get(resource, **filters) if filters else None
+            existing = nb_client.get(resource, **filters) if filters else None
         except ValueError as exc:
             if "more than one result" not in str(exc):
                 raise
-            match_count, matched_ids = self._ambiguous_lookup_details(
+            existing, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
                 ctx,
                 resource,
                 filters,
             )
-            raise AmbiguousDryRunLookupError(
-                resource,
-                filters,
-                match_count=match_count,
-                matched_ids=matched_ids,
-            ) from exc
+            if existing is not None:
+                pass
+            else:
+                raise AmbiguousDryRunLookupError(
+                    resource,
+                    filters,
+                    match_count=match_count,
+                    matched_ids=matched_ids,
+                ) from exc
         if existing is None:
             return "would_create", filters, None, payload
 
@@ -843,7 +1045,7 @@ class Engine:
             "Cache config  backend=%s  ttl=%ss  key_prefix=%s  url=%s",
             nb_cfg.cache,
             nb_cfg.cache_ttl,
-            nb_cfg.cache_key_prefix,
+            build_effective_cache_key_prefix(nb_cfg.cache_key_prefix, netbox_url=nb_cfg.url),
             nb_cfg.cache_url or "(none)",
         )
         logger.info(
@@ -869,24 +1071,30 @@ class Engine:
             dry_run,
         )
 
-        nb = _build_nb_client(cfg.netbox)
-
-        if cfg.collector.sync_tag and not dry_run:
-            # Ensure the sync tag exists once (shared across all iterations)
-            tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
-            if not tag_ok:
-                logger.error(
-                    "Sync tag %r could not be created in NetBox; "
-                    "tag injection disabled for this run to prevent 400 errors",
-                    cfg.collector.sync_tag,
-                )
-                cfg.collector.sync_tag = ""
-
-        groups = build_source_groups(cfg)
-
+        nb = None
+        nb_main = None
         all_stats: list[RunStats] = []
 
         try:
+            nb = _build_nb_client(cfg.netbox)
+            if cfg.netbox.branch:
+                main_cfg = deepcopy(cfg.netbox)
+                main_cfg.branch = None
+                nb_main = _build_nb_client(main_cfg)
+
+            if cfg.collector.sync_tag and not dry_run:
+                # Ensure the sync tag exists once (shared across all iterations)
+                tag_ok = self._ensure_sync_tag(nb, cfg.collector.sync_tag)
+                if not tag_ok:
+                    logger.error(
+                        "Sync tag %r could not be created in NetBox; "
+                        "tag injection disabled for this run to prevent 400 errors",
+                        cfg.collector.sync_tag,
+                    )
+                    cfg.collector.sync_tag = ""
+
+            groups = build_source_groups(cfg)
+
             for rows, pass_workers in groups:
                 if self.stop_requested:
                     break
@@ -909,6 +1117,7 @@ class Engine:
                             source_cfg,
                             cfg,
                             nb,
+                            nb_main,
                             dry_run,
                             idx,
                             total,
@@ -940,6 +1149,7 @@ class Engine:
                             source_cfg,
                             cfg,
                             nb,
+                            nb_main,
                             dry_run,
                             idx,
                             total,
@@ -947,7 +1157,10 @@ class Engine:
                         )
                         all_stats.extend(pass_stats)
         finally:
-            nb.close()
+            if nb is not None:
+                nb.close()
+            if nb_main is not None:
+                nb_main.close()
 
         logger.info("Collector run complete  objects=%d", len(all_stats))
         return all_stats
@@ -957,6 +1170,7 @@ class Engine:
         source_cfg: SourceConfig,
         cfg: CollectorConfig,
         nb: Any,
+        nb_main: Any | None,
         dry_run: bool,
         pass_idx: int = 0,
         total_passes: int = 1,
@@ -979,6 +1193,7 @@ class Engine:
 
         base_ctx = RunContext(
             nb=nb,
+            nb_main=nb_main,
             source_adapter=source,
             collector_opts=cfg.collector,
             regex_dir=cfg.collector.regex_dir,
@@ -1046,20 +1261,37 @@ class Engine:
             logger.error("Failed to fetch collection %r: %s", obj_cfg.source_collection, exc)
             return stats
 
-        logger.info("Fetched %d items for %r", len(items), obj_cfg.name)
+        fetched_count = len(items)
+        if obj_cfg.enabled_if is not None:
+            filtered_items = []
+            filtered_out = 0
+            for item in items:
+                if Resolver(ctx.for_item(item)).evaluate(obj_cfg.enabled_if):
+                    filtered_items.append(item)
+                else:
+                    filtered_out += 1
+            items = filtered_items
+            logger.info(
+                "Fetched %d items for %r, filtered out %d via enabled_if",
+                fetched_count,
+                obj_cfg.name,
+                filtered_out,
+            )
+        else:
+            logger.info("Fetched %d items for %r", fetched_count, obj_cfg.name)
 
         max_workers = obj_cfg.max_workers or ctx.collector_opts.max_workers or 4
+        # Allow a small queue above the worker count so submission overlaps with
+        # completion without materializing the whole collection as pending work.
+        max_in_flight = max_workers * DEFAULT_MAX_IN_FLIGHT_FACTOR
         prereq_runner = PrerequisiteRunner(ctx.nb)
 
         with ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix=obj_cfg.name[:16],
         ) as executor:
-            futures = {}
-            for item in items:
-                if self._should_stop(ctx):
-                    break
-                future = executor.submit(
+            def submit_item(item: Any) -> Any:
+                return executor.submit(
                     # Copy the context once per item so each worker thread
                     # gets its own Context object.  A single Context cannot
                     # be entered concurrently from multiple threads, which
@@ -1072,13 +1304,26 @@ class Engine:
                     prereq_runner,
                     stats,
                 )
-                futures[future] = item
-            for future in as_completed(futures):
+
+            def on_complete(future: Any, _item: Any) -> None:
                 exc = future.exception()
                 if exc:
                     logger.error(
                         "Unhandled error processing item: %s", exc, exc_info=exc
                     )
+
+            def iter_items() -> Any:
+                for item in items:
+                    if self._should_stop(ctx):
+                        break
+                    yield item
+
+            self._drain_bounded_futures(
+                iter_items(),
+                max_in_flight=max_in_flight,
+                submit_item=submit_item,
+                on_complete=on_complete,
+            )
 
         return stats
 
@@ -1147,7 +1392,7 @@ class Engine:
             return
 
         # 3. Inject sync tag
-        self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+        self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, obj_cfg.netbox_resource)
 
         # 4. Upsert to NetBox
         if self._should_stop(ctx):
@@ -1198,7 +1443,9 @@ class Engine:
                     ctx,
                     strict=field_cfg.name in required_field_names,
                 )
-                if value is not None:
+                if value is _EXPLICIT_NULL:
+                    payload[field_cfg.name] = None
+                elif value is not None:
                     payload[field_cfg.name] = value
             except Exception as exc:
                 if field_cfg.name in required_field_names:
@@ -1254,6 +1501,8 @@ class Engine:
                     f"Required FK field {field_cfg.name!r} missing lookup values for {missing_lookup_keys}"
                 )
             if not lookup:
+                if field_cfg.allow_null:
+                    return _EXPLICIT_NULL
                 if strict:
                     raise ValueError(
                         f"Required FK field {field_cfg.name!r} could not resolve lookup"
@@ -1262,17 +1511,26 @@ class Engine:
             if ctx.dry_run:
                 logger.debug("[DRY-RUN] FK lookup %s %s", field_cfg.resource, lookup)
                 return None
+            nb_client = netbox_client_for_resource(ctx, field_cfg.resource)
             try:
                 if field_cfg.ensure:
-                    obj = ctx.nb.upsert(
+                    obj = nb_client.upsert(
                         field_cfg.resource,
                         lookup,
                         lookup_fields=list(lookup.keys()),
                     )
                 else:
-                    obj = ctx.nb.get(field_cfg.resource, **lookup)
+                    obj = nb_client.get(field_cfg.resource, **lookup)
                 return extract_id(obj)
             except Exception as exc:
+                if isinstance(exc, ValueError) and self._is_ambiguous_lookup_error(exc):
+                    existing, _, _ = self._resolve_ambiguous_lookup_candidate(
+                        ctx,
+                        field_cfg.resource,
+                        lookup,
+                    )
+                    if existing is not None:
+                        return extract_id(existing)
                 if strict:
                     raise ValueError(
                         f"Required FK field {field_cfg.name!r} lookup failed: {exc}"
@@ -1293,8 +1551,10 @@ class Engine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _inject_sync_tag(payload: dict, sync_tag: str) -> None:
+    def _inject_sync_tag(payload: dict, sync_tag: str, resource: str | None = None) -> None:
         if not sync_tag:
+            return
+        if resource and resource.startswith("plugins.custom_objects."):
             return
         tags = payload.get("tags", [])
         if not isinstance(tags, list):
@@ -1402,13 +1662,15 @@ class Engine:
                     stats.record("skipped")
             return self._dry_run_preview_object(ctx, resource, effective_payload, existing)
         try:
-            obj, outcome, payload = self._execute_live_upsert(
-                ctx,
-                resource,
-                payload,
-                lookup_fields,
-                field_configs=field_configs,
-            )
+            lock_key = build_hotspot_upsert_lock_key(resource, payload, lookup_fields)
+            with keyed_lock(lock_key):
+                obj, outcome, payload = self._execute_live_upsert(
+                    ctx,
+                    resource,
+                    payload,
+                    lookup_fields,
+                    field_configs=field_configs,
+                )
             lookup_display = {k: payload[k] for k in lookup_fields if k in payload}
             logger.info(
                 "Upserted  resource=%-30s  %s  outcome=%s",
@@ -1419,14 +1681,14 @@ class Engine:
             self._record_live_upsert_stats(stats, outcome)
             return obj
         except Exception as exc:
-            if isinstance(exc, ValueError) and "more than one result" in str(exc):
+            if isinstance(exc, ValueError) and self._is_ambiguous_lookup_error(exc):
                 ambiguity_filters = self._lookup_filters(
                     ctx,
                     resource,
                     payload,
                     lookup_fields,
                 )
-                match_count, matched_ids = self._ambiguous_lookup_details(
+                _, match_count, matched_ids = self._resolve_ambiguous_lookup_candidate(
                     ctx,
                     resource,
                     ambiguity_filters,
@@ -1547,6 +1809,9 @@ class Engine:
                 return nb_get(resource_name, use_cache=False, **filters)
             return nb_get(resource_name, **filters)
 
+        def _get_cached(resource_name: str, **filters: Any) -> Any:
+            return nb_get(resource_name, **filters)
+
         address = ip_payload.get("address")
         desired_assigned_id = ip_payload.get("assigned_object_id")
         parent_obj_id = extract_id(parent_nb_obj)
@@ -1561,7 +1826,7 @@ class Engine:
         if primary_field is None:
             return None
 
-        existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+        existing_ip = _get_cached("ipam.ip_addresses", address=address)
         existing_ip_id = extract_id(existing_ip)
         if existing_ip_id is None:
             return None
@@ -1571,6 +1836,20 @@ class Engine:
             current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
         if current_assigned_id is None or current_assigned_id == desired_assigned_id:
             return None
+
+        # Refresh uncached state only for a real reassignment candidate, and
+        # only when the client can actually bypass cache.
+        if nb_get_supports_use_cache:
+            existing_ip = _get_uncached("ipam.ip_addresses", address=address)
+            existing_ip_id = extract_id(existing_ip)
+            if existing_ip_id is None:
+                return None
+
+            current_assigned_id = _obj_get(existing_ip, "assigned_object_id")
+            if current_assigned_id is None:
+                current_assigned_id = extract_id(_obj_get(existing_ip, "assigned_object"))
+            if current_assigned_id is None or current_assigned_id == desired_assigned_id:
+                return None
 
         current_parent = parent_nb_obj
         current_parent_resource = parent_resource
@@ -1690,7 +1969,7 @@ class Engine:
 
                 if parent_id is not None:
                     payload[parent_field] = parent_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, iface_resource)
 
                 nb_iface = self._upsert(
                     nested_ctx,
@@ -1756,7 +2035,7 @@ class Engine:
                             )
                             ip_payload["assigned_object_id"] = iface_id
 
-                        self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag)
+                        self._inject_sync_tag(ip_payload, ctx.collector_opts.sync_tag, "ipam.ip_addresses")
                         cleared_primary = None
                         if iface_id is not None and not ip_ctx.dry_run:
                             try:
@@ -1968,7 +2247,7 @@ class Engine:
 
                 try:
                     lookup_fields = [k for k in vlan_cfg.lookup_by if k in vlan_payload]
-                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag)
+                    self._inject_sync_tag(vlan_payload, ctx.collector_opts.sync_tag, vlan_cfg.netbox_resource)
                     # For ipam.vlans with vid lookup, use multi-site aware resolution
                     # to handle the case where the same vid exists across multiple sites.
                     if (
@@ -2033,91 +2312,112 @@ class Engine:
         5. When **no VLANs** exist at all, a new record is created (with or without
            a site, depending on the payload).
         """
-        vid = vlan_payload.get("vid")
-        site_id = vlan_payload.get("site")
+        with keyed_lock(build_vlan_lock_key(vlan_payload)):
+            vid = vlan_payload.get("vid")
+            site_id = vlan_payload.get("site")
+            group_id = extract_id(vlan_payload.get("group"))
+            list_filters: dict[str, Any] = {"vid": vid}
+            if group_id is not None:
+                list_filters["group"] = group_id
 
-        existing_vlans = ctx.nb.list("ipam.vlans", vid=vid)
+            # Bypass cached list results here. The surrounding keyed lock
+            # serializes same-identity writers, but a cached empty list would
+            # still let the next waiter create a duplicate VLAN after the first
+            # writer commits.
+            existing_vlans = ctx.nb.list("ipam.vlans", use_cache=False, **list_filters)
 
-        siteless_vlan = None
-        site_vlan = None
-        other_site_vlans: list[Any] = []
+            siteless_vlan = None
+            site_vlan = None
+            other_site_vlans: list[Any] = []
 
-        for existing_vlan in existing_vlans:
-            existing_site = getattr(existing_vlan, "site", None)
-            existing_site_id: int | None = None
-            if existing_site is not None:
-                if isinstance(existing_site, dict):
-                    existing_site_id = existing_site.get("id")
-                elif hasattr(existing_site, "id"):
-                    existing_site_id = existing_site.id
-                elif isinstance(existing_site, int):
-                    existing_site_id = existing_site
+            for existing_vlan in existing_vlans:
+                existing_site = getattr(existing_vlan, "site", None)
+                existing_group = getattr(existing_vlan, "group", None)
+                existing_site_id: int | None = None
+                existing_group_id: int | None = None
+                if existing_site is not None:
+                    if isinstance(existing_site, dict):
+                        existing_site_id = existing_site.get("id")
+                    elif hasattr(existing_site, "id"):
+                        existing_site_id = existing_site.id
+                    elif isinstance(existing_site, int):
+                        existing_site_id = existing_site
+                if existing_group is not None:
+                    if isinstance(existing_group, dict):
+                        existing_group_id = existing_group.get("id")
+                    elif hasattr(existing_group, "id"):
+                        existing_group_id = existing_group.id
+                    elif isinstance(existing_group, int):
+                        existing_group_id = existing_group
 
-            if existing_site_id is None and siteless_vlan is None:
-                siteless_vlan = existing_vlan
-            elif site_id is not None and existing_site_id == site_id and site_vlan is None:
-                site_vlan = existing_vlan
-            else:
-                other_site_vlans.append(existing_vlan)
+                if group_id is not None and existing_group_id != group_id:
+                    continue
 
-        if siteless_vlan is not None:
-            # Update the siteless VLAN in-place; remove site so it stays siteless.
-            update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
-            update_payload.pop("site", None)
-            existing_name = getattr(siteless_vlan, "name", None)
-            if existing_name and update_payload.get("name") != existing_name:
+                if existing_site_id is None and siteless_vlan is None:
+                    siteless_vlan = existing_vlan
+                elif site_id is not None and existing_site_id == site_id and site_vlan is None:
+                    site_vlan = existing_vlan
+                else:
+                    other_site_vlans.append(existing_vlan)
+
+            if siteless_vlan is not None:
+                # Update the siteless VLAN in-place; remove site so it stays siteless.
+                update_payload = {**vlan_payload, "id": extract_id(siteless_vlan)}
+                update_payload.pop("site", None)
+                existing_name = getattr(siteless_vlan, "name", None)
+                if existing_name and update_payload.get("name") != existing_name:
+                    logger.debug(
+                        "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
+                        "preserving existing name=%r over incoming name=%r",
+                        vid,
+                        update_payload.get("id"),
+                        existing_name,
+                        update_payload.get("name"),
+                    )
+                    update_payload["name"] = existing_name
+                return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+            if site_vlan is not None:
+                if other_site_vlans:
+                    logger.debug(
+                        "VLAN vid=%s exists in multiple site-scoped records; "
+                        "preserving requested site %s without promoting to siteless",
+                        vid, site_id,
+                    )
+                update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
+                if site_id is not None:
+                    update_payload["site"] = site_id
+                existing_name = getattr(site_vlan, "name", None)
+                if existing_name and update_payload.get("name") != existing_name:
+                    logger.debug(
+                        "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
+                        "preserving existing name=%r over incoming name=%r",
+                        vid,
+                        update_payload.get("id"),
+                        site_id,
+                        existing_name,
+                        update_payload.get("name"),
+                    )
+                    update_payload["name"] = existing_name
+                return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+
+            if site_id is None and existing_vlans:
                 logger.debug(
-                    "VLAN vid=%s resolved to existing siteless VLAN id=%s; "
-                    "preserving existing name=%r over incoming name=%r",
+                    "VLAN vid=%s requested without a site but only site-scoped VLANs "
+                    "exist; refusing to auto-promote to siteless",
                     vid,
-                    update_payload.get("id"),
-                    existing_name,
-                    update_payload.get("name"),
                 )
-                update_payload["name"] = existing_name
-            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
+                return None
 
-        if site_vlan is not None:
             if other_site_vlans:
                 logger.debug(
-                    "VLAN vid=%s exists in multiple site-scoped records; "
-                    "preserving requested site %s without promoting to siteless",
+                    "VLAN vid=%s exists at other sites but not site %s; "
+                    "creating a new site-scoped VLAN for the requested site",
                     vid, site_id,
                 )
-            update_payload = {**vlan_payload, "id": extract_id(site_vlan)}
-            if site_id is not None:
-                update_payload["site"] = site_id
-            existing_name = getattr(site_vlan, "name", None)
-            if existing_name and update_payload.get("name") != existing_name:
-                logger.debug(
-                    "VLAN vid=%s resolved to existing site VLAN id=%s site=%s; "
-                    "preserving existing name=%r over incoming name=%r",
-                    vid,
-                    update_payload.get("id"),
-                    site_id,
-                    existing_name,
-                    update_payload.get("name"),
-                )
-                update_payload["name"] = existing_name
-            return ctx.nb.upsert("ipam.vlans", update_payload, lookup_fields=["id"])
 
-        if site_id is None and existing_vlans:
-            logger.debug(
-                "VLAN vid=%s requested without a site but only site-scoped VLANs "
-                "exist; refusing to auto-promote to siteless",
-                vid,
-            )
-            return None
-
-        if other_site_vlans:
-            logger.debug(
-                "VLAN vid=%s exists at other sites but not site %s; "
-                "creating a new site-scoped VLAN for the requested site",
-                vid, site_id,
-            )
-
-        # Create a new VLAN (with or without site as supplied in payload).
-        return ctx.nb.upsert("ipam.vlans", vlan_payload, lookup_fields=[])
+            # Create a new VLAN (with or without site as supplied in payload).
+            return ctx.nb.upsert("ipam.vlans", vlan_payload, lookup_fields=[])
 
     def _process_inventory_items(
         self,
@@ -2184,7 +2484,7 @@ class Engine:
                     payload["device"] = parent_id
                 if role_id is not None:
                     payload["role"] = role_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, "dcim.inventory_items")
 
                 self._upsert(
                     nested_ctx,
@@ -2236,7 +2536,7 @@ class Engine:
 
                 if parent_id is not None:
                     payload["virtual_machine"] = parent_id
-                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag)
+                self._inject_sync_tag(payload, ctx.collector_opts.sync_tag, "virtualization.virtual_disks")
 
                 self._upsert(
                     nested_ctx,
@@ -2449,13 +2749,30 @@ class Engine:
                     continue
 
                 # 5. Install module
+                module_instance_fields = {
+                    key: value
+                    for key, value in raw_payload.items()
+                    if key not in {
+                        "id",
+                        "device",
+                        "module_bay",
+                        "module_type",
+                        "bay_name",
+                        "name",
+                        "position",
+                        "model",
+                        "serial",
+                        "manufacturer",
+                    }
+                }
                 module_payload: dict[str, Any] = {
                     "device": parent_id,
                     "module_bay": bay_id,
                     "module_type": module_type_id,
-                    "status": "active",
                 }
-                if serial:
+                module_payload.update(module_instance_fields)
+                module_payload.setdefault("status", "active")
+                if serial is not None and serial != "":
                     module_payload["serial"] = str(serial)
 
                 module_record = self._upsert(
@@ -2463,6 +2780,7 @@ class Engine:
                     "dcim.modules",
                     module_payload,
                     ["device", "module_bay"],
+                    field_configs=mod_cfg.fields,
                 )
 
                 # 6. Create power input port if configured

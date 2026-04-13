@@ -261,9 +261,35 @@ class TestLoadConfigWithObjects:
         assert obj.source_collection == "clusters"
         assert obj.netbox_resource == "virtualization.clusters"
         assert obj.lookup_by == ["name"]
+        assert obj.enabled_if is None
         assert len(obj.fields) == 1
         assert obj.fields[0].name == "name"
         assert obj.fields[0].value == "source('name')"
+
+    def test_parses_object_enabled_if(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+
+            object "cluster" {
+              source_collection = "clusters"
+              netbox_resource   = "virtualization.clusters"
+              enabled_if        = "not source('name').startswith('Staging')"
+
+              field "name" {
+                value = "source('name')"
+              }
+            }
+        """)
+        cfg = load_config(path)
+        assert cfg.objects[0].enabled_if == "not source('name').startswith('Staging')"
 
     def test_parses_prerequisite_block(self, tmp_path):
         path = _write_hcl(tmp_path, """
@@ -328,6 +354,38 @@ class TestLoadConfigWithObjects:
         field_cfg = cfg.objects[0].fields[0]
         assert field_cfg.name == "rack"
         assert field_cfg.update_mode == "if_missing"
+
+    def test_parses_field_allow_null(self, tmp_path):
+        path = _write_hcl(tmp_path, """
+            source "vmware" {
+              api_type = "vmware"
+              url      = "vc.example.com"
+            }
+
+            netbox {
+              url   = "https://nb.example.com"
+              token = "tok"
+            }
+
+            object "device" {
+              source_collection = "devices"
+              netbox_resource   = "dcim.devices"
+
+              field "lag" {
+                type       = "fk"
+                resource   = "dcim.interfaces"
+                allow_null = true
+                lookup = {
+                  device = "parent_id"
+                  name   = "source('lag_name')"
+                }
+              }
+            }
+        """)
+        cfg = load_config(path)
+        field_cfg = cfg.objects[0].fields[0]
+        assert field_cfg.name == "lag"
+        assert field_cfg.allow_null is True
 
     def test_vmware_example_vm_platform_prereq_does_not_set_manufacturer(self):
         mapping = Path(__file__).resolve().parents[1] / "mappings" / "vmware.hcl.example"
@@ -506,6 +564,7 @@ class TestLoadConfigNetBoxOptions:
             NETBOX_CACHE_TTL="14400",
             NETBOX_CACHE_KEY_PREFIX="myapp:",
             NETBOX_PREWARM_SENTINEL_TTL="7200",
+            NETBOX_USE_TURBOBULK="true",
         )
 
         path = _write_hcl(tmp_path, """
@@ -524,6 +583,7 @@ class TestLoadConfigNetBoxOptions:
         assert cfg.netbox.cache_ttl == 14400
         assert cfg.netbox.cache_key_prefix == "myapp:"
         assert cfg.netbox.prewarm_sentinel_ttl == 7200
+        assert cfg.netbox.use_turbobulk is True
 
     def test_cache_settings_hcl_takes_priority_over_runtime_config(self, tmp_path, monkeypatch):
         """Explicit HCL values must override DB-backed runtime settings."""
@@ -532,6 +592,7 @@ class TestLoadConfigNetBoxOptions:
             monkeypatch,
             NETBOX_CACHE_BACKEND="sqlite",
             NETBOX_CACHE_TTL="9999",
+            NETBOX_USE_TURBOBULK="true",
         )
 
         path = _write_hcl(tmp_path, """
@@ -544,12 +605,14 @@ class TestLoadConfigNetBoxOptions:
               token     = "tok"
               cache     = "redis"
               cache_ttl = 600
+              use_turbobulk = false
             }
         """)
         cfg = load_config(path)
         # HCL wins over DB-backed runtime settings
         assert cfg.netbox.cache == "redis"
         assert cfg.netbox.cache_ttl == 600
+        assert cfg.netbox.use_turbobulk is False
 
     def test_rate_limit_fallback_to_runtime_config(self, tmp_path, monkeypatch):
         """rate_limit and rate_limit_burst omitted from HCL should fall back to DB-backed runtime settings."""
@@ -1033,10 +1096,7 @@ class TestLoadConfigIterator:
 
 
 class TestXClarityMappings:
-    PATHS = [
-        "mappings/xclarity.hcl.example",
-        "mappings/xclarity-modules.hcl.example",
-    ]
+    PATHS = ["mappings/xclarity.hcl.example"]
     OBJECT_NAMES = {"node", "chassis", "switch", "storage"}
     CANONICAL_MANUFACTURER = "when(source('manufacturer'), regex_replace(source('manufacturer'), '(?i)^lenovo.*', 'Lenovo'), 'Lenovo')"
     STATUS_EXPR = "map_value(lower(source('powerStatus')), {'on': 'active', 'powered on': 'active', 'power on': 'active', 'poweredon': 'active'}, 'offline')"
@@ -1077,6 +1137,17 @@ class TestXClarityMappings:
         status_field = next((f for f in node.fields if f.name == "status"), None)
         assert status_field is not None, f"node missing status field in {mapping_path}"
         assert status_field.value == self.STATUS_EXPR
+        assert status_field.update_mode == "if_missing"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_top_level_device_status_fields_only_fill_when_missing(self, mapping_path):
+        cfg = load_config(mapping_path)
+        for name in self.OBJECT_NAMES:
+            obj = next((o for o in cfg.objects if o.name == name), None)
+            assert obj is not None, f"missing object {name} in {mapping_path}"
+            status_field = next((f for f in obj.fields if f.name == "status"), None)
+            assert status_field is not None, f"object {name} missing status field"
+            assert status_field.update_mode == "if_missing"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
     def test_top_level_device_types_do_not_write_part_number(self, mapping_path):
@@ -1175,18 +1246,18 @@ class TestNetboxToNetboxDeviceMapping:
 class TestNetboxToNetboxContactMapping:
     MAPPING_PATH = "mappings/netbox-to-netbox.hcl.example"
 
-    def test_contact_lookup_is_strengthened_with_email(self):
+    def test_contact_lookup_uses_name_only(self):
         cfg = load_config(self.MAPPING_PATH)
         contact = next((o for o in cfg.objects if o.name == "contact"), None)
         assert contact is not None, "missing contact object in netbox-to-netbox mapping"
-        assert contact.lookup_by == ["name", "email"]
+        assert contact.lookup_by == ["name"]
 
 
 class TestVmwareMappings:
     PATHS = ["mappings/vmware.hcl.example"]
 
     @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_vm_tagged_vlans_include_cluster_derived_site(self, mapping_path):
+    def test_vm_tagged_vlans_reuse_resolved_vm_site(self, mapping_path):
         cfg = load_config(mapping_path)
         vm = next((o for o in cfg.objects if o.name == "vm"), None)
         assert vm is not None, f"missing vm object in {mapping_path}"
@@ -1194,12 +1265,10 @@ class TestVmwareMappings:
         interface = vm.interfaces[0]
         assert interface.tagged_vlans, "vm interface should define tagged_vlans"
         vlan = interface.tagged_vlans[0]
-        assert vlan.source_items == "[{**v, 'site_name': regex_file(source('runtime.host.parent.name'), 'cluster_to_site')} for v in (source('_vlans') or [])]"
+        assert vlan.source_items == "_vlans"
         site_field = next((f for f in vlan.fields if f.name == "site"), None)
         assert site_field is not None, "tagged_vlan should define site"
-        assert site_field.type == "fk"
-        assert site_field.resource == "dcim.sites"
-        assert site_field.lookup == {"name": "source('site_name')"}
+        assert site_field.value == "prereq('site')"
 
 
 class TestSourcePayloadContracts:
@@ -1216,10 +1285,7 @@ class TestSourcePayloadContracts:
         assert placement.args["datacenter_candidate"] == "source('dataCenter')"
 
     def test_xclarity_examples_prefer_serial_in_lookup_contract(self):
-        for mapping_path in (
-            "mappings/xclarity.hcl.example",
-            "mappings/xclarity-modules.hcl.example",
-        ):
+        for mapping_path in ("mappings/xclarity.hcl.example",):
             cfg = load_config(mapping_path)
             devices = [o for o in cfg.objects if o.netbox_resource == "dcim.devices"]
             assert devices, f"missing dcim.devices objects in {mapping_path}"

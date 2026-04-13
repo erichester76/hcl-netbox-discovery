@@ -109,6 +109,7 @@ netbox {
 | `cache_url` | no | Redis URL or SQLite path when applicable |
 | `cache_ttl` | no | Cache entry TTL in seconds (default: `300`) |
 | `prewarm_sentinel_ttl` | no | Optional TTL used by cache pre-warm sentinels |
+| `use_turbobulk` | no | Enable TurboBulk-backed export for cache prewarm when supported; branch-scoped clients still fall back to REST. This repo currently installs `turbobulk-client` from the NetBox Labs public git repo because the package is new (default: `false`) |
 | `rate_limit` | no | Max API calls per second (default: `0` = unlimited) |
 | `rate_limit_burst` | no | Token-bucket burst size (default: `1`) |
 | `retry_attempts` | no | Retry attempts for transient NetBox failures (default: `3`) |
@@ -187,6 +188,7 @@ object "host" {
   source_collection = "hosts"              # passed to source.get_objects()
   netbox_resource   = "dcim.devices"       # NetBox REST resource path
   lookup_by         = ["name", "site"]     # compound upsert key
+  enabled_if        = "source('status') == 'active'"
   max_workers       = 8                    # override collector.max_workers for this object
 
   prerequisite "…" { … }   # repeatable — evaluated before fields
@@ -201,8 +203,9 @@ object "host" {
 | Attribute | Required | Description |
 |---|---|---|
 | `source_collection` | yes | Collection name passed to `source.get_objects()` |
-| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`) |
+| `netbox_resource` | yes | NetBox resource path (e.g., `"dcim.devices"`). Plugin resources use the same dotted form, for example `"plugins.custom_objects.projects"` or a custom-object instance endpoint such as `"plugins.custom_objects.ndfc_fabrics"` |
 | `lookup_by` | no | Field names used as the upsert key (default: `["name"]`) |
+| `enabled_if` | no | Expression evaluated per source item; falsey items are skipped before processing |
 | `max_workers` | no | Thread pool size for this object (overrides `collector.max_workers`) |
 
 ---
@@ -288,6 +291,24 @@ field "site" {
 }
 ```
 
+FK fields also support `allow_null = true` when a missing lookup should clear an
+existing relationship instead of skipping the field entirely:
+
+```hcl
+field "lag" {
+  type       = "fk"
+  resource   = "dcim.interfaces"
+  allow_null = true
+  lookup = {
+    device = "when(source('lag_name') != '', parent_id, None)"
+    name   = "when(source('lag_name') != '', source('lag_name'), None)"
+  }
+}
+```
+
+When `allow_null = true` and the FK lookup resolves to no values, the engine
+emits the field as `null` so NetBox clears the relationship on update.
+
 The engine performs a `nb.get(resource, **lookup)` and places the resulting ID in the payload. If `ensure = true` it calls `nb.upsert` to create the object if it doesn't exist.
 
 | Attribute | Required | Description |
@@ -296,6 +317,7 @@ The engine performs a `nb.get(resource, **lookup)` and places the resulting ID i
 | `resource` | yes | NetBox resource path |
 | `lookup` | yes | Map of filter fields → expressions |
 | `ensure` | no | Create the FK target if missing (default: `false`) |
+| `allow_null` | no | Default `false`. When `true`, emit `null` if the FK lookup resolves to no values so an existing relationship is cleared |
 
 ### Tags field (`type = "tags"`)
 
@@ -541,6 +563,37 @@ Cast a value to string or integer.
 ### `prereq("name")` / `prereq("name.attr")`
 
 Reference a resolved prerequisite by name. Use dot notation to access attributes of multi-value prerequisites (e.g., `prereq("placement.site_id")`).
+
+### `nb_id("resource", {"lookup": "value"})`
+
+Resolve the numeric ID of an existing NetBox object during expression evaluation.
+This is useful for relationship payloads that need a specific foreign-key ID but
+are not modeled as a normal `type = "fk"` field, such as generic assignments.
+
+```hcl
+nb_id("dcim.devices", {"name": source("device_name")})
+nb_id("dcim.interfaces", {
+  "device_id": nb_id("dcim.devices", {"name": source("device_name")}),
+  "name": source("interface_name"),
+})
+```
+
+Returns `None` when the lookup cannot be resolved or during `dry_run`.
+
+### `parent` / `parent_id`
+
+Inside nested blocks such as `interface {}`, `ip_address {}`, `inventory_item {}`, and `module {}`, the current NetBox parent object is exposed as `parent` and its numeric ID as `parent_id`. This is useful for sibling lookups, for example resolving an interface LAG on the same device:
+
+```hcl
+field "lag" {
+  type     = "fk"
+  resource = "dcim.interfaces"
+  lookup   = {
+    device = "when(source('lag_name') != '', parent_id, None)"
+    name   = "when(source('lag_name') != '', source('lag_name'), None)"
+  }
+}
+```
 
 ### `collector.flag_name`
 
