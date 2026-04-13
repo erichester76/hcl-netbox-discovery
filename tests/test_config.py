@@ -1199,7 +1199,9 @@ class TestCatcMappings:
         assert field_values["location"] == "prereq('location')"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_interface_ip_address_block(self, mapping_path):
+    def test_interface_ip_address_block(self, mapping_path, monkeypatch):
+        monkeypatch.delenv("CATC_FETCH_INTERFACES", raising=False)
+        monkeypatch.delenv("CATC_FETCH_MODULES", raising=False)
         cfg = load_config(mapping_path)
         device = self._device_object(cfg)
         assert device is not None
@@ -1224,7 +1226,9 @@ class TestCatcMappings:
         assert status_field is not None and status_field.value == "'active'"
 
     @pytest.mark.parametrize("mapping_path", PATHS)
-    def test_module_blocks_and_sync_flag(self, mapping_path):
+    def test_module_blocks_and_sync_flag(self, mapping_path, monkeypatch):
+        monkeypatch.delenv("COLLECTOR_SYNC_MODULES", raising=False)
+        monkeypatch.delenv("CATC_FETCH_MODULES", raising=False)
         cfg = load_config(mapping_path)
         device = self._device_object(cfg)
         assert device is not None
