@@ -833,12 +833,14 @@ class TestBuildSourceConfig:
             monkeypatch,
             CATC_HOST="https://catc.prod.example.com",
             CATC_FETCH_INTERFACES="false",
+            CATC_FETCH_MODULES="true",
             CATC_SITE_ASSIGNMENT_STRATEGY="building",
         )
         body = {
             "api_type": "catc",
             "url": "env('CATC_HOST')",
             "fetch_interfaces": "env('CATC_FETCH_INTERFACES', 'true')",
+            "fetch_modules": "env('CATC_FETCH_MODULES', 'false')",
             "site_assignment_strategy": "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')",
         }
 
@@ -846,6 +848,7 @@ class TestBuildSourceConfig:
 
         assert cfg.url == "https://catc.prod.example.com"
         assert cfg.extra["fetch_interfaces"] == "false"
+        assert cfg.extra["fetch_modules"] == "true"
         assert cfg.extra["site_assignment_strategy"] == "building"
 
 
@@ -1201,6 +1204,7 @@ class TestCatcMappings:
         device = self._device_object(cfg)
         assert device is not None
         assert cfg.source.extra.get("fetch_interfaces") == "true"
+        assert cfg.source.extra.get("fetch_modules") == "false"
         assert device.interfaces, "device should define interfaces"
         interface = device.interfaces[0]
         interface_fields = {f.name: f.value for f in interface.fields}
@@ -1218,6 +1222,17 @@ class TestCatcMappings:
         status_field = next((f for f in ip_block.fields if f.name == "status"), None)
         assert address_field is not None and address_field.value == "source('address')"
         assert status_field is not None and status_field.value == "'active'"
+
+    @pytest.mark.parametrize("mapping_path", PATHS)
+    def test_module_blocks_and_sync_flag(self, mapping_path):
+        cfg = load_config(mapping_path)
+        device = self._device_object(cfg)
+        assert device is not None
+        assert cfg.collector.extra_flags.get("sync_modules") is True
+        assert len(device.modules) == 5
+        profiles = [module.profile for module in device.modules]
+        assert profiles == ["Power supply", "Fan", "Supervisor", "Line card", "Module"]
+        assert all(module.enabled_if == "collector.sync_modules" for module in device.modules)
 
 
 class TestNetboxToNetboxDeviceMapping:

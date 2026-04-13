@@ -13,6 +13,9 @@
 #                             When true, interfaces are fetched per-device and
 #                             embedded in each device record so that the
 #                             interface {} block below can sync them to NetBox.
+#   CATC_FETCH_MODULES        true | false  (default: false)
+#                             When true, device module inventory is fetched and
+#                             embedded so the module {} blocks below can sync it.
 #   CATC_SITE_ASSIGNMENT_STRATEGY auto | bulk | membership  (default: auto)
 #                             Choose which device/site join method runs first.
 #                             The adapter still falls back to the other method.
@@ -28,6 +31,7 @@
 #   DRY_RUN                   Set to "true" to log payloads without writing
 #   COLLECTOR_SYNC_INTERFACES true | false  (default: true)
 #   COLLECTOR_SYNC_INVENTORY  true | false  (default: true)
+#   COLLECTOR_SYNC_MODULES    true | false  (default: true)
 
 source "catc" {
   api_type          = "catc"
@@ -36,6 +40,7 @@ source "catc" {
   password          = "env('CATC_PASS')"
   verify_ssl        = "env('CATC_VERIFY_SSL', 'true')"
   fetch_interfaces  = "env('CATC_FETCH_INTERFACES', 'true')"
+  fetch_modules     = "env('CATC_FETCH_MODULES', 'false')"
   site_assignment_strategy = "env('CATC_SITE_ASSIGNMENT_STRATEGY', 'auto')"
   wait_on_rate_limit         = "env('CATC_WAIT_ON_RATE_LIMIT', 'true')"
   rate_limit_retry_attempts  = "env('CATC_RATE_LIMIT_RETRY_ATTEMPTS', '3')"
@@ -59,6 +64,7 @@ collector {
   regex_dir        = "./regex"
   sync_interfaces  = "env('COLLECTOR_SYNC_INTERFACES', 'true')"
   sync_inventory   = "env('COLLECTOR_SYNC_INVENTORY', 'true')"
+  sync_modules     = "env('COLLECTOR_SYNC_MODULES', 'true')"
 }
 
 object "device" {
@@ -192,6 +198,185 @@ object "device" {
       field "status" {
         value = "'active'"
       }
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Power supply']"
+    profile      = "Power supply"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "source('status')"
+    }
+
+    attribute "part_number" {
+      value = "source('attributes.part_number')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Fan']"
+    profile      = "Fan"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Supervisor']"
+    profile      = "Supervisor"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Line card']"
+    profile      = "Line card"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "source('status')"
+    }
+  }
+
+  module {
+    source_items = "[m for m in (source('modules') or []) if m.get('profile') == 'Module']"
+    profile      = "Module"
+    enabled_if   = "collector.sync_modules"
+    dedupe_by    = "source('serial') or source('bay_name')"
+
+    field "bay_name" {
+      value = "source('bay_name')"
+    }
+
+    field "position" {
+      value = "source('position')"
+    }
+
+    field "model" {
+      value = "source('model')"
+    }
+
+    field "serial" {
+      value = "source('serial')"
+    }
+
+    field "manufacturer" {
+      value = "source('manufacturer')"
+    }
+
+    field "description" {
+      value = "source('description')"
+    }
+
+    field "status" {
+      value = "source('status')"
     }
   }
 }

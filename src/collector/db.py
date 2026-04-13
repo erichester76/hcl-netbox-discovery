@@ -364,6 +364,12 @@ _SETTINGS_SEED: list[tuple[str, str, str, str]] = [
         "Cisco Catalyst Center",
     ),
     (
+        "CATC_FETCH_MODULES",
+        "false",
+        'Set to "true" to fetch per-device module inventories and embed them in the source payload',
+        "Cisco Catalyst Center",
+    ),
+    (
         "CATC_SITE_ASSIGNMENT_STRATEGY",
         "auto",
         "Site assignment strategy for Catalyst Center hierarchy mapping (default: auto)",
