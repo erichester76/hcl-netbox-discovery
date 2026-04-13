@@ -19,6 +19,8 @@
 #   COLLECTOR_SYNC_DISKS       true | false  (default: true)
 #   COLLECTOR_SYNC_APPLIANCES  true | false  (default: true)
 
+display_name = "Microsoft Azure"
+
 source "azure" {
   api_type   = "azure"
   url        = ""          # not used for Azure; auth is via credentials below

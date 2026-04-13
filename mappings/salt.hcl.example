@@ -21,6 +21,8 @@
 # objects. Reuse the same field in a `virtualization.virtual_machines` mapping
 # if you map Salt hosts to VMs instead of devices.
 
+display_name = "Salt Grains"
+
 source "salt" {
   api_type   = "salt"
   url        = "env('SALT_MASTER_URL')"
