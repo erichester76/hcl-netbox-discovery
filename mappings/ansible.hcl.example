@@ -10,6 +10,10 @@
 #
 # Optional:
 #   DRY_RUN                true | false (default: false)
+#
+# This example asserts the `ansible-managed` tag on positively discovered
+# objects. Reuse the same field in a `virtualization.virtual_machines` mapping
+# if you map Ansible hosts to VMs instead of devices.
 
 source "ansible" {
   api_type      = "ansible"
@@ -81,6 +85,10 @@ object "device" {
 
   field "status" {
     value = "source('status')"
+  }
+
+  field "tags" {
+    value = "['ansible-managed']"
   }
 
   field "comments" {
