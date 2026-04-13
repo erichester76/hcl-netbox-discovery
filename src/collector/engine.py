@@ -190,6 +190,7 @@ def _get_source_adapter(api_type: str) -> Any:
     from .sources.nexus import NexusDashboardSource
     from .sources.prometheus import PrometheusSource
     from .sources.rest import RestSource
+    from .sources.salt import SaltSource
     from .sources.snmp import SNMPSource
     from .sources.tenable import TenableSource
     from .sources.vmware import VMwareSource
@@ -205,6 +206,7 @@ def _get_source_adapter(api_type: str) -> Any:
         "nexus":      NexusDashboardSource,
         "f5":         F5Source,
         "prometheus": PrometheusSource,
+        "salt":       SaltSource,
         "tenable":    TenableSource,
         "netbox":     NetBoxSource,
     }

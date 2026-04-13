@@ -143,6 +143,18 @@ def prometheus_config():
 
 
 @pytest.fixture()
+def salt_config():
+    return SourceConfig(
+        api_type="salt",
+        url="/tmp/salt-grains.json",
+        username="",
+        password="",
+        verify_ssl=True,
+        extra={"artifact_path": "/tmp/salt-grains.json"},
+    )
+
+
+@pytest.fixture()
 def tenable_config():
     return SourceConfig(
         api_type="tenable",

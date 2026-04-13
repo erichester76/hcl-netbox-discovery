@@ -1,0 +1,121 @@
+# Salt grains artifact -> NetBox collector mapping
+#
+# Reads a JSON artifact exported from Salt and normalises one `hosts`
+# collection with nested interfaces and IP addresses.
+#
+# Required environment variables:
+#   SALT_ARTIFACT_PATH   Path to exported Salt grains JSON
+#   NETBOX_URL           NetBox base URL
+#   NETBOX_TOKEN         NetBox API token
+#
+# Optional:
+#   DRY_RUN              true | false (default: false)
+
+source "salt" {
+  api_type      = "salt"
+  artifact_path = "env('SALT_ARTIFACT_PATH')"
+}
+
+netbox {
+  url   = "env('NETBOX_URL')"
+  token = "env('NETBOX_TOKEN')"
+}
+
+collector {
+  max_workers = 4
+  dry_run     = "env('DRY_RUN', 'false')"
+  sync_tag    = "salt-sync"
+}
+
+object "device" {
+  source_collection = "hosts"
+  netbox_resource   = "dcim.devices"
+  lookup_by         = ["name"]
+
+  prerequisite "manufacturer" {
+    method   = "ensure_manufacturer"
+    args     = { name = "coalesce(source('manufacturer'), 'Generic')" }
+    optional = true
+  }
+
+  prerequisite "device_type" {
+    method   = "ensure_device_type"
+    args     = {
+      model        = "coalesce(source('model'), 'Unknown')"
+      manufacturer = "prereq('manufacturer')"
+    }
+    optional = false
+  }
+
+  prerequisite "role" {
+    method   = "ensure_device_role"
+    args     = { name = "'Server'" }
+    optional = false
+  }
+
+  prerequisite "site" {
+    method   = "ensure_site"
+    args     = { name = "'salt-discovered'" }
+    optional = false
+  }
+
+  field "name" {
+    value = "source('name')"
+  }
+
+  field "device_type" {
+    value = "prereq('device_type')"
+  }
+
+  field "role" {
+    value = "prereq('role')"
+  }
+
+  field "site" {
+    value = "prereq('site')"
+  }
+
+  field "serial" {
+    value = "source('serial')"
+  }
+
+  field "status" {
+    value = "source('status')"
+  }
+
+  field "comments" {
+    value = "coalesce(source('fqdn'), source('hostname'))"
+  }
+
+  interface {
+    source_items = "interfaces"
+
+    field "name" {
+      value = "source('name')"
+    }
+
+    field "type" {
+      value = "coalesce(source('type'), 'other')"
+    }
+
+    field "enabled" {
+      value = "source('enabled')"
+    }
+
+    field "mac_address" {
+      value = "when(source('mac_address') != '', source('mac_address'), None)"
+    }
+
+    ip_address {
+      source_items = "ip_addresses"
+
+      field "address" {
+        value = "source('address')"
+      }
+
+      field "status" {
+        value = "source('status')"
+      }
+    }
+  }
+}

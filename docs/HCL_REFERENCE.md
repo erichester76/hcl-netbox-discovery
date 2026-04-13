@@ -53,7 +53,7 @@ See specific source examples at end of document
 
 | Attribute | Required | Description |
 |---|---|---|
-| `api_type` | yes | Selects the source adapter: `ansible`, `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `snmp`, `tenable`, or `netbox` |
+| `api_type` | yes | Selects the source adapter: `ansible`, `vmware`, `rest`, `azure`, `ldap`, `catc`, `nexus`, `f5`, `prometheus`, `salt`, `snmp`, `tenable`, or `netbox` |
 | `url` | yes | Base URL / hostname of the source system |
 | `username` | no | Credential (required for `basic` auth) |
 | `password` | no | Credential / token value |
@@ -808,6 +808,19 @@ source "ansible" {
 MVP Ansible support is artifact-backed. Point `artifact_path` at an exported
 hostvars JSON file or a fact-cache directory. The adapter normalises the input
 into a `hosts` collection with nested `interfaces` and `ip_addresses`.
+
+### Salt grains artifact (`api_type = "salt"`)
+
+```hcl
+source "salt" {
+  api_type      = "salt"
+  artifact_path = env("SALT_ARTIFACT_PATH")
+}
+```
+
+MVP Salt support is artifact-backed. Point `artifact_path` at an exported Salt
+JSON file containing grains or other host facts. The adapter normalises the
+artifact into a `hosts` collection with nested `interfaces` and `ip_addresses`.
 
 ### SNMP (`api_type = "snmp"`)
 

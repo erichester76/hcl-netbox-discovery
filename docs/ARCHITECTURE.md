@@ -67,6 +67,7 @@ hcl-netbox-discovery/
 │   ├── f5.hcl.example
 │   ├── prometheus.hcl.example
 │   ├── ansible.hcl.example
+│   ├── salt.hcl.example
 │   ├── juniper-snmp.hcl.example
 │   ├── linux-snmp.hcl.example
 │   ├── ldap.hcl.example
